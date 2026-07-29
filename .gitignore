@@ -1,0 +1,53 @@
+# Dependencies and build outputs
+node_modules/
+dist/
+coverage/
+.nyc_output/
+reports/
+outputs/
+playwright-report/
+test-results/
+
+# Vite and tool caches
+.cache/
+.vite/
+.turbo/
+.pnpm-store/
+*.tsbuildinfo
+*.log
+*.pid
+.eslintcache
+.stylelintcache
+vite.config.*.timestamp-*
+
+# Local environment overrides; committed mode files contain public Vite values only
+*.local
+.env.local
+.env.*.local
+
+# IDE and local tools
+.vscode/
+.idea/
+.fleet/
+.cursor/
+*.code-workspace
+*.swp
+*.swo
+.codex/
+.claude/
+
+# OS files
+.DS_Store
+._*
+.AppleDouble
+.LSOverride
+.Spotlight-V100/
+.Trashes/
+Thumbs.db
+ehthumbs.db
+
+# Test and temporary files
+report.html
+tmp/
+temp/
+*.cache
