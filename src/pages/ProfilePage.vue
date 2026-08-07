@@ -34,6 +34,9 @@ function handleLogout() {
 
       <van-cell-group inset>
         <van-cell title="租户" :value="authStore.tenantId || '--'" />
+        <van-cell title="当前生效规则" value="查看" is-link to="/policy" />
+        <van-cell title="补卡与申诉" value="查看" is-link to="/appeals" />
+        <van-cell title="隐私与授权" value="查看" is-link to="/privacy" />
       </van-cell-group>
 
       <div class="logout-btn">

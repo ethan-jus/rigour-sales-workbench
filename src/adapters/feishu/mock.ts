@@ -53,24 +53,23 @@ export const mockAdapter: IFeishuAdapter = {
     return 'ready';
   },
 
-  async startLocation(onPoint, onInterrupted) {
-    // 模拟初次定位
-    onPoint({
+  async getCurrentLocation() {
+    return {
       latitude: 39.9042 + Math.random() * 0.01,
       longitude: 116.4074 + Math.random() * 0.01,
       accuracy: 15,
       timestamp: Date.now(),
-    });
+    };
+  },
+
+  async startLocation(onPoint, onInterrupted) {
+    // 模拟初次定位
+    onPoint(await this.getCurrentLocation());
 
     // 测试期间每 30 秒模拟一次定位，便于开发观察
     // 生产环境 realAdapter 使用 20 分钟间隔
     locationTimer = setInterval(() => {
-      onPoint({
-        latitude: 39.9042 + Math.random() * 0.01,
-        longitude: 116.4074 + Math.random() * 0.01,
-        accuracy: 15,
-        timestamp: Date.now(),
-      });
+      void this.getCurrentLocation().then(onPoint);
     }, 30_000);
 
     visibilityHandler = () => {

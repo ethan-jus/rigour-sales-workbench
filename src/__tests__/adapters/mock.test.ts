@@ -35,6 +35,13 @@ describe('Mock Feishu Adapter', () => {
     expect(mockAdapter.getLocationStatus()).toBe('ready');
   });
 
+  it('getCurrentLocation 返回签到前置定位点', async () => {
+    const point = await mockAdapter.getCurrentLocation();
+    expect(point.latitude).toBeGreaterThan(39);
+    expect(point.longitude).toBeGreaterThan(116);
+    expect(point.accuracy).toBe(15);
+  });
+
   it('startLocation 至少发射一个点并清理', async () => {
     const points: Array<{ latitude: number; longitude: number; accuracy: number }> = [];
     const interruptions: number[] = [];

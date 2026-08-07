@@ -30,6 +30,12 @@ const router = createRouter({
       meta: { title: '考勤' },
     },
     {
+      path: '/targets',
+      name: 'targets',
+      component: () => import('@/pages/VisitTargetsPage.vue'),
+      meta: { title: '客户与门店' },
+    },
+    {
       path: '/visit',
       name: 'visit',
       component: () => import('@/pages/VisitPage.vue'),
@@ -52,6 +58,24 @@ const router = createRouter({
       name: 'profile',
       component: () => import('@/pages/ProfilePage.vue'),
       meta: { title: '个人' },
+    },
+    {
+      path: '/policy',
+      name: 'policy',
+      component: () => import('@/pages/PolicyPage.vue'),
+      meta: { title: '当前规则' },
+    },
+    {
+      path: '/appeals',
+      name: 'appeals',
+      component: () => import('@/pages/AppealPage.vue'),
+      meta: { title: '补卡与申诉' },
+    },
+    {
+      path: '/privacy',
+      name: 'privacy',
+      component: () => import('@/pages/PrivacyPage.vue'),
+      meta: { title: '隐私与授权' },
     },
   ],
 });

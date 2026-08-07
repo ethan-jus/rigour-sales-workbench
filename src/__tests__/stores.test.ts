@@ -57,6 +57,7 @@ describe('Stores', () => {
         isJsapiAvailable: () => false,
         requestAuthCode: () => Promise.reject(new Error('模拟授权码获取失败')),
         getLocationStatus: () => 'unsupported',
+        getCurrentLocation: async () => ({ latitude: 0, longitude: 0, accuracy: 0, timestamp: Date.now() }),
         startLocation: async () => {},
         stopLocation: async () => {},
         getAudioStatus: () => 'unsupported',

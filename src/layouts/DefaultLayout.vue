@@ -9,7 +9,6 @@ const tabs = [
   { to: '/attendance', icon: 'clock-o', label: '考勤' },
   { to: '/visit', icon: 'friends-o', label: '拜访' },
   { to: '/track', icon: 'location-o', label: '轨迹' },
-  { to: '/delivery', icon: 'logistics', label: '配送' },
   { to: '/profile', icon: 'user-o', label: '个人' },
 ] as const;
 
@@ -46,13 +45,25 @@ function onTabChange(path: string) {
 .app-layout {
   display: flex;
   flex-direction: column;
+  width: 100%;
+  max-width: 540px;
   min-height: 100vh;
+  margin: 0 auto;
   background: var(--van-background-2);
+  box-shadow: 0 0 40px rgba(18, 33, 61, 0.08);
 }
 
 .app-content {
   flex: 1;
   padding-bottom: 50px; /* tabbar height */
   overflow-y: auto;
+}
+
+.app-layout :deep(.van-tabbar) {
+  right: auto;
+  left: 50%;
+  width: 100%;
+  max-width: 540px;
+  transform: translateX(-50%);
 }
 </style>

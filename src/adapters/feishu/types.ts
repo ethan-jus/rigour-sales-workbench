@@ -60,6 +60,8 @@ export interface IFeishuAdapter {
   requestAuthCode(): Promise<string>;
 
   getLocationStatus(): CapabilityStatus;
+  /** 服务端确认签到前只读取一次定位；成功后才允许 startLocation 开始持续采样。 */
+  getCurrentLocation(): Promise<{ latitude: number; longitude: number; accuracy: number; timestamp: number }>;
   /**
    * 使用 gcj02 进行前台尽力采样。PC 不支持 getLocation；页面后台、锁屏或 WebView 回收时
    * 不能保证继续运行，因此该接口不是后台持续定位能力。

@@ -27,6 +27,10 @@
 - `client.ts`：`apiClient` 封装 fetch，自动注入 `Authorization`、`X-Tenant-Id`、`X-Request-Id`、`Accept-Language` 请求头
 - `error.ts`：`normalizeError()` 分类为 `NETWORK`、`AUTH`、`FORBIDDEN`、`BUSINESS`、`UNKNOWN`
 
+阶段 0 至阶段 2 的 API 契约以 Platform 仓库的
+`docs/SALES_WORK_PHASE0_CONTRACT.md` 和销售专项设计 V1.1 为准。
+Workbench 页面只能通过 API Core/生成 SDK 消费 Sales Work，不在页面保存考勤、定位或拜访业务事实。
+
 ### bootstrap/ — 应用启动引导
 
 `bootstrap()` 执行顺序：
@@ -98,3 +102,5 @@ pnpm test             # 运行测试
 - BI 战报集成
 - 后端 JSSDK 签名端点（`/api/v1/platform/feishu/jsapi-sign`）
 - 离线缓存和 PWA
+
+阶段 0 至阶段 2 不在 Workbench 计算销售 KPI；页面只展示 Sales Work 返回的工作事实和运行摘要，经营指标由 BI 指标字典和版本口径提供。

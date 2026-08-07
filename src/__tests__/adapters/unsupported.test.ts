@@ -33,6 +33,10 @@ describe('unsupportedAdapter', () => {
     expect(unsupportedAdapter.getLocationStatus()).toBe('unsupported');
   });
 
+  it('getCurrentLocation 明确阻断', async () => {
+    await expect(unsupportedAdapter.getCurrentLocation()).rejects.toThrow('当前环境不是飞书客户端');
+  });
+
   it('startLocation 抛出阻断错误', async () => {
     await expect(
       unsupportedAdapter.startLocation(

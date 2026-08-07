@@ -113,6 +113,18 @@ describe('realAdapter 官方 callback bridge', () => {
     expect(points[0].timestamp).toBe(123456);
   });
 
+  it('签到前置定位只调用一次 getLocation，不启动轮询', async () => {
+    const getLocation = vi.fn((options: CallbackOptions) => {
+      (options.success as (result: { latitude: number; longitude: number; accuracy: number; timestamp: number }) => void)({
+        latitude: 30.2, longitude: 120.1, accuracy: 18, timestamp: 123456,
+      });
+    });
+    installTt({ getLocation });
+
+    await expect(realAdapter.getCurrentLocation()).resolves.toMatchObject({ latitude: 30.2, timestamp: 123456 });
+    expect(getLocation).toHaveBeenCalledTimes(1);
+  });
+
   it('PC/无定位 API 时显式 unsupported', () => {
     installTt({});
     expect(realAdapter.getLocationStatus()).toBe('unsupported');

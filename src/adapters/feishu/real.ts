@@ -251,6 +251,28 @@ export const realAdapter: IFeishuAdapter = {
     return 'ready';
   },
 
+  getCurrentLocation() {
+    const tt = getJsapi();
+    if (!tt.getLocation) {
+      return Promise.reject(new Error('当前客户端不支持 getLocation；飞书 PC 端不支持 H5 定位'));
+    }
+    return new Promise((resolve, reject) => {
+      tt.getLocation!({
+        type: 'gcj02',
+        timeout: 10,
+        cacheTimeout: 30,
+        accuracy: 'best',
+        success: (result) => resolve({
+          latitude: result.latitude,
+          longitude: result.longitude,
+          accuracy: result.accuracy,
+          timestamp: result.timestamp ?? Date.now(),
+        }),
+        fail: (error) => reject(formatError('getLocation', error)),
+      });
+    });
+  },
+
   async startLocation(onPoint, onInterrupted) {
     const tt = getJsapi();
     if (!tt.getLocation) {
@@ -261,23 +283,9 @@ export const realAdapter: IFeishuAdapter = {
     await this.stopLocation();
 
     const poll = () => {
-      tt.getLocation!({
-        type: 'gcj02',
-        timeout: 10,
-        cacheTimeout: 30,
-        accuracy: 'best',
-        success: (result) => {
-          onPoint({
-            latitude: result.latitude,
-            longitude: result.longitude,
-            accuracy: result.accuracy,
-            timestamp: result.timestamp ?? Date.now(),
-          });
-        },
-        fail: (error) => {
-          console.warn('[FeishuReal] getLocation 失败:', getErrorNumber(error), getErrorMessage(error));
-          onInterrupted();
-        },
+      void this.getCurrentLocation().then(onPoint).catch((error: Error) => {
+        console.warn('[FeishuReal] getLocation 失败:', error.message);
+        onInterrupted();
       });
     };
 

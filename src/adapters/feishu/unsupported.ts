@@ -38,6 +38,10 @@ export const unsupportedAdapter: IFeishuAdapter = {
     return 'unsupported';
   },
 
+  getCurrentLocation(): Promise<{ latitude: number; longitude: number; accuracy: number; timestamp: number }> {
+    return Promise.reject(new Error(UNSUPPORTED_MSG));
+  },
+
   async startLocation(_onPoint, _onInterrupted) {
     blocked();
   },

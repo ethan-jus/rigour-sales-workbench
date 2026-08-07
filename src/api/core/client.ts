@@ -9,7 +9,7 @@ import type { ApiResponse } from '@/types';
  * - Token 通过 localStorage 管理，免登后由 authStore 写入，登出时清除
  *
  * 边界：
- * - X-Tenant-Id 目前取 VITE_DEFAULT_TENANT_ID 环境变量，后续应从 authStore.tenantId 动态获取
+ * - X-Tenant-Id 优先从当前登录会话动态获取，未登录时才使用开发环境默认值
  * - X-Request-Id 由前端生成，用于调用链追踪；Gateway 有校验/补全权
  * - 不实现刷新 Token 逻辑，Token 过期由后端 401 触发，前端展示登录过期提示
  *
@@ -19,6 +19,10 @@ import type { ApiResponse } from '@/types';
  */
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 const DEFAULT_TENANT_ID = import.meta.env.VITE_DEFAULT_TENANT_ID || 'demo';
+
+function currentTenantId(): string {
+  return localStorage.getItem('auth_tenant_id') || DEFAULT_TENANT_ID;
+}
 
 function generateRequestId(): string {
   const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
@@ -33,7 +37,7 @@ function buildHeaders(overrides?: Record<string, string>): Record<string, string
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'Accept-Language': 'zh-CN',
-    'X-Tenant-Id': DEFAULT_TENANT_ID,
+    'X-Tenant-Id': currentTenantId(),
     'X-Request-Id': generateRequestId(),
   };
 
