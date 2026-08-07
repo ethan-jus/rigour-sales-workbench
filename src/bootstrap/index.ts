@@ -2,6 +2,7 @@ import { useAppStore } from '@/stores/app';
 import { useAuthStore } from '@/stores/auth';
 import { detectRuntimeContainer } from '@/adapters';
 import { initFeishuJsbridge } from '@/adapters/feishu/jsbridge';
+import { createRequestId, elapsedMs, pageTraceContext } from '@/diagnostics/trace';
 
 // ============================================================================
 // 应用启动引导
@@ -18,13 +19,17 @@ import { initFeishuJsbridge } from '@/adapters/feishu/jsbridge';
 // - production 非飞书环境由 unsupportedAdapter 阻断，用户看到错误页
 // ============================================================================
 export async function bootstrap(): Promise<void> {
+  const traceId = createRequestId('bootstrap');
+  const startedAt = Date.now();
   const appStore = useAppStore();
   const authStore = useAuthStore();
 
   const env = detectRuntimeContainer();
   appStore.env = env;
 
-  console.log('[Bootstrap] 运行环境:', {
+  console.info('[BootstrapTrace] bootstrap-start', {
+    traceId,
+    ...pageTraceContext(),
     container: env.container,
     clientVersion: env.clientVersion,
     jsapiAvailable: env.jsapiAvailable,
@@ -33,15 +38,19 @@ export async function bootstrap(): Promise<void> {
 
   // 飞书容器内：注入 JSSDK 并签名
   if (!env.mockMode && env.container !== 'unknown') {
-    console.log('[Bootstrap] 飞书容器内，开始注入 JSSDK...');
+    console.info('[BootstrapTrace] jsbridge-start', { traceId });
     const jssdkReady = await initFeishuJsbridge();
     if (!jssdkReady) {
       const message = '飞书能力鉴权失败，应用已阻断。请检查 JSSDK 加载和后端签名配置。';
       appStore.setBootstrapError(message);
-      console.error('[Bootstrap]', message);
+      console.error('[BootstrapTrace] jsbridge-blocked', {
+        traceId,
+        elapsedMs: elapsedMs(startedAt),
+        message,
+      });
       return;
     }
-    console.log('[Bootstrap] JSSDK 鉴权就绪，飞书 JSAPI 可用');
+    console.info('[BootstrapTrace] jsbridge-ready', { traceId, elapsedMs: elapsedMs(startedAt) });
     // 鉴权完成后重新读取 window.tt 顶层 API 可用性。
     const updatedEnv = detectRuntimeContainer();
     appStore.env = { ...updatedEnv, mockMode: false };
@@ -58,13 +67,22 @@ export async function bootstrap(): Promise<void> {
   }
 
   try {
+    console.info('[BootstrapTrace] auth-start', { traceId, elapsedMs: elapsedMs(startedAt) });
     await authStore.login();
     appStore.setBootstrapReady();
-    console.log('[Bootstrap] 登录成功, userId:', authStore.userId);
+    console.info('[BootstrapTrace] bootstrap-ready', {
+      traceId,
+      elapsedMs: elapsedMs(startedAt),
+      hasUserId: Boolean(authStore.userId),
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Bootstrap 失败';
     appStore.setBootstrapError(msg);
-    console.error('[Bootstrap] 启动失败:', msg);
+    console.error('[BootstrapTrace] auth-failed', {
+      traceId,
+      elapsedMs: elapsedMs(startedAt),
+      message: msg,
+    });
     // Mock 模式下登录失败不阻止应用启动（开发容错）
     if (env.mockMode) {
       appStore.setBootstrapReady();

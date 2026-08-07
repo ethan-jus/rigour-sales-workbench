@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import { getFeishuAdapter } from '@/adapters';
+import { createRequestId, elapsedMs, responseMeta } from '@/diagnostics/trace';
 
 // ============================================================================
 // 用户认证状态
@@ -47,8 +48,11 @@ export const useAuthStore = defineStore('auth', () => {
   const feishuOpenId = ref<string | null>(null);
 
   async function login() {
+    const traceId = createRequestId('auth');
+    const startedAt = Date.now();
     loginLoading.value = true;
     loginError.value = null;
+    console.info('[AuthTrace] login-start', { traceId, mockMode: isMockMode });
 
     try {
       const adapter = getFeishuAdapter();
@@ -56,7 +60,11 @@ export const useAuthStore = defineStore('auth', () => {
       if (isMockMode) {
         // Mock 模式：返回固定 mock 身份，跳过后端交换
         const code = await adapter.requestAuthCode();
-        console.log('[AuthStore] Mock 模式，授权码:', code);
+        console.info('[AuthTrace] mock-auth-code-received', {
+          traceId,
+          hasCode: Boolean(code),
+          elapsedMs: elapsedMs(startedAt),
+        });
 
         userId.value = 'mock-user-001';
         userName.value = '张三（Mock）';
@@ -70,31 +78,60 @@ export const useAuthStore = defineStore('auth', () => {
       } else {
         // 真实模式：获取授权码 → POST 给后端交换 token
         const code = await adapter.requestAuthCode();
-        console.log('[AuthStore] 获取到飞书授权码，开始后端交换...');
+        console.info('[AuthTrace] feishu-auth-code-received', {
+          traceId,
+          hasCode: Boolean(code),
+          elapsedMs: elapsedMs(startedAt),
+        });
 
         const response = await fetch(AUTH_EXCHANGE_ENDPOINT, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'X-Tenant-Id': defaultTenantId,
+            'X-Request-Id': traceId,
           },
           body: JSON.stringify({ code }),
         });
 
+        const rawBody = await response.text();
+        let body: unknown;
+        try {
+          body = JSON.parse(rawBody);
+        } catch {
+          body = undefined;
+        }
+        const meta = responseMeta(body);
+        const responseRequestId = meta.requestId ?? traceId;
+        console.info('[AuthTrace] exchange-finished', {
+          traceId,
+          requestId: responseRequestId,
+          status: response.status,
+          ok: response.ok,
+          code: meta.code,
+          elapsedMs: elapsedMs(startedAt),
+        });
+
         if (!response.ok) {
-          const errBody = await response.text();
-          throw new Error(`授权码交换失败: HTTP ${response.status} - ${errBody}`);
+          throw new Error(`授权码交换失败: HTTP ${response.status} requestId=${responseRequestId}`);
         }
 
-        const body = await response.json();
-        const data = body.data;
-        if (!data || !data.token || !data.user) {
-          throw new Error('后端返回数据不完整：缺少 token 或 user');
+        const rawData =
+          body && typeof body === 'object' && 'data' in body
+            ? (body as { data?: unknown }).data
+            : undefined;
+        const data =
+          rawData && typeof rawData === 'object'
+            ? (rawData as { token?: unknown; user?: ExchangeUser; feishuOpenId?: unknown })
+            : undefined;
+        if (!data || typeof data.token !== 'string' || !data.user) {
+          throw new Error(`后端返回数据不完整 requestId=${responseRequestId}`);
         }
 
         const token: string = data.token;
         const user: ExchangeUser = data.user;
-        const feishuId: string | null = data.feishuOpenId ?? null;
+        const feishuId: string | null =
+          typeof data.feishuOpenId === 'string' ? data.feishuOpenId : null;
 
         userId.value = user.userId;
         userName.value = user.name;
@@ -108,10 +145,22 @@ export const useAuthStore = defineStore('auth', () => {
         if (feishuId) {
           localStorage.setItem('auth_feishu_open_id', feishuId);
         }
+        console.info('[AuthTrace] login-succeeded', {
+          traceId,
+          requestId: responseRequestId,
+          hasToken: Boolean(token),
+          hasUserId: Boolean(user.userId),
+          elapsedMs: elapsedMs(startedAt),
+        });
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : '登录失败';
       loginError.value = msg;
+      console.error('[AuthTrace] login-failed', {
+        traceId,
+        elapsedMs: elapsedMs(startedAt),
+        message: msg,
+      });
       throw err;
     } finally {
       loginLoading.value = false;
