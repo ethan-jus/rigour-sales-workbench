@@ -17,6 +17,7 @@ describe('realAdapter 官方 callback bridge', () => {
     window.tt = undefined;
     vi.useRealTimers();
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
   });
 
   it('从 window.tt 顶层调用 requestAccess，并使用 appID + 空 scopeList', async () => {
@@ -185,6 +186,94 @@ describe('realAdapter 官方 callback bridge', () => {
     realAdapter.startRecording();
     realAdapter.startRecording();
     expect(manager.start).toHaveBeenCalledTimes(1);
+  });
+
+  it('使用FileSystemManager读取临时音频并通过HTTPS multipart上传', async () => {
+    const readFile = vi.fn((options: CallbackOptions) => {
+      (options.success as (result: { data: ArrayBuffer }) => void)({
+        data: new Uint8Array([1, 2, 3]).buffer,
+      });
+    });
+    const fetchMock = vi.fn().mockResolvedValue(new Response('', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    installTt({
+      getFileSystemManager: () => ({ readFile, unlink: vi.fn() }),
+    });
+    const clip = {
+      localClipId: 'local-1', tempFilePath: 'ttfile://clip.aac', duration: 3_000,
+      startedAt: 1_000, endedAt: 4_000,
+    };
+
+    await expect(realAdapter.uploadRecording(clip, {
+      url: 'https://sales.example.com/api/v1/sales/me/visits/v-1/recordings/clips',
+      headers: { Authorization: 'Bearer token' },
+      formData: { clientClipId: 'local-1', durationMs: '3000' },
+      fileName: 'local-1.aac',
+    })).resolves.toBeUndefined();
+
+    expect(readFile).toHaveBeenCalledWith(expect.objectContaining({
+      filePath: 'ttfile://clip.aac',
+    }));
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://sales.example.com/api/v1/sales/me/visits/v-1/recordings/clips',
+      expect.objectContaining({
+        method: 'POST',
+        headers: { Authorization: 'Bearer token' },
+        body: expect.any(FormData),
+      }),
+    );
+  });
+
+  it('单段到达10分钟上限后立即续录并把完成片段交给上传队列', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    let onStart: (() => void) | undefined;
+    let onStop: ((result: { tempFilePath: string }) => void) | undefined;
+    const manager = {
+      start: vi.fn(),
+      stop: vi.fn(() => onStop?.({ tempFilePath: 'ttfile://final.aac' })),
+      onStart: vi.fn((callback: () => void) => { onStart = callback; }),
+      onStop: vi.fn((callback: (result: { tempFilePath: string }) => void) => { onStop = callback; }),
+      onError: vi.fn(),
+    };
+    const onSegment = vi.fn();
+    installTt({ getRecorderManager: () => manager });
+
+    realAdapter.startRecording({ onSegment, onError: vi.fn() });
+    onStart?.();
+    vi.setSystemTime(601_000);
+    onStop?.({ tempFilePath: 'ttfile://segment-1.aac' });
+
+    expect(manager.start).toHaveBeenCalledTimes(2);
+    expect(onSegment).toHaveBeenCalledWith(expect.objectContaining({
+      tempFilePath: 'ttfile://segment-1.aac',
+      duration: 600_000,
+    }));
+
+    vi.setSystemTime(602_000);
+    onStart?.();
+    vi.setSystemTime(603_000);
+    await expect(realAdapter.stopRecording()).resolves.toMatchObject({
+      tempFilePath: 'ttfile://final.aac',
+      duration: 1_000,
+    });
+  });
+
+  it('丢弃短录音时删除客户端临时文件', async () => {
+    const unlink = vi.fn((options: CallbackOptions) => {
+      (options.success as () => void)();
+    });
+    installTt({
+      getFileSystemManager: () => ({ readFile: vi.fn(), unlink }),
+    });
+
+    await expect(realAdapter.discardRecording({
+      localClipId: 'short-1', tempFilePath: 'ttfile://short.aac', duration: 5_000,
+      startedAt: 1_000, endedAt: 6_000,
+    })).resolves.toBeUndefined();
+    expect(unlink).toHaveBeenCalledWith(expect.objectContaining({
+      filePath: 'ttfile://short.aac',
+    }));
   });
 
   it('destroy 后忽略旧 RecorderManager 的异步 onStop', async () => {

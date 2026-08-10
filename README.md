@@ -21,7 +21,8 @@
 - 普通浏览器使用 Mock Adapter（`VITE_FEISHU_MOCK=true`），不依赖飞书客户端
 - 生产非飞书环境由 `unsupportedAdapter` 阻断，禁止静默回落 mock
 - **页面层不得导入飞书 JSAPI 包或访问全局 `tt`**，所有调用只能经过 `Feishu Adapter`
-- 客户端 API 位于 `window.tt` 顶层；录音使用 `tt.getRecorderManager()`，单次最长 10 分钟
+- 客户端 API 位于 `window.tt` 顶层；录音使用 `tt.getRecorderManager()`，单段10分钟自动切片续录，总时长不限
+- 临时音频通过 `tt.getFileSystemManager().readFile()` 读取，再用同源 HTTPS multipart 上传
 - 定位使用 `tt.getLocation()`，参数为 `gcj02 + best + timeout/cacheTimeout`；PC 不支持，20 分钟采样只是 H5 前台尽力执行，不保证后台持续定位
 - JSSDK 使用官方 `h5-js-sdk-1.5.44.js`，通过 `window.h5sdk.config({ ..., onSuccess, onFail })` 鉴权；失败时启动流程立即阻断
 - 页面使用 Hash Router，路由切换只改变 fragment，不破坏按无 fragment URL 计算的 JSSDK 签名
@@ -49,6 +50,7 @@ src/
 | 变量 | 说明 | 默认值 |
 |---|---|---|
 | VITE_API_BASE_URL | API 前缀 | /api/v1 |
+| VITE_API_TARGET | Vite开发代理使用的Gateway地址；换服务器时在`.env.local`覆盖 | http://localhost:26880 |
 | VITE_ENABLE_MOCK | 启用全局 Mock | true |
 | VITE_DEFAULT_TENANT_ID | 默认租户 | demo |
 | VITE_APP_ENV | 运行环境 | local |
@@ -64,7 +66,7 @@ src/
 
 ```bash
 pnpm install          # 安装依赖
-pnpm dev              # 启动开发服务器（localhost:5200）
+pnpm dev              # 启动开发服务器；日志会列出localhost和当前网卡lanUrls
 pnpm build            # 类型检查 + 生产构建
 pnpm lint             # ESLint 检查（无 --fix）
 pnpm format           # Prettier 格式化

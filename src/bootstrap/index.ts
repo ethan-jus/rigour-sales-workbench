@@ -1,8 +1,10 @@
 import { useAppStore } from '@/stores/app';
 import { useAuthStore } from '@/stores/auth';
+import { useSalesStore } from '@/stores/sales';
 import { detectRuntimeContainer } from '@/adapters';
-import { initFeishuJsbridge } from '@/adapters/feishu/jsbridge';
+import { getJsbridgeFailureDetail, initFeishuJsbridge } from '@/adapters/feishu/jsbridge';
 import { createRequestId, elapsedMs, pageTraceContext } from '@/diagnostics/trace';
+import { localDate } from '@/utils/datetime';
 
 // ============================================================================
 // 应用启动引导
@@ -41,7 +43,10 @@ export async function bootstrap(): Promise<void> {
     console.info('[BootstrapTrace] jsbridge-start', { traceId });
     const jssdkReady = await initFeishuJsbridge();
     if (!jssdkReady) {
-      const message = '飞书能力鉴权失败，应用已阻断。请检查 JSSDK 加载和后端签名配置。';
+      const detail = getJsbridgeFailureDetail();
+      const message =
+        '飞书能力鉴权失败，应用已阻断。请检查 JSSDK 加载和后端签名配置。' +
+        (detail ? `（${detail}）` : '');
       appStore.setBootstrapError(message);
       console.error('[BootstrapTrace] jsbridge-blocked', {
         traceId,
@@ -70,6 +75,7 @@ export async function bootstrap(): Promise<void> {
     console.info('[BootstrapTrace] auth-start', { traceId, elapsedMs: elapsedMs(startedAt) });
     await authStore.login();
     appStore.setBootstrapReady();
+    void restoreActiveLocationTracking(traceId);
     console.info('[BootstrapTrace] bootstrap-ready', {
       traceId,
       elapsedMs: elapsedMs(startedAt),
@@ -88,4 +94,17 @@ export async function bootstrap(): Promise<void> {
       appStore.setBootstrapReady();
     }
   }
+}
+
+/** 应用刷新后恢复进行中工作日的定位会话；失败只形成中断，不阻断工作台启动。 */
+async function restoreActiveLocationTracking(traceId: string): Promise<void> {
+  const salesStore = useSalesStore();
+  const workDay = await salesStore.loadWorkDay(localDate());
+  if (workDay?.status !== 'ACTIVE') return;
+  const restored = await salesStore.ensureLocationTracking(workDay.id);
+  console.info('[BootstrapTrace] location-tracking-restored', {
+    traceId,
+    workDayId: workDay.id,
+    restored,
+  });
 }

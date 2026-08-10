@@ -54,6 +54,16 @@ function buildHeaders(overrides?: Record<string, string>): Record<string, string
   return headers;
 }
 
+/**
+ * multipart 上传所需的完整请求地址与鉴权头。
+ * 与 buildHeaders 保持一致，但不含 JSON Content-Type（由浏览器/客户端按 multipart 自动生成）。
+ */
+export function buildUploadRequest(path: string): { url: string; headers: Record<string, string> } {
+  const headers = buildHeaders();
+  delete headers['Content-Type'];
+  return { url: new URL(`${BASE_URL}${path}`, window.location.origin).toString(), headers };
+}
+
 async function handleResponse<T>(response: Response): Promise<ApiResponse<T>> {
   if (!response.ok) {
     const errorBody = await response.text();

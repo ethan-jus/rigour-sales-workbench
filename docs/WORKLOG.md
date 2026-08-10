@@ -90,7 +90,8 @@ rigour-sales-workbench/
 
 - 使用顶层 `tt.getRecorderManager()`，不再存在伪造的录音接口
 - 注册 `onStart`/`onStop`/`onError` 监听器，本地 `startedAt` 计算录音元数据
-- 单次最长 10 分钟（600000ms），aac 格式；stop 返回 `localClipId/tempFilePath/duration/startedAt/endedAt`
+- 单段最长10分钟（600000ms）、aac格式；达到边界自动切片续录，总时长不限；stop返回`localClipId/tempFilePath/duration/startedAt/endedAt`
+- H5不再调用小程序上传能力；改用`getFileSystemManager().readFile()`读取临时音频，再走同源HTTPS multipart
 - 重复 start 幂等忽略；未录音时 stop 返回 null
 - 参考官方：https://open.feishu.cn/document/client-docs/gadget/-web-app-api/media/record/getrecordermanager
 

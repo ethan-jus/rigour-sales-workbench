@@ -123,6 +123,33 @@ export const mockAdapter: IFeishuAdapter = {
     };
   },
 
+  async uploadRecording(clip, target) {
+    // 浏览器没有真实音频字节：生成与真实链路一致的 multipart 请求，
+    // 让 Mock 模式也能验证服务端上传、登记和会话聚合。
+    const body = new FormData();
+    const pseudoAudio = new Blob([`mock-audio-${clip.localClipId}-${clip.duration}`], {
+      type: 'audio/m4a',
+    });
+    body.append('file', pseudoAudio, target.fileName);
+    for (const [key, value] of Object.entries(target.formData)) {
+      body.append(key, value);
+    }
+    const response = await fetch(target.url, {
+      method: 'POST',
+      headers: target.headers,
+      body,
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`录音上传失败：HTTP ${response.status} ${text.slice(0, 120)}`);
+    }
+    console.log('[Mock] 录音片段已上传', target.url);
+  },
+
+  async discardRecording() {
+    // Mock 没有真实临时文件；短录音只由页面登记元数据。
+  },
+
   destroy() {
     this.stopLocation();
     isRecording = false;

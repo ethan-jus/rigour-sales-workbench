@@ -58,7 +58,13 @@ describe('飞书 JSSDK 鉴权桥', () => {
       timestamp: 123456,
       nonceStr: 'nonce',
       signature: 'signed',
-      jsApiList: ['requestAccess', 'requestAuthCode', 'getLocation', 'getRecorderManager'],
+      jsApiList: [
+        'requestAccess',
+        'requestAuthCode',
+        'getLocation',
+        'getRecorderManager',
+        'getFileSystemManager',
+      ],
     });
     expect(options.onSuccess).toEqual(expect.any(Function));
     expect(options.onFail).toEqual(expect.any(Function));

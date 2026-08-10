@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { normalizeError, ErrorCategory } from '@/api/core/error';
-import { apiClient, ApiError } from '@/api/core/client';
+import { apiClient, ApiError, buildUploadRequest } from '@/api/core/client';
 
 describe('normalizeError', () => {
   it('fetch 失败归类为网络错误', () => {
@@ -60,5 +60,14 @@ describe('apiClient', () => {
     expect(err.code).toBe('TEST');
     expect(err.message).toBe('msg');
     expect(err.httpStatus).toBe(500);
+  });
+
+  it('录音上传地址为H5 HTTPS multipart可用的绝对地址且不固定 Content-Type', () => {
+    localStorage.setItem('auth_token', 'upload-token');
+    const request = buildUploadRequest('/sales/me/visits/v-1/recordings/clips');
+
+    expect(request.url).toBe(`${window.location.origin}/api/v1/sales/me/visits/v-1/recordings/clips`);
+    expect(request.headers.Authorization).toBe('Bearer upload-token');
+    expect(request.headers['Content-Type']).toBeUndefined();
   });
 });

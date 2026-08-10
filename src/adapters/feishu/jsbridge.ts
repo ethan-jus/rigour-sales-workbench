@@ -7,7 +7,13 @@ export const FEISHU_JSSDK_URL =
 
 export const FEISHU_JSAPI_SIGN_ENDPOINT = '/api/v1/platform/feishu/jsapi-sign';
 
-const JSAPI_LIST = ['requestAccess', 'requestAuthCode', 'getLocation', 'getRecorderManager'];
+const JSAPI_LIST = [
+  'requestAccess',
+  'requestAuthCode',
+  'getLocation',
+  'getRecorderManager',
+  'getFileSystemManager',
+];
 const SCRIPT_LOAD_TIMEOUT_MS = 10_000;
 const CONFIG_TIMEOUT_MS = 15_000;
 
@@ -35,6 +41,16 @@ declare global {
 
 let scriptLoadPromise: Promise<boolean> | null = null;
 let jsbridgeReady = false;
+let lastFailureDetail: string | null = null;
+
+function recordFailure(phase: string, detail: string): void {
+  lastFailureDetail = `${phase}: ${detail}`;
+}
+
+/** 最近一次鉴权失败的具体原因（阶段 + 细节），供阻断页展示，便于真机无控制台排查。 */
+export function getJsbridgeFailureDetail(): string | null {
+  return lastFailureDetail;
+}
 
 function errorMessage(error: FeishuCallbackError): string {
   return error.errString ?? error.errMsg ?? '未知飞书鉴权错误';
@@ -67,6 +83,7 @@ function loadOfficialJsSdk(): Promise<boolean> {
     });
     const timeoutId = setTimeout(() => {
       console.error('[FeishuJsbridge] 官方 H5 JSSDK 加载超时');
+      recordFailure('sdk-load', 'timeout');
       finish(false, 'timeout');
     }, SCRIPT_LOAD_TIMEOUT_MS);
 
@@ -79,15 +96,25 @@ function loadOfficialJsSdk(): Promise<boolean> {
       existing.addEventListener('load', () => finish(Boolean(window.h5sdk?.config), 'existing-load'), {
         once: true,
       });
-      existing.addEventListener('error', () => finish(false, 'existing-error'), { once: true });
+      existing.addEventListener('error', () => {
+        recordFailure('sdk-load', 'existing-script-error');
+        finish(false, 'existing-error');
+      }, { once: true });
       return;
     }
 
     const script = document.createElement('script');
     script.src = FEISHU_JSSDK_URL;
     script.async = true;
-    script.onload = () => finish(Boolean(window.h5sdk?.config), 'script-load');
-    script.onerror = () => finish(false, 'script-error');
+    script.onload = () => {
+      const ok = Boolean(window.h5sdk?.config);
+      if (!ok) recordFailure('sdk-load', 'script-loaded-but-h5sdk-missing');
+      finish(ok, 'script-load');
+    };
+    script.onerror = () => {
+      recordFailure('sdk-load', 'script-error');
+      finish(false, 'script-error');
+    };
     document.head.appendChild(script);
   });
 
@@ -115,7 +142,7 @@ async function fetchSignature(): Promise<SignedJsapiConfig> {
   console.info('[FeishuTrace] signature-request-start', {
     requestId,
     ...pageTraceContext(),
-    signedUrlLength: signedUrl.length,
+    signedUrl,
   });
 
   try {
@@ -154,12 +181,11 @@ async function fetchSignature(): Promise<SignedJsapiConfig> {
         ? (body as { data?: unknown }).data
         : undefined;
     if (!isJsapiConfig(data)) {
-      throw new Error(
-        `飞书 JSSDK 签名响应缺少有效字段 requestId=${responseRequestId}`,
-      );
+      throw new Error(`飞书 JSSDK 签名响应缺少有效字段 requestId=${responseRequestId}`);
     }
     return { config: data, requestId: responseRequestId };
   } catch (error) {
+    recordFailure('signature-request', error instanceof Error ? error.message : '网络请求异常');
     console.error('[FeishuTrace] signature-request-failed', {
       requestId,
       elapsedMs: elapsedMs(startedAt),
@@ -184,6 +210,7 @@ export async function initFeishuJsbridge(): Promise<boolean> {
   try {
     const loaded = await loadOfficialJsSdk();
     if (!loaded || !window.h5sdk?.config) {
+      if (!lastFailureDetail) recordFailure('sdk-load', 'h5sdk.config-unavailable');
       console.error('[FeishuJsbridge] 官方 H5 JSSDK 加载失败或 window.h5sdk.config 不存在');
       console.error('[FeishuTrace] jsbridge-init-blocked', {
         traceId,
@@ -198,6 +225,9 @@ export async function initFeishuJsbridge(): Promise<boolean> {
       traceId,
       requestId: signed.requestId,
       appId: signed.config.appId,
+      timestamp: signed.config.timestamp,
+      nonceStr: signed.config.nonceStr,
+      url: window.location.href.split('#')[0],
     });
     const ready = await new Promise<boolean>((resolve) => {
       let settled = false;
@@ -210,6 +240,7 @@ export async function initFeishuJsbridge(): Promise<boolean> {
       };
       const timeoutId = setTimeout(() => {
         console.error('[FeishuJsbridge] window.h5sdk.config 回调超时');
+        recordFailure('jsapi-config', 'callback-timeout');
         finish(false);
       }, CONFIG_TIMEOUT_MS);
 
@@ -222,6 +253,7 @@ export async function initFeishuJsbridge(): Promise<boolean> {
         onSuccess: () => {
           if (!window.tt) {
             console.error('[FeishuJsbridge] 鉴权成功但 window.tt 未注入，按失败阻断');
+            recordFailure('jsapi-config', 'window.tt-missing-after-success');
             console.error('[FeishuTrace] jsapi-config-failed', {
               traceId,
               requestId: signed.requestId,
@@ -230,6 +262,7 @@ export async function initFeishuJsbridge(): Promise<boolean> {
             finish(false);
             return;
           }
+          lastFailureDetail = null;
           console.info('[FeishuTrace] jsapi-config-succeeded', {
             traceId,
             requestId: signed.requestId,
@@ -243,6 +276,7 @@ export async function initFeishuJsbridge(): Promise<boolean> {
             error.errno,
             errorMessage(error),
           );
+          recordFailure('jsapi-config', `errno=${error.errno} ${errorMessage(error)}`);
           console.error('[FeishuTrace] jsapi-config-failed', {
             traceId,
             requestId: signed.requestId,
@@ -263,6 +297,9 @@ export async function initFeishuJsbridge(): Promise<boolean> {
     return ready;
   } catch (error) {
     console.error('[FeishuJsbridge] 初始化失败:', error);
+    if (!lastFailureDetail) {
+      recordFailure('jsbridge-init', error instanceof Error ? error.message : '初始化异常');
+    }
     console.error('[FeishuTrace] jsbridge-init-failed', {
       traceId,
       elapsedMs: elapsedMs(startedAt),

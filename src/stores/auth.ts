@@ -168,6 +168,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   function logout() {
+    getFeishuAdapter().destroy();
     userId.value = null;
     userName.value = '';
     avatar.value = '';

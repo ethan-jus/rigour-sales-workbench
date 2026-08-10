@@ -4,6 +4,7 @@ import type {
   FeishuCallbackError,
   FeishuLocationResult,
   IFeishuAdapter,
+  RecordingObserver,
   RecorderStopResult,
 } from './types';
 
@@ -47,11 +48,25 @@ interface RecorderManager {
   onError: (callback: (error: FeishuCallbackError) => void) => void;
 }
 
+interface FileSystemManager {
+  readFile: (options: {
+    filePath: string;
+    success: (result: { data: string | ArrayBuffer }) => void;
+    fail: (error: FeishuCallbackError) => void;
+  }) => void;
+  unlink: (options: {
+    filePath: string;
+    success: () => void;
+    fail: (error: FeishuCallbackError) => void;
+  }) => void;
+}
+
 interface FeishuJsapi {
   requestAccess?: (options: RequestAccessOptions) => void;
   requestAuthCode?: (options: RequestAuthCodeOptions) => void;
   getLocation?: (options: GetLocationOptions) => void;
   getRecorderManager?: () => RecorderManager;
+  getFileSystemManager?: () => FileSystemManager;
 }
 
 declare global {
@@ -76,6 +91,8 @@ let recorderGeneration = 0;
 let recordingRequestedAt: number | null = null;
 let recordingStartedAt: number | null = null;
 let isRecording = false;
+let continuousRecordingRequested = false;
+let recordingObserver: RecordingObserver | null = null;
 let localClipSequence = 0;
 let lastClip: RecorderStopResult | null = null;
 let pendingStop:
@@ -130,13 +147,17 @@ function requestLegacyAuthCode(tt: FeishuJsapi, appId: string): Promise<string> 
 }
 
 function createLocalClip(tempFilePath: string): RecorderStopResult {
-  const endedAt = Date.now();
-  const startedAt = recordingStartedAt ?? recordingRequestedAt ?? endedAt;
+  const callbackAt = Date.now();
+  const startedAt = recordingStartedAt ?? recordingRequestedAt ?? callbackAt;
+  // 飞书在10分钟边界后的回调调度可能略有延迟；证据片段仍以官方单段上限封顶，
+  // 并让 recordedTo 与 duration 保持严格一致，避免服务端把回调延迟误判成超长录音。
+  const duration = Math.min(RECORDING_LIMIT_MS, Math.max(0, callbackAt - startedAt));
+  const endedAt = startedAt + duration;
   localClipSequence += 1;
   return {
     localClipId: `local-${startedAt}-${localClipSequence}`,
     tempFilePath,
-    duration: Math.max(0, endedAt - startedAt),
+    duration,
     startedAt,
     endedAt,
   };
@@ -144,7 +165,6 @@ function createLocalClip(tempFilePath: string): RecorderStopResult {
 
 function settleRecorderStop(tempFilePath: string): void {
   const clip = createLocalClip(tempFilePath);
-  lastClip = clip;
   isRecording = false;
   recordingRequestedAt = null;
   recordingStartedAt = null;
@@ -153,7 +173,25 @@ function settleRecorderStop(tempFilePath: string): void {
     clearTimeout(pendingStop.timeoutId);
     pendingStop.resolve(clip);
     pendingStop = null;
+    recordingObserver = null;
+    return;
   }
+
+  if (continuousRecordingRequested) {
+    const observer = recordingObserver;
+    try {
+      startRecorderSegment(getConfiguredRecorderManager());
+      observer?.onSegment(clip);
+    } catch (error) {
+      continuousRecordingRequested = false;
+      recordingObserver = null;
+      observer?.onSegment(clip);
+      observer?.onError(error instanceof Error ? error : new Error('录音自动续段失败'));
+    }
+    return;
+  }
+
+  lastClip = clip;
 }
 
 function settleRecorderError(error: FeishuCallbackError): void {
@@ -164,7 +202,55 @@ function settleRecorderError(error: FeishuCallbackError): void {
     clearTimeout(pendingStop.timeoutId);
     pendingStop.reject(formatError('RecorderManager', error));
     pendingStop = null;
+  } else {
+    continuousRecordingRequested = false;
+    const observer = recordingObserver;
+    recordingObserver = null;
+    observer?.onError(formatError('RecorderManager', error));
   }
+}
+
+function startRecorderSegment(manager: RecorderManager): void {
+  lastClip = null;
+  recordingRequestedAt = Date.now();
+  manager.start({
+    duration: RECORDING_LIMIT_MS,
+    format: 'aac',
+    sampleRate: 44_100,
+    numberOfChannels: 1,
+    encodeBitRate: 192_000,
+    frameSize: 50,
+  });
+}
+
+function getConfiguredFileSystemManager(): FileSystemManager {
+  const tt = getJsapi();
+  if (!tt.getFileSystemManager) {
+    throw new Error('当前客户端不支持 getFileSystemManager，无法读取录音临时文件');
+  }
+  return tt.getFileSystemManager();
+}
+
+function readTemporaryAudio(filePath: string): Promise<ArrayBuffer> {
+  let manager: FileSystemManager;
+  try {
+    manager = getConfiguredFileSystemManager();
+  } catch (error) {
+    return Promise.reject(error);
+  }
+  return new Promise<ArrayBuffer>((resolve, reject) => {
+    manager.readFile({
+      filePath,
+      success: ({ data }) => {
+        if (data instanceof ArrayBuffer) {
+          resolve(data);
+          return;
+        }
+        reject(new Error('录音临时文件返回了非二进制数据'));
+      },
+      fail: (error) => reject(formatError('FileSystemManager.readFile', error)),
+    });
+  });
 }
 
 function getConfiguredRecorderManager(): RecorderManager {
@@ -313,11 +399,13 @@ export const realAdapter: IFeishuAdapter = {
   },
 
   getAudioStatus(): CapabilityStatus {
-    if (!this.isJsapiAvailable() || !window.tt?.getRecorderManager) return 'unsupported';
+    if (!this.isJsapiAvailable()
+        || !window.tt?.getRecorderManager
+        || !window.tt?.getFileSystemManager) return 'unsupported';
     return 'ready';
   },
 
-  startRecording() {
+  startRecording(observer) {
     if (isRecording || recordingRequestedAt !== null) {
       console.warn('[FeishuReal] 已在录音中，忽略重复 startRecording');
       return;
@@ -325,16 +413,17 @@ export const realAdapter: IFeishuAdapter = {
 
     recorderDestroyed = false;
     const manager = getConfiguredRecorderManager();
-    lastClip = null;
-    recordingRequestedAt = Date.now();
-    manager.start({
-      duration: RECORDING_LIMIT_MS,
-      format: 'aac',
-      sampleRate: 44_100,
-      numberOfChannels: 1,
-      encodeBitRate: 192_000,
-      frameSize: 50,
-    });
+    continuousRecordingRequested = true;
+    recordingObserver = observer ?? null;
+    try {
+      startRecorderSegment(manager);
+    } catch (error) {
+      continuousRecordingRequested = false;
+      recordingObserver = null;
+      recordingRequestedAt = null;
+      recordingStartedAt = null;
+      throw error;
+    }
   },
 
   async stopRecording() {
@@ -345,6 +434,7 @@ export const realAdapter: IFeishuAdapter = {
     }
     if (!recorderManager || (!isRecording && recordingRequestedAt === null)) return null;
     if (pendingStop) throw new Error('录音停止请求正在处理中');
+    continuousRecordingRequested = false;
 
     return new Promise<RecorderStopResult>((resolve, reject) => {
       const timeoutId = setTimeout(() => {
@@ -353,6 +443,38 @@ export const realAdapter: IFeishuAdapter = {
       }, RECORDING_STOP_TIMEOUT_MS);
       pendingStop = { resolve, reject, timeoutId };
       recorderManager!.stop();
+    });
+  },
+
+  async uploadRecording(clip, target) {
+    const audioBytes = await readTemporaryAudio(clip.tempFilePath);
+    const body = new FormData();
+    body.append('file', new Blob([audioBytes], { type: 'audio/aac' }), target.fileName);
+    for (const [key, value] of Object.entries(target.formData)) body.append(key, value);
+    const response = await fetch(target.url, {
+      method: 'POST',
+      headers: target.headers,
+      body,
+    });
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(`录音上传失败：HTTP ${response.status} ${detail.slice(0, 120)}`);
+    }
+  },
+
+  discardRecording(clip) {
+    let manager: FileSystemManager;
+    try {
+      manager = getConfiguredFileSystemManager();
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    return new Promise<void>((resolve, reject) => {
+      manager.unlink({
+        filePath: clip.tempFilePath,
+        success: resolve,
+        fail: (error) => reject(formatError('FileSystemManager.unlink', error)),
+      });
     });
   },
 
@@ -372,6 +494,8 @@ export const realAdapter: IFeishuAdapter = {
     recordingRequestedAt = null;
     recordingStartedAt = null;
     isRecording = false;
+    continuousRecordingRequested = false;
+    recordingObserver = null;
     lastClip = null;
     if (shouldStop && managerToStop) managerToStop.stop();
   },

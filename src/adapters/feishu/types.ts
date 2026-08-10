@@ -39,6 +39,24 @@ export interface RecorderStopResult {
   endedAt: number;
 }
 
+/** 录音片段上传目标；页面只描述目标，真实上传由 Adapter 用客户端能力完成。 */
+export interface RecordingUploadRequest {
+  /** 服务端片段上传完整地址（含 visitId）。 */
+  url: string;
+  /** 鉴权与租户请求头（Authorization/X-Tenant-Id/X-Request-Id）。 */
+  headers: Record<string, string>;
+  /** 附加表单字段（durationMs、recordedFrom、recordedTo）。 */
+  formData: Record<string, string>;
+  /** 片段文件名（multipart 的 filename）。 */
+  fileName: string;
+}
+
+/** 连续录音单段到达飞书10分钟上限时的生命周期回调。 */
+export interface RecordingObserver {
+  onSegment: (clip: RecorderStopResult) => void;
+  onError: (error: Error) => void;
+}
+
 /** 跨仓库标准 ApiResponse.data 中的飞书 JSSDK 鉴权参数。 */
 export interface JsapiConfig {
   appId: string;
@@ -73,10 +91,17 @@ export interface IFeishuAdapter {
   stopLocation(): Promise<void>;
 
   getAudioStatus(): CapabilityStatus;
-  /** 最长录音 600000ms（10 分钟）；重复 start 不创建第二段录音。 */
-  startRecording(): void;
+  /** 单段最多600000ms；达到边界自动切片续录，直到销售主动停止。 */
+  startRecording(observer?: RecordingObserver): void;
   /** 返回可上传的临时文件路径；未开始录音时返回 null。 */
   stopRecording(): Promise<RecorderStopResult | null>;
+  /**
+   * 把 stopRecording 返回的临时文件上传到服务端。
+   * 真实 Adapter 用 FileSystemManager 读取临时音频后走 HTTPS multipart；Mock 走同一服务端链路。
+   */
+  uploadRecording(clip: RecorderStopResult, target: RecordingUploadRequest): Promise<void>;
+  /** 删除客户端短录音临时文件；音频不进入对象存储。 */
+  discardRecording(clip: RecorderStopResult): Promise<void>;
 
   destroy(): void;
 }

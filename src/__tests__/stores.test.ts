@@ -63,6 +63,8 @@ describe('Stores', () => {
         getAudioStatus: () => 'unsupported',
         startRecording: () => {},
         stopRecording: async () => null,
+        uploadRecording: async () => {},
+        discardRecording: async () => {},
         destroy: () => {},
       });
       const store = useAuthStore();

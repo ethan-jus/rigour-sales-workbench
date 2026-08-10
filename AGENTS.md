@@ -36,7 +36,8 @@ pages/        ← 只管理展示状态和用户输入，不调用 tt
 
 ### 录音
 - `tt.getRecorderManager()` 管理 `onStart/onStop/onError` 生命周期并保留 `tempFilePath`
-- 单次最长 10 分钟，mp3 格式
+- 单段最长 10 分钟、aac 格式；到达边界自动切片并立即续录，总录音时长不设上限
+- `tt.getFileSystemManager().readFile()` 读取临时音频，再使用同源 HTTPS multipart 上传
 - `startRecording()` 同步调用，`stopRecording()` 返回 clip 或 null
 
 ### 定位

@@ -62,6 +62,14 @@ export const unsupportedAdapter: IFeishuAdapter = {
     return null;
   },
 
+  async uploadRecording() {
+    blocked();
+  },
+
+  async discardRecording() {
+    blocked();
+  },
+
   destroy() {
     // 无资源需要释放
   },
