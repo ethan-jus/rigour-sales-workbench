@@ -46,6 +46,7 @@ describe('VisitTargetsPage 长操作反馈', () => {
       global: {
         plugins: [Vant],
         stubs: {
+          VanNavBar: { template: '<header><slot /></header>' },
           VanTabs: { template: '<div><slot /></div>' },
           VanTab: { template: '<section><slot /></section>' },
         },
