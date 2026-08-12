@@ -39,6 +39,13 @@ export interface RecorderStopResult {
   endedAt: number;
 }
 
+/** 飞书 chooseImage(camera-only) 返回的现场照片临时文件。 */
+export interface CapturedPhoto {
+  localPhotoId: string;
+  tempFilePath: string;
+  capturedAt: number;
+}
+
 /** 录音片段上传目标；页面只描述目标，真实上传由 Adapter 用客户端能力完成。 */
 export interface RecordingUploadRequest {
   /** 服务端片段上传完整地址（含 visitId）。 */
@@ -48,6 +55,14 @@ export interface RecordingUploadRequest {
   /** 附加表单字段（durationMs、recordedFrom、recordedTo）。 */
   formData: Record<string, string>;
   /** 片段文件名（multipart 的 filename）。 */
+  fileName: string;
+}
+
+/** 门头照上传目标；captureSource 固定由 Adapter 填写为 FEISHU_CAMERA。 */
+export interface PhotoUploadRequest {
+  url: string;
+  headers: Record<string, string>;
+  formData: Record<string, string>;
   fileName: string;
 }
 
@@ -102,6 +117,12 @@ export interface IFeishuAdapter {
   uploadRecording(clip: RecorderStopResult, target: RecordingUploadRequest): Promise<void>;
   /** 删除客户端短录音临时文件；音频不进入对象存储。 */
   discardRecording(clip: RecorderStopResult): Promise<void>;
+
+  getCameraStatus(): CapabilityStatus;
+  /** 只允许拉起手机相机拍摄一张门头照，不开放相册/文件选择。 */
+  captureStorefrontPhoto(): Promise<CapturedPhoto>;
+  uploadPhoto(photo: CapturedPhoto, target: PhotoUploadRequest): Promise<void>;
+  discardPhoto(photo: CapturedPhoto): Promise<void>;
 
   destroy(): void;
 }

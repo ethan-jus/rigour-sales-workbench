@@ -64,6 +64,7 @@ describe('飞书 JSSDK 鉴权桥', () => {
         'getLocation',
         'getRecorderManager',
         'getFileSystemManager',
+        'chooseImage',
       ],
     });
     expect(options.onSuccess).toEqual(expect.any(Function));

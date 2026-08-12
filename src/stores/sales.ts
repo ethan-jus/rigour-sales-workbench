@@ -1,6 +1,8 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { getFeishuAdapter } from '@/adapters';
+import type { CapturedPhoto } from '@/adapters/feishu/types';
+import { buildUploadRequest } from '@/api/core/client';
 import { normalizeError } from '@/api/core/error';
 import { createIdempotencyKey } from '@/utils/id';
 import type { CapabilityStatus } from '@/types';
@@ -19,7 +21,9 @@ import {
   type RecordingSessionView,
   type SalesContextView,
   type VisitPageView,
+  type VisitPlanListView,
   type VisitActivitySummaryView,
+  type VisitEvidenceSummaryView,
   type VisitResultCommand,
   type VisitTargetPageView,
   type VisitView,
@@ -32,8 +36,10 @@ export const useSalesStore = defineStore('sales', () => {
   const targets = ref<VisitTargetPageView | null>(null);
   const nearbyStores = ref<NearbyStorePageView | null>(null);
   const visits = ref<VisitPageView | null>(null);
+  const visitPlans = ref<VisitPlanListView | null>(null);
   const activeVisit = ref<VisitView | null>(null);
   const recordingSession = ref<RecordingSessionView | null>(null);
+  const visitEvidence = ref<VisitEvidenceSummaryView | null>(null);
   const todaySummary = ref<VisitActivitySummaryView | null>(null);
   const monthSummary = ref<VisitActivitySummaryView | null>(null);
   const workDay = ref<WorkDayView | null>(null);
@@ -43,6 +49,7 @@ export const useSalesStore = defineStore('sales', () => {
   const targetsLoading = ref(false);
   const nearbyLoading = ref(false);
   const visitsLoading = ref(false);
+  const visitPlansLoading = ref(false);
   const visitLoading = ref(false);
   const attendanceLoading = ref(false);
   const attendanceMonthLoading = ref(false);
@@ -50,16 +57,43 @@ export const useSalesStore = defineStore('sales', () => {
   const errorMessage = ref<string | null>(null);
   const nearbyError = ref<string | null>(null);
   const visitsError = ref<string | null>(null);
+  const visitPlansError = ref<string | null>(null);
   const visitError = ref<string | null>(null);
   const attendanceError = ref<string | null>(null);
   const trackError = ref<string | null>(null);
   const recordingError = ref<string | null>(null);
+  const evidenceLoading = ref(false);
+  const photoOperationStage = ref<'CAMERA' | 'LOCATION' | 'UPLOAD' | null>(null);
+  const photoEvidenceError = ref<string | null>(null);
+  const hasPendingStorefrontPhoto = ref(false);
   const summaryLoading = ref(false);
   const summaryError = ref<string | null>(null);
   const locationStatus = ref<CapabilityStatus>(getFeishuAdapter().getLocationStatus());
   const trackingWorkDayId = ref<string | null>(null);
+  const currentLocationLoading = ref(false);
+  const lastCurrentLocation = ref<{
+    latitude: number;
+    longitude: number;
+    accuracy: number;
+    timestamp: number;
+  } | null>(null);
   let uploadChain: Promise<void> = Promise.resolve();
   let lastInterruptionAt = 0;
+  let currentLocationRequest: Promise<{
+    latitude: number;
+    longitude: number;
+    accuracy: number;
+    timestamp: number;
+  }> | null = null;
+  let nearbyRequestSequence = 0;
+  let locationRequestGeneration = 0;
+  const nearbyCache = new Map<string, { expiresAt: number; value: NearbyStorePageView }>();
+  const nearbyCacheTtlMs = 60_000;
+  let pendingStorefrontPhoto: {
+    visitId: string;
+    photo: CapturedPhoto;
+    location: { latitude: number; longitude: number; accuracy: number; timestamp: number } | null;
+  } | null = null;
 
   async function loadContext(force = false): Promise<SalesContextView | null> {
     if (context.value && !force) return context.value;
@@ -96,18 +130,73 @@ export const useSalesStore = defineStore('sales', () => {
     radiusMeters: number,
     query = '',
     page = 1,
+    force = false,
   ): Promise<NearbyStorePageView | null> {
+    const cacheKey = [
+      longitude.toFixed(4),
+      latitude.toFixed(4),
+      String(radiusMeters),
+      query.trim().toLowerCase(),
+      String(page),
+    ].join('|');
+    const cached = nearbyCache.get(cacheKey);
+    if (!force && cached && cached.expiresAt > Date.now()) {
+      nearbyStores.value = cached.value;
+      nearbyError.value = null;
+      return cached.value;
+    }
+    const requestSequence = ++nearbyRequestSequence;
     nearbyLoading.value = true;
     nearbyError.value = null;
     try {
-      nearbyStores.value = (await salesApi.nearbyStores(longitude, latitude, radiusMeters, query, page)).data;
-      return nearbyStores.value;
+      const loaded = (await salesApi.nearbyStores(
+        longitude,
+        latitude,
+        radiusMeters,
+        query,
+        page,
+      )).data;
+      nearbyCache.set(cacheKey, { expiresAt: Date.now() + nearbyCacheTtlMs, value: loaded });
+      if (requestSequence === nearbyRequestSequence) nearbyStores.value = loaded;
+      return loaded;
     } catch (error) {
-      nearbyError.value = normalizeError(error).message;
+      if (requestSequence === nearbyRequestSequence) {
+        nearbyError.value = normalizeError(error).message;
+      }
       return null;
     } finally {
-      nearbyLoading.value = false;
+      if (requestSequence === nearbyRequestSequence) nearbyLoading.value = false;
     }
+  }
+
+  /**
+   * 合并同一时刻的定位请求，并短时复用飞书返回的缓存点。
+   * 拜访创建仍由服务端做围栏校验；这里仅避免“查工作日 → 定位 → 创建拜访”中的重复等待。
+   */
+  async function getCurrentLocation(maxAgeMs = 0): Promise<{
+    latitude: number;
+    longitude: number;
+    accuracy: number;
+    timestamp: number;
+  }> {
+    const cached = lastCurrentLocation.value;
+    if (cached && maxAgeMs > 0 && Date.now() - cached.timestamp <= maxAgeMs) return cached;
+    if (currentLocationRequest) return currentLocationRequest;
+    currentLocationLoading.value = true;
+    const generation = locationRequestGeneration;
+    const request = getFeishuAdapter().getCurrentLocation()
+      .then((point) => {
+        if (generation === locationRequestGeneration) lastCurrentLocation.value = point;
+        return point;
+      })
+      .finally(() => {
+        if (currentLocationRequest === request) {
+          currentLocationRequest = null;
+          currentLocationLoading.value = false;
+        }
+      });
+    currentLocationRequest = request;
+    return request;
   }
 
   async function createVisit(command: CreateVisitCommand): Promise<VisitView | null> {
@@ -115,6 +204,14 @@ export const useSalesStore = defineStore('sales', () => {
     visitError.value = null;
     try {
       activeVisit.value = (await salesApi.createVisit(command)).data;
+      if (command.visitPlanId && visitPlans.value) {
+        visitPlans.value = {
+          ...visitPlans.value,
+          items: visitPlans.value.items.map((plan) => plan.planId === command.visitPlanId
+            ? { ...plan, status: 'IN_PROGRESS', visitId: activeVisit.value!.id }
+            : plan),
+        };
+      }
       recordingSession.value = null;
       prependVisit(activeVisit.value);
       return activeVisit.value;
@@ -123,6 +220,21 @@ export const useSalesStore = defineStore('sales', () => {
       return null;
     } finally {
       visitLoading.value = false;
+    }
+  }
+
+  async function loadVisitPlans(date: string): Promise<VisitPlanListView | null> {
+    visitPlansLoading.value = true;
+    visitPlansError.value = null;
+    try {
+      visitPlans.value = (await salesApi.visitPlans(date)).data;
+      return visitPlans.value;
+    } catch (error) {
+      visitPlans.value = null;
+      visitPlansError.value = normalizeError(error).message;
+      return null;
+    } finally {
+      visitPlansLoading.value = false;
     }
   }
 
@@ -180,6 +292,14 @@ export const useSalesStore = defineStore('sales', () => {
     visitError.value = null;
     try {
       activeVisit.value = (await salesApi.checkOutVisit(visitId, command)).data;
+      if (visitPlans.value) {
+        visitPlans.value = {
+          ...visitPlans.value,
+          items: visitPlans.value.items.map((plan) => plan.visitId === visitId
+            ? { ...plan, status: 'COMPLETED' }
+            : plan),
+        };
+      }
       patchVisit(activeVisit.value);
       return activeVisit.value;
     } catch (error) {
@@ -215,6 +335,102 @@ export const useSalesStore = defineStore('sales', () => {
       recordingSession.value = null;
       recordingError.value = normalizeError(error).message;
       return null;
+    }
+  }
+
+  async function loadVisitEvidence(visitId: string): Promise<VisitEvidenceSummaryView | null> {
+    evidenceLoading.value = true;
+    photoEvidenceError.value = null;
+    if (visitEvidence.value?.visitId !== visitId) visitEvidence.value = null;
+    try {
+      visitEvidence.value = (await salesApi.visitEvidence(visitId)).data;
+      return visitEvidence.value;
+    } catch (error) {
+      photoEvidenceError.value = normalizeError(error).message;
+      return null;
+    } finally {
+      evidenceLoading.value = false;
+    }
+  }
+
+  async function captureAndUploadStorefrontPhoto(
+    visitId: string,
+  ): Promise<VisitEvidenceSummaryView | null> {
+    if (pendingStorefrontPhoto) {
+      photoEvidenceError.value = '上一张门头照尚未上传，请先重试或放弃后再拍摄';
+      return null;
+    }
+    const adapter = getFeishuAdapter();
+    photoEvidenceError.value = null;
+    try {
+      photoOperationStage.value = 'CAMERA';
+      const photo = await adapter.captureStorefrontPhoto();
+      pendingStorefrontPhoto = { visitId, photo, location: null };
+      hasPendingStorefrontPhoto.value = true;
+      return await uploadPendingStorefrontPhoto();
+    } catch (error) {
+      photoEvidenceError.value = error instanceof Error ? error.message : '门头照拍摄失败';
+      return null;
+    } finally {
+      photoOperationStage.value = null;
+    }
+  }
+
+  async function retryPendingStorefrontPhoto(): Promise<VisitEvidenceSummaryView | null> {
+    if (!pendingStorefrontPhoto) return null;
+    photoEvidenceError.value = null;
+    try {
+      return await uploadPendingStorefrontPhoto();
+    } catch (error) {
+      photoEvidenceError.value = error instanceof Error ? error.message : '门头照上传失败';
+      return null;
+    } finally {
+      photoOperationStage.value = null;
+    }
+  }
+
+  async function uploadPendingStorefrontPhoto(): Promise<VisitEvidenceSummaryView | null> {
+    const pending = pendingStorefrontPhoto;
+    if (!pending) return null;
+    const adapter = getFeishuAdapter();
+    if (!pending.location) {
+      photoOperationStage.value = 'LOCATION';
+      pending.location = await getCurrentLocation(30_000);
+    }
+    photoOperationStage.value = 'UPLOAD';
+    const target = buildUploadRequest(`/sales/me/visits/${pending.visitId}/evidence/photos`);
+    await adapter.uploadPhoto(pending.photo, {
+      ...target,
+      formData: {
+        clientEvidenceId: pending.photo.localPhotoId,
+        captureSource: 'FEISHU_CAMERA',
+        capturedAt: new Date(pending.photo.capturedAt).toISOString(),
+        longitude: String(pending.location.longitude),
+        latitude: String(pending.location.latitude),
+        accuracyMeters: String(pending.location.accuracy),
+      },
+      fileName: `${pending.photo.localPhotoId}.jpg`,
+    });
+    try {
+      await adapter.discardPhoto(pending.photo);
+    } catch (error) {
+      console.warn('[VisitEvidence] 已上传门头照的临时文件删除失败，等待客户端清理', error);
+    }
+    pendingStorefrontPhoto = null;
+    hasPendingStorefrontPhoto.value = false;
+    return await loadVisitEvidence(pending.visitId);
+  }
+
+  async function discardPendingStorefrontPhoto(): Promise<void> {
+    const pending = pendingStorefrontPhoto;
+    pendingStorefrontPhoto = null;
+    hasPendingStorefrontPhoto.value = false;
+    photoEvidenceError.value = null;
+    if (!pending) return;
+    try {
+      await getFeishuAdapter().discardPhoto(pending.photo);
+    } catch (error) {
+      console.warn('[VisitEvidence] 待上传门头照临时文件删除失败，等待客户端清理', error);
     }
   }
 
@@ -359,6 +575,7 @@ export const useSalesStore = defineStore('sales', () => {
     workDayId: string,
     point: { latitude: number; longitude: number; accuracy: number; timestamp: number },
   ): void {
+    lastCurrentLocation.value = point;
     uploadChain = uploadChain.then(async () => {
       if (trackingWorkDayId.value !== workDayId) return;
       const result = await uploadLocationPoints(workDayId, [{
@@ -432,9 +649,16 @@ export const useSalesStore = defineStore('sales', () => {
     context.value = null;
     targets.value = null;
     nearbyStores.value = null;
+    nearbyCache.clear();
+    nearbyRequestSequence += 1;
+    locationRequestGeneration += 1;
+    currentLocationRequest = null;
+    currentLocationLoading.value = false;
     visits.value = null;
+    visitPlans.value = null;
     activeVisit.value = null;
     recordingSession.value = null;
+    visitEvidence.value = null;
     todaySummary.value = null;
     monthSummary.value = null;
     attendanceMonth.value = null;
@@ -443,11 +667,17 @@ export const useSalesStore = defineStore('sales', () => {
     errorMessage.value = null;
     nearbyError.value = null;
     visitsError.value = null;
+    visitPlansError.value = null;
     visitError.value = null;
     attendanceError.value = null;
     trackError.value = null;
     recordingError.value = null;
+    photoEvidenceError.value = null;
+    photoOperationStage.value = null;
+    hasPendingStorefrontPhoto.value = false;
+    pendingStorefrontPhoto = null;
     summaryError.value = null;
+    lastCurrentLocation.value = null;
   }
 
   /** 新建拜访后插入列表头部，避免返回轨迹页时看到旧列表。 */
@@ -474,8 +704,10 @@ export const useSalesStore = defineStore('sales', () => {
     targets,
     nearbyStores,
     visits,
+    visitPlans,
     activeVisit,
     recordingSession,
+    visitEvidence,
     todaySummary,
     monthSummary,
     track,
@@ -483,6 +715,7 @@ export const useSalesStore = defineStore('sales', () => {
     targetsLoading,
     nearbyLoading,
     visitsLoading,
+    visitPlansLoading,
     visitLoading,
     trackLoading,
     workDay,
@@ -492,24 +725,37 @@ export const useSalesStore = defineStore('sales', () => {
     errorMessage,
     nearbyError,
     visitsError,
+    visitPlansError,
     visitError,
     attendanceError,
     trackError,
     recordingError,
+    evidenceLoading,
+    photoOperationStage,
+    photoEvidenceError,
+    hasPendingStorefrontPhoto,
     summaryLoading,
     summaryError,
     locationStatus,
     trackingWorkDayId,
+    currentLocationLoading,
+    lastCurrentLocation,
     loadContext,
     loadTargets,
     loadNearbyStores,
+    getCurrentLocation,
     createVisit,
+    loadVisitPlans,
     loadVisits,
     loadActivitySummaries,
     loadVisit,
     checkOutVisit,
     submitVisitResult,
     loadRecordings,
+    loadVisitEvidence,
+    captureAndUploadStorefrontPhoto,
+    retryPendingStorefrontPhoto,
+    discardPendingStorefrontPhoto,
     recordDiscardedClip,
     loadWorkDay,
     loadAttendanceMonth,

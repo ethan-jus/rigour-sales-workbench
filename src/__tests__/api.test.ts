@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { afterEach, describe, it, expect, beforeEach, vi } from 'vitest';
 import { normalizeError, ErrorCategory } from '@/api/core/error';
 import { apiClient, ApiError, buildUploadRequest } from '@/api/core/client';
 
@@ -45,6 +45,11 @@ describe('apiClient', () => {
     localStorage.clear();
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
   it('setToken 和 clearToken 工作正常', () => {
     apiClient.setToken('test-token');
     expect(localStorage.getItem('auth_token')).toBe('test-token');
@@ -69,5 +74,22 @@ describe('apiClient', () => {
     expect(request.url).toBe(`${window.location.origin}/api/v1/sales/me/visits/v-1/recordings/clips`);
     expect(request.headers.Authorization).toBe('Bearer upload-token');
     expect(request.headers['Content-Type']).toBeUndefined();
+  });
+
+  it('普通API请求超过15秒会主动中止并归类为可重试网络错误', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn((_input: RequestInfo | URL, init?: RequestInit) => (
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+      })
+    )));
+
+    const request = apiClient.get('/sales/me/visit-plans').catch((error) => {
+      expect(error).toMatchObject({ name: 'ApiError', code: 'REQUEST_TIMEOUT' });
+      return normalizeError(error);
+    });
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    expect(await request).toMatchObject({ category: ErrorCategory.NETWORK });
   });
 });

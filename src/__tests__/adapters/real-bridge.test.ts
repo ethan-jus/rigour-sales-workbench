@@ -130,6 +130,52 @@ describe('realAdapter 官方 callback bridge', () => {
     installTt({});
     expect(realAdapter.getLocationStatus()).toBe('unsupported');
     expect(realAdapter.getAudioStatus()).toBe('unsupported');
+    expect(realAdapter.getCameraStatus()).toBe('unsupported');
+  });
+
+  it('门头照只调用手机相机，不提供相册来源，并通过multipart上传', async () => {
+    const chooseImage = vi.fn((options: CallbackOptions) => {
+      (options.success as (result: { tempFilePaths: string[] }) => void)({
+        tempFilePaths: ['ttfile://storefront.jpg'],
+      });
+    });
+    const readFile = vi.fn((options: CallbackOptions) => {
+      (options.success as (result: { data: ArrayBuffer }) => void)({
+        data: new Uint8Array([0xff, 0xd8, 0xff, 0xd9]).buffer,
+      });
+    });
+    const unlink = vi.fn((options: CallbackOptions) => {
+      (options.success as () => void)();
+    });
+    const fetchMock = vi.fn().mockResolvedValue(new Response('', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    installTt({ chooseImage, getFileSystemManager: () => ({ readFile, unlink }) });
+
+    const photo = await realAdapter.captureStorefrontPhoto();
+    expect(chooseImage).toHaveBeenCalledWith(expect.objectContaining({
+      count: 1,
+      sizeType: ['compressed'],
+      sourceType: ['camera'],
+    }));
+    expect(chooseImage.mock.calls[0][0]).not.toEqual(expect.objectContaining({ sourceType: ['album'] }));
+
+    await realAdapter.uploadPhoto(photo, {
+      url: 'https://sales.example.com/api/v1/sales/me/visits/v-1/evidence/photos',
+      headers: { Authorization: 'Bearer token' },
+      formData: { captureSource: 'FEISHU_CAMERA' },
+      fileName: 'storefront.jpg',
+    });
+    await realAdapter.discardPhoto(photo);
+
+    expect(readFile).toHaveBeenCalledWith(expect.objectContaining({ filePath: 'ttfile://storefront.jpg' }));
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://sales.example.com/api/v1/sales/me/visits/v-1/evidence/photos',
+      expect.objectContaining({ method: 'POST', body: expect.any(FormData) }),
+    );
+    const uploadBody = fetchMock.mock.calls[0][1]?.body as FormData;
+    const uploadedFile = uploadBody.get('file') as File;
+    expect(uploadedFile.type).toBe('image/jpeg');
+    expect(unlink).toHaveBeenCalledWith(expect.objectContaining({ filePath: 'ttfile://storefront.jpg' }));
   });
 
   it('RecorderManager 返回 localClipId、tempFilePath 和本地毫秒时长', async () => {

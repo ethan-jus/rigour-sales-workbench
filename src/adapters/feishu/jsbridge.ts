@@ -13,6 +13,7 @@ const JSAPI_LIST = [
   'getLocation',
   'getRecorderManager',
   'getFileSystemManager',
+  'chooseImage',
 ];
 const SCRIPT_LOAD_TIMEOUT_MS = 10_000;
 const CONFIG_TIMEOUT_MS = 15_000;

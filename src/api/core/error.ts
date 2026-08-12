@@ -7,7 +7,7 @@
  *
  * 边界：
  * - 不处理错误重试、降级或 toast 展示，只做分类
- * - 网络错误仅识别 Failed to fetch，不覆盖超时、CORS、DNS 等细分场景
+ * - CORS/DNS 等底层错误仍受不同 WebView 的错误文案影响；显式请求超时使用稳定错误码
  *
  * 风险：
  * - Failed to fetch 字符串匹配依赖浏览器实现，跨浏览器兼容性需验证
@@ -58,6 +58,16 @@ export function normalizeError(error: unknown): NormalizedError {
   if (error instanceof Error && error.name === 'ApiError') {
     const apiErr = error as Error & { code?: string; httpStatus?: number; requestId?: string };
     const httpStatus = apiErr.httpStatus ?? 0;
+
+    if (apiErr.code === 'REQUEST_TIMEOUT') {
+      return {
+        category: ErrorCategory.NETWORK,
+        code: 'REQUEST_TIMEOUT',
+        message: apiErr.message,
+        requestId: apiErr.requestId,
+        originalError: error,
+      };
+    }
 
     if (httpStatus === 401) {
       return {

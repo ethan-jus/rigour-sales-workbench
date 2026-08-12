@@ -8,6 +8,7 @@ import { mockAdapter, setFeishuAdapter } from '@/adapters';
 const mocks = vi.hoisted(() => ({
   recordings: vi.fn(),
   discardRecordingClip: vi.fn(),
+  visitEvidence: vi.fn(),
 }));
 
 vi.mock('vue-router', () => ({
@@ -23,6 +24,7 @@ vi.mock('@/api/core/sales', async (importOriginal) => {
       ...original.salesApi,
       recordings: mocks.recordings,
       discardRecordingClip: mocks.discardRecordingClip,
+      visitEvidence: mocks.visitEvidence,
     },
   };
 });
@@ -71,9 +73,10 @@ function recordingFixture(uploadedTotalDurationMs: number, minimumRecordingSecon
     sessionId: uploadedTotalDurationMs ? 'session-1' : null,
     visitId: 'visit-1',
     status: uploadedTotalDurationMs ? 'UPLOADED' : 'NOT_STARTED',
+    evidenceStatus: uploadedTotalDurationMs ? 'TECHNICALLY_VERIFIED' : 'PENDING',
     clipCount: uploadedTotalDurationMs ? 1 : 0,
     uploadedTotalDurationMs,
-    verifiedTotalDurationMs: 0,
+    verifiedTotalDurationMs: uploadedTotalDurationMs,
     recordingEnabled: true,
     minimumRecordingSeconds,
     minimumClipSeconds: 30,
@@ -103,11 +106,19 @@ describe('VisitPage 真实拜访状态流', () => {
     setFeishuAdapter(mockAdapter);
     mocks.recordings.mockReset();
     mocks.discardRecordingClip.mockReset();
+    mocks.visitEvidence.mockReset();
     mocks.discardRecordingClip.mockResolvedValue(ok({
       clientClipId: 'short-clip',
       durationMs: 10_000,
       disposition: 'DISCARDED_NOT_STORED',
       recordedAt: '2026-08-09T00:00:10Z',
+    }));
+    mocks.visitEvidence.mockResolvedValue(ok({
+      visitId: 'visit-1',
+      requiredStorefrontPhotoCount: 1,
+      storefrontPhotoCount: 0,
+      storefrontPhotoSatisfied: false,
+      photos: [],
     }));
   });
 
@@ -141,6 +152,8 @@ describe('VisitPage 真实拜访状态流', () => {
     expect(buttonLabels).not.toContain('到店签退');
     expect(buttonLabels).toContain('开始现场录音');
     expect(buttonLabels).toContain('保存拜访记录');
+    expect(buttonLabels).toContain('拍摄门头照片');
+    expect(page.text()).toContain('只能使用手机相机现场拍摄');
   });
 
   it('录音与结果都完成后只给出明确的完成拜访主操作', async () => {
@@ -205,6 +218,6 @@ describe('VisitPage 真实拜访状态流', () => {
       expect.objectContaining({ durationMs: 10_000, reason: 'TOO_SHORT' }),
     );
     expect(page.text()).toContain('本次已丢弃 1 段过短录音');
-    expect(page.text()).toContain('已上传 0 秒');
+    expect(page.text()).toContain('已接收 0 秒');
   });
 });

@@ -64,6 +64,11 @@ describe('unsupportedAdapter', () => {
     expect(result).toBeNull();
   });
 
+  it('手机相机能力明确阻断', async () => {
+    expect(unsupportedAdapter.getCameraStatus()).toBe('unsupported');
+    await expect(unsupportedAdapter.captureStorefrontPhoto()).rejects.toThrow('不是飞书客户端');
+  });
+
   it('destroy 静默无操作', () => {
     unsupportedAdapter.destroy();
     // 不应抛出异常

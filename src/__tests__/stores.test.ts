@@ -65,6 +65,10 @@ describe('Stores', () => {
         stopRecording: async () => null,
         uploadRecording: async () => {},
         discardRecording: async () => {},
+        getCameraStatus: () => 'unsupported',
+        captureStorefrontPhoto: async () => { throw new Error('unsupported'); },
+        uploadPhoto: async () => {},
+        discardPhoto: async () => {},
         destroy: () => {},
       });
       const store = useAuthStore();

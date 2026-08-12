@@ -79,6 +79,28 @@ export interface NearbyStorePageView {
   total: number;
 }
 
+export interface VisitPlanView {
+  planId: string;
+  plannedDate: string;
+  targetType: string;
+  customerId: string | null;
+  storeId: string;
+  customerName: string | null;
+  storeName: string;
+  storeAddress: string | null;
+  longitude: number | null;
+  latitude: number | null;
+  objective: string;
+  status: 'PLANNED' | 'IN_PROGRESS' | 'COMPLETED' | string;
+  visitId: string | null;
+  version: number;
+}
+
+export interface VisitPlanListView {
+  date: string;
+  items: VisitPlanView[];
+}
+
 export interface PoiTargetCommand {
   poiId: string;
   name: string;
@@ -91,6 +113,7 @@ export interface PoiTargetCommand {
 export interface CreateVisitCommand {
   idempotencyKey: string;
   workDayId: string;
+  visitPlanId?: string;
   targetType: 'MY_STORE' | 'POI';
   storeId?: string;
   poi?: PoiTargetCommand;
@@ -201,6 +224,7 @@ export interface RecordingSessionView {
   sessionId: string | null;
   visitId: string;
   status: string;
+  evidenceStatus: string;
   clipCount: number;
   uploadedTotalDurationMs: number;
   verifiedTotalDurationMs: number;
@@ -208,6 +232,32 @@ export interface RecordingSessionView {
   minimumRecordingSeconds: number;
   minimumClipSeconds: number;
   clips: RecordingClipView[];
+}
+
+export interface VisitPhotoEvidenceView {
+  evidenceId: string;
+  visitId: string;
+  clientEvidenceId: string;
+  evidenceRole: 'STOREFRONT' | string;
+  captureSource: 'FEISHU_CAMERA' | string;
+  capturedAt: string;
+  mediaType: string;
+  objectSizeBytes: number;
+  contentHash: string;
+  longitude: number;
+  latitude: number;
+  accuracyMeters: number;
+  distanceToTargetMeters: number;
+  evidenceStatus: string;
+  serverReceivedAt: string;
+}
+
+export interface VisitEvidenceSummaryView {
+  visitId: string;
+  requiredStorefrontPhotoCount: number;
+  storefrontPhotoCount: number;
+  storefrontPhotoSatisfied: boolean;
+  photos: VisitPhotoEvidenceView[];
 }
 
 export interface DiscardRecordingClipCommand {
@@ -401,6 +451,10 @@ export const salesApi = {
     });
   },
 
+  visitPlans(date: string): Promise<ApiResponse<VisitPlanListView>> {
+    return apiClient.get<VisitPlanListView>('/sales/me/visit-plans', { date });
+  },
+
   createVisit(command: CreateVisitCommand): Promise<ApiResponse<VisitView>> {
     return apiClient.post<VisitView>('/sales/me/visits', command);
   },
@@ -431,6 +485,10 @@ export const salesApi = {
 
   recordings(visitId: string): Promise<ApiResponse<RecordingSessionView>> {
     return apiClient.get<RecordingSessionView>(`/sales/me/visits/${visitId}/recordings`);
+  },
+
+  visitEvidence(visitId: string): Promise<ApiResponse<VisitEvidenceSummaryView>> {
+    return apiClient.get<VisitEvidenceSummaryView>(`/sales/me/visits/${visitId}/evidence`);
   },
 
   discardRecordingClip(

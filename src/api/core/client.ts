@@ -15,10 +15,16 @@ import type { ApiResponse } from '@/types';
  *
  * 风险：
  * - 非 Mock 模式下，Token 必须由后端 /auth/login 返回，此处仅从 localStorage 读取
- * - 未实现请求重试、超时、并发去重，后续可引入拦截器链
+ * - 写请求不自动重试；超时后由页面保留幂等键语义并提示用户主动重试
  */
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 const DEFAULT_TENANT_ID = import.meta.env.VITE_DEFAULT_TENANT_ID || 'demo';
+const configuredTimeoutMs = Number(import.meta.env.VITE_API_TIMEOUT_MS || 15_000);
+const REQUEST_TIMEOUT_MS = Number.isFinite(configuredTimeoutMs)
+  && configuredTimeoutMs >= 1_000
+  && configuredTimeoutMs <= 60_000
+  ? configuredTimeoutMs
+  : 15_000;
 
 function currentTenantId(): string {
   return localStorage.getItem('auth_tenant_id') || DEFAULT_TENANT_ID;
@@ -83,6 +89,21 @@ async function handleResponse<T>(response: Response): Promise<ApiResponse<T>> {
   return response.json();
 }
 
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (error && typeof error === 'object' && 'name' in error && error.name === 'AbortError') {
+      throw new ApiError('REQUEST_TIMEOUT', `请求超过 ${Math.round(REQUEST_TIMEOUT_MS / 1_000)} 秒，请重试`);
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
 /**
  * 前端 API 错误异常类。
  * 携带后端错误码、HTTP 状态码和 requestId，便于 normalizeError 分类处理。
@@ -106,7 +127,7 @@ export const apiClient = {
     if (params) {
       Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
     }
-    const response = await fetch(url.toString(), {
+    const response = await fetchWithTimeout(url.toString(), {
       method: 'GET',
       headers: buildHeaders(),
     });
@@ -114,7 +135,7 @@ export const apiClient = {
   },
 
   async post<T>(path: string, data?: unknown): Promise<ApiResponse<T>> {
-    const response = await fetch(`${BASE_URL}${path}`, {
+    const response = await fetchWithTimeout(`${BASE_URL}${path}`, {
       method: 'POST',
       headers: buildHeaders(),
       body: data ? JSON.stringify(data) : undefined,
@@ -123,7 +144,7 @@ export const apiClient = {
   },
 
   async put<T>(path: string, data?: unknown): Promise<ApiResponse<T>> {
-    const response = await fetch(`${BASE_URL}${path}`, {
+    const response = await fetchWithTimeout(`${BASE_URL}${path}`, {
       method: 'PUT',
       headers: buildHeaders(),
       body: data ? JSON.stringify(data) : undefined,
@@ -132,7 +153,7 @@ export const apiClient = {
   },
 
   async delete<T>(path: string): Promise<ApiResponse<T>> {
-    const response = await fetch(`${BASE_URL}${path}`, {
+    const response = await fetchWithTimeout(`${BASE_URL}${path}`, {
       method: 'DELETE',
       headers: buildHeaders(),
     });

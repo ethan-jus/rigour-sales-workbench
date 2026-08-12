@@ -17,6 +17,7 @@ const salesStore = useSalesStore();
 const adapter = getFeishuAdapter();
 
 const audioStatus = ref<CapabilityStatus>('idle');
+const cameraStatus = ref<CapabilityStatus>('idle');
 const isRecording = ref(false);
 const uploadingRecording = ref(false);
 const loadingRecordings = ref(false);
@@ -69,6 +70,7 @@ const resultDirty = computed(() => {
     || (resultNote.value.trim() || null) !== (visit.value.resultNote ?? null);
 });
 const uploadedDurationMs = computed(() => salesStore.recordingSession?.uploadedTotalDurationMs ?? 0);
+const verifiedDurationMs = computed(() => salesStore.recordingSession?.verifiedTotalDurationMs ?? 0);
 const requiredDurationMs = computed(() => (
   salesStore.recordingSession?.minimumRecordingSeconds ?? 0
 ) * 1_000);
@@ -80,7 +82,7 @@ const currentRecordingDurationMs = computed(() => (
 ));
 const displayedRecordingDurationMs = computed(() => (
   Math.max(
-    uploadedDurationMs.value + pendingClips.value
+    verifiedDurationMs.value + pendingClips.value
       .filter((clip) => clip.duration >= minimumClipSeconds.value * 1_000)
       .reduce((total, clip) => total + clip.duration, 0),
     isRecording.value
@@ -104,7 +106,20 @@ const recordingRequirementSatisfied = computed(() => {
   const session = salesStore.recordingSession;
   if (!session) return false;
   if (!session.recordingEnabled) return true;
-  return !recordingPolicyInvalid.value && uploadedDurationMs.value >= requiredDurationMs.value;
+  return !recordingPolicyInvalid.value
+    && session.evidenceStatus === 'TECHNICALLY_VERIFIED'
+    && verifiedDurationMs.value >= requiredDurationMs.value;
+});
+const photoRequirementSatisfied = computed(() => (
+  salesStore.visitEvidence?.storefrontPhotoSatisfied === true
+));
+const photoOperationLabel = computed(() => {
+  switch (salesStore.photoOperationStage) {
+    case 'CAMERA': return '正在打开相机';
+    case 'LOCATION': return '正在确认拍照位置';
+    case 'UPLOAD': return '正在上传门头照';
+    default: return '';
+  }
 });
 const visitRecordComplete = computed(() => resultSaved.value && !resultDirty.value);
 const canRecord = computed(() => isActiveVisit.value
@@ -143,8 +158,14 @@ const currentTaskHint = computed(() => {
   if (recordingUploadError.value || pendingClips.value.length) {
     return '可以先完成离店；录音仍会留在本页等待上传或重传。';
   }
+  if (uploadedDurationMs.value > verifiedDurationMs.value) {
+    return '录音已接收但尚未全部通过服务端核验；可以完成离店，本次将进入主管复核。';
+  }
   if (salesStore.recordingSession?.recordingEnabled && !recordingRequirementSatisfied.value) {
     return '可以完成离店；录音不足只影响有效拜访核验，不会限制销售离开门店。';
+  }
+  if (!photoRequirementSatisfied.value) {
+    return '可以完成离店；缺少现场门头照会作为异常进入主管复核。';
   }
   return '拜访记录已保存，可以获取离店位置并完成拜访。';
 });
@@ -157,6 +178,7 @@ const audioStatusLabel = computed(() => {
   if (recordingPolicyInvalid.value) return '规则异常';
   if (salesStore.recordingSession && !salesStore.recordingSession.recordingEnabled) return '规则未要求';
   if (recordingRequirementSatisfied.value) return '已完成';
+  if (uploadedDurationMs.value > verifiedDurationMs.value) return '待核验';
   return '待录音';
 });
 
@@ -216,6 +238,23 @@ async function reloadRecordings() {
   }
 }
 
+async function captureStorefrontPhoto() {
+  if (!visit.value) return;
+  const updated = await salesStore.captureAndUploadStorefrontPhoto(visit.value.id);
+  if (updated) showToast('门头照已上传');
+  else if (salesStore.photoEvidenceError) showToast(salesStore.photoEvidenceError);
+}
+
+async function retryStorefrontPhoto() {
+  const updated = await salesStore.retryPendingStorefrontPhoto();
+  if (updated) showToast('门头照已重新上传');
+}
+
+async function discardPendingStorefrontPhoto() {
+  await salesStore.discardPendingStorefrontPhoto();
+  showToast('已放弃本地待上传照片，可重新拍摄');
+}
+
 function startRecording() {
   if (!canRecord.value) {
     showToast(salesStore.recordingError || '录音规则尚未就绪');
@@ -237,7 +276,7 @@ function startRecording() {
     });
     isRecording.value = true;
     recordingSessionStartedAt.value = Date.now();
-    recordingBaselineUploadedMs.value = uploadedDurationMs.value;
+    recordingBaselineUploadedMs.value = verifiedDurationMs.value;
     recordingUploadError.value = null;
     audioStatus.value = 'active';
   } catch (error) {
@@ -372,7 +411,7 @@ async function checkOut() {
   if (!visit.value || !canCheckOut.value) return;
   checkingOut.value = true;
   try {
-    const current = await adapter.getCurrentLocation();
+    const current = await salesStore.getCurrentLocation(30_000);
     const updated = await salesStore.checkOutVisit(visit.value.id, {
       idempotencyKey: createIdempotencyKey('visit-checkout'),
       clientOccurredAt: new Date().toISOString(),
@@ -422,7 +461,10 @@ onMounted(async () => {
     }
   }
   audioStatus.value = adapter.getAudioStatus();
-  if (visit.value) await reloadRecordings();
+  cameraStatus.value = adapter.getCameraStatus();
+  if (visit.value) {
+    await Promise.all([reloadRecordings(), salesStore.loadVisitEvidence(visit.value.id)]);
+  }
   durationTimer = window.setInterval(() => { nowMs.value = Date.now(); }, 1_000);
 });
 
@@ -489,6 +531,59 @@ onBeforeRouteLeave(() => {
         </div>
 
         <div class="section-heading">
+          <h2>现场门头照</h2>
+          <span :class="{ 'section-state--success': photoRequirementSatisfied }">
+            {{ photoRequirementSatisfied ? '已满足' : '至少1张' }}
+          </span>
+        </div>
+        <section class="photo-card surface-card">
+          <div class="photo-summary">
+            <div class="photo-icon"><van-icon name="photograph" size="24" /></div>
+            <div>
+              <strong>只能使用手机相机现场拍摄</strong>
+              <p v-if="salesStore.visitEvidence">
+                已上传 {{ salesStore.visitEvidence.storefrontPhotoCount }} 张 ·
+                本次要求 {{ salesStore.visitEvidence.requiredStorefrontPhotoCount }} 张
+              </p>
+              <p v-else>正在读取本次拜访照片规则</p>
+            </div>
+          </div>
+          <div v-if="salesStore.photoEvidenceError" class="photo-error">
+            <van-icon name="warning-o" />
+            <span>{{ salesStore.photoEvidenceError }}</span>
+          </div>
+          <div v-else-if="cameraStatus === 'unsupported'" class="photo-error">
+            <van-icon name="warning-o" />
+            <span>当前客户端无法拉起手机相机，请在飞书手机端打开本次拜访后拍摄。</span>
+          </div>
+          <div v-if="salesStore.hasPendingStorefrontPhoto" class="photo-actions">
+            <van-button
+              plain
+              type="warning"
+              :loading="Boolean(salesStore.photoOperationStage)"
+              :loading-text="photoOperationLabel"
+              @click="retryStorefrontPhoto"
+            >重试上传</van-button>
+            <van-button plain @click="discardPendingStorefrontPhoto">放弃并重拍</van-button>
+          </div>
+          <van-button
+            v-else-if="isActiveVisit"
+            block
+            plain
+            type="primary"
+            icon="photograph"
+            :disabled="cameraStatus === 'unsupported'"
+            :loading="Boolean(salesStore.photoOperationStage) || salesStore.evidenceLoading"
+            :loading-text="photoOperationLabel || '读取中'"
+            @click="captureStorefrontPhoto"
+          >{{ photoRequirementSatisfied ? '继续拍摄门头照' : '拍摄门头照片' }}</van-button>
+          <p class="photo-policy-note">
+            不提供相册或文件上传入口；系统校验拍摄时间、当前位置、门店围栏、文件签名和内容哈希。
+            图片是否真正包含门头仍由后续图像分析或主管抽检确认。
+          </p>
+        </section>
+
+        <div class="section-heading">
           <h2>现场录音</h2>
           <span :class="{ 'section-state--success': recordingRequirementSatisfied }">{{ audioStatusLabel }}</span>
         </div>
@@ -533,7 +628,9 @@ onBeforeRouteLeave(() => {
                   已连续录制 {{ recordingDurationLabel }} · 单段10分钟自动续录，不会因达标停止
                 </p>
                 <p v-if="salesStore.recordingSession.recordingEnabled && !recordingPolicyInvalid">
-                  已上传 {{ Math.round(uploadedDurationMs / 1000) }} 秒 · 要求 {{ salesStore.recordingSession.minimumRecordingSeconds }} 秒
+                  已核验 {{ Math.round(verifiedDurationMs / 1000) }} 秒 ·
+                  已接收 {{ Math.round(uploadedDurationMs / 1000) }} 秒 ·
+                  要求 {{ salesStore.recordingSession.minimumRecordingSeconds }} 秒
                 </p>
                 <p v-else-if="recordingPolicyInvalid">尚未开始录音 · 规则时长无效</p>
                 <p v-else>本次拜访规则未要求录音</p>
@@ -562,7 +659,7 @@ onBeforeRouteLeave(() => {
             <div v-if="salesStore.recordingSession.clips.length" class="recording-clips">
               <div v-for="clip in salesStore.recordingSession.clips" :key="clip.clipId">
                 <span><van-icon name="success" /> 第 {{ clip.clipIndex + 1 }} 段</span>
-                <strong>{{ Math.round((clip.clientDurationMs ?? 0) / 1000) }} 秒 · 已上传</strong>
+                <strong>{{ Math.round((clip.clientDurationMs ?? 0) / 1000) }} 秒 · 服务端已接收</strong>
               </div>
             </div>
           </template>
@@ -717,6 +814,14 @@ onBeforeRouteLeave(() => {
 .current-task strong { font-size: 13px; }
 .current-task p { margin-top: 2px; font-size: 12px; line-height: 1.5; }
 .section-state--success { color: var(--workbench-success) !important; }
+.photo-card { padding: 16px; }
+.photo-summary { display: flex; gap: 12px; align-items: center; margin-bottom: 14px; }
+.photo-icon { display: grid; flex: 0 0 48px; height: 48px; color: var(--workbench-primary); background: #eaf2ff; border-radius: 14px; place-items: center; }
+.photo-summary strong { color: var(--workbench-ink); font-size: 14px; }
+.photo-summary p { margin-top: 4px; color: var(--workbench-muted); font-size: 12px; }
+.photo-error { display: flex; gap: 7px; align-items: flex-start; margin-bottom: 12px; padding: 10px 12px; color: #b35437; background: #fff3ed; border-radius: 10px; font-size: 12px; line-height: 1.55; }
+.photo-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.photo-policy-note { margin: 10px 2px 0; color: var(--workbench-muted); font-size: 11px; line-height: 1.6; }
 .recording-card { padding: 16px; }
 .recording-error { display: flex; gap: 11px; margin-bottom: 14px; color: #b35437; }
 .recording-error > span { display: grid; flex: 0 0 40px; height: 40px; background: #fff0ea; border-radius: 12px; place-items: center; }

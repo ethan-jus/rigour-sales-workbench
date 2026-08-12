@@ -70,6 +70,22 @@ export const unsupportedAdapter: IFeishuAdapter = {
     blocked();
   },
 
+  getCameraStatus(): CapabilityStatus {
+    return 'unsupported';
+  },
+
+  async captureStorefrontPhoto() {
+    blocked();
+  },
+
+  async uploadPhoto() {
+    blocked();
+  },
+
+  async discardPhoto() {
+    blocked();
+  },
+
   destroy() {
     // 无资源需要释放
   },

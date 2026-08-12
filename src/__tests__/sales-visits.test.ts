@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   uploadLocationPoints: vi.fn(),
   reportInterruption: vi.fn(),
   workDayTrack: vi.fn(),
+  visitEvidence: vi.fn(),
 }));
 
 vi.mock('@/api/core/sales', async (importOriginal) => {
@@ -30,6 +31,7 @@ vi.mock('@/api/core/sales', async (importOriginal) => {
       uploadLocationPoints: mocks.uploadLocationPoints,
       reportInterruption: mocks.reportInterruption,
       workDayTrack: mocks.workDayTrack,
+      visitEvidence: mocks.visitEvidence,
     },
   };
 });
@@ -82,6 +84,56 @@ describe('salesStore 拜访闭环', () => {
     expect(result).toBeNull();
     expect(store.nearbyError).toContain('高德配额不足');
     expect(store.errorMessage).toBeNull();
+  });
+
+  it('附近门店一分钟内重复查询复用结果，避免重复等待高德', async () => {
+    const page = { items: [], page: 1, pageSize: 20, total: 0 };
+    mocks.nearbyStores.mockResolvedValue(ok(page));
+    const store = useSalesStore();
+
+    await store.loadNearbyStores(121.47, 31.23, 3000);
+    await store.loadNearbyStores(121.47, 31.23, 3000);
+
+    expect(mocks.nearbyStores).toHaveBeenCalledTimes(1);
+    expect(store.nearbyStores).toEqual(page);
+  });
+
+  it('附近门店并发查询只展示最后一次条件的结果', async () => {
+    let resolveFirst!: (value: ReturnType<typeof ok>) => void;
+    let resolveSecond!: (value: ReturnType<typeof ok>) => void;
+    mocks.nearbyStores
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveSecond = resolve; }));
+    const store = useSalesStore();
+
+    const first = store.loadNearbyStores(121.47, 31.23, 1000);
+    const second = store.loadNearbyStores(121.47, 31.23, 5000);
+    expect(store.nearbyLoading).toBe(true);
+    resolveSecond(ok({ items: [{ poiId: 'latest' }], page: 1, pageSize: 20, total: 1 }));
+    await second;
+    resolveFirst(ok({ items: [{ poiId: 'stale' }], page: 1, pageSize: 20, total: 1 }));
+    await first;
+
+    expect(store.nearbyStores?.items[0]?.poiId).toBe('latest');
+    expect(store.nearbyLoading).toBe(false);
+  });
+
+  it('短时间重复取当前位置合并请求并复用最新点位', async () => {
+    const getCurrentLocation = vi.fn(async () => ({
+      latitude: 31.23, longitude: 121.47, accuracy: 12, timestamp: Date.now(),
+    }));
+    setFeishuAdapter({ ...mockAdapter, getCurrentLocation });
+    const store = useSalesStore();
+
+    const [first, second] = await Promise.all([
+      store.getCurrentLocation(30_000),
+      store.getCurrentLocation(30_000),
+    ]);
+    const third = await store.getCurrentLocation(30_000);
+
+    expect(getCurrentLocation).toHaveBeenCalledTimes(1);
+    expect(first).toEqual(second);
+    expect(third).toEqual(first);
   });
 
   it('拜访列表查询失败只写入 visitsError', async () => {
@@ -152,6 +204,7 @@ describe('salesStore 拜访闭环', () => {
       sessionId: null,
       visitId: 'v-1',
       status: 'NOT_STARTED',
+      evidenceStatus: 'PENDING',
       clipCount: 0,
       uploadedTotalDurationMs: 0,
       verifiedTotalDurationMs: 0,
@@ -174,6 +227,42 @@ describe('salesStore 拜访闭环', () => {
     expect(recordings?.recordingEnabled).toBe(true);
     expect(recordings?.minimumRecordingSeconds).toBe(600);
     expect(recordings?.minimumClipSeconds).toBe(30);
+  });
+
+  it('门头照由相机采集并固定声明FEISHU_CAMERA后上传', async () => {
+    const uploadPhoto = vi.fn(async () => {});
+    const discardPhoto = vi.fn(async () => {});
+    setFeishuAdapter({
+      ...mockAdapter,
+      getCurrentLocation: async () => ({
+        latitude: 31.23, longitude: 121.47, accuracy: 12, timestamp: Date.now(),
+      }),
+      captureStorefrontPhoto: async () => ({
+        localPhotoId: 'photo-1', tempFilePath: 'ttfile://photo.jpg', capturedAt: Date.now(),
+      }),
+      uploadPhoto,
+      discardPhoto,
+    });
+    mocks.visitEvidence.mockResolvedValue(ok({
+      visitId: 'v-1', requiredStorefrontPhotoCount: 1, storefrontPhotoCount: 1,
+      storefrontPhotoSatisfied: true, photos: [],
+    }));
+    const store = useSalesStore();
+
+    const result = await store.captureAndUploadStorefrontPhoto('v-1');
+
+    expect(result?.storefrontPhotoSatisfied).toBe(true);
+    expect(uploadPhoto).toHaveBeenCalledWith(
+      expect.objectContaining({ localPhotoId: 'photo-1' }),
+      expect.objectContaining({
+        formData: expect.objectContaining({
+          clientEvidenceId: 'photo-1', captureSource: 'FEISHU_CAMERA',
+          longitude: '121.47', latitude: '31.23', accuracyMeters: '12',
+        }),
+      }),
+    );
+    expect(discardPhoto).toHaveBeenCalledTimes(1);
+    expect(store.hasPendingStorefrontPhoto).toBe(false);
   });
 
   it('轨迹查询成功写入 track，失败只写入 trackError', async () => {

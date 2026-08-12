@@ -23,6 +23,7 @@ let locationTimer: ReturnType<typeof setInterval> | null = null;
 let visibilityHandler: (() => void) | null = null;
 let isRecording = false;
 let recordingStartedAt = 0;
+let photoSequence = 0;
 
 export const mockAdapter: IFeishuAdapter = {
   detectContainer() {
@@ -150,9 +151,47 @@ export const mockAdapter: IFeishuAdapter = {
     // Mock 没有真实临时文件；短录音只由页面登记元数据。
   },
 
+  getCameraStatus(): CapabilityStatus {
+    return 'ready';
+  },
+
+  async captureStorefrontPhoto() {
+    photoSequence += 1;
+    const capturedAt = Date.now();
+    return {
+      localPhotoId: `mock-photo-${capturedAt}-${photoSequence}`,
+      tempFilePath: `mock://photos/${capturedAt}-${photoSequence}.jpg`,
+      capturedAt,
+    };
+  },
+
+  async uploadPhoto(photo, target) {
+    const body = new FormData();
+    // JPEG SOI/EOI 包裹最小伪数据，保证本地链路可验证服务端文件签名。
+    const pseudoPhoto = new Blob([
+      new Uint8Array([0xff, 0xd8, 0xff, 0xe0]),
+      `mock-storefront-${photo.localPhotoId}`,
+      new Uint8Array([0xff, 0xd9]),
+    ], { type: 'image/jpeg' });
+    body.append('file', pseudoPhoto, target.fileName);
+    for (const [key, value] of Object.entries(target.formData)) body.append(key, value);
+    const response = await fetch(target.url, {
+      method: 'POST', headers: target.headers, body,
+    });
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(`门头照上传失败：HTTP ${response.status} ${detail.slice(0, 120)}`);
+    }
+  },
+
+  async discardPhoto() {
+    // Mock 没有真实临时文件。
+  },
+
   destroy() {
     this.stopLocation();
     isRecording = false;
     recordingStartedAt = 0;
+    photoSequence = 0;
   },
 };

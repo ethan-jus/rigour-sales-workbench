@@ -32,6 +32,14 @@ interface GetLocationOptions {
   fail: (error: FeishuCallbackError) => void;
 }
 
+interface ChooseImageOptions {
+  count: 1;
+  sizeType: ['compressed'];
+  sourceType: ['camera'];
+  success: (result: { tempFilePaths: string[] }) => void;
+  fail: (error: FeishuCallbackError) => void;
+}
+
 interface RecorderManager {
   start: (options: {
     /** 单位为毫秒；官方最大值 600000，即 10 分钟。 */
@@ -67,6 +75,7 @@ interface FeishuJsapi {
   getLocation?: (options: GetLocationOptions) => void;
   getRecorderManager?: () => RecorderManager;
   getFileSystemManager?: () => FileSystemManager;
+  chooseImage?: (options: ChooseImageOptions) => void;
 }
 
 declare global {
@@ -94,6 +103,7 @@ let isRecording = false;
 let continuousRecordingRequested = false;
 let recordingObserver: RecordingObserver | null = null;
 let localClipSequence = 0;
+let localPhotoSequence = 0;
 let lastClip: RecorderStopResult | null = null;
 let pendingStop:
   | {
@@ -231,7 +241,7 @@ function getConfiguredFileSystemManager(): FileSystemManager {
   return tt.getFileSystemManager();
 }
 
-function readTemporaryAudio(filePath: string): Promise<ArrayBuffer> {
+function readTemporaryFile(filePath: string): Promise<ArrayBuffer> {
   let manager: FileSystemManager;
   try {
     manager = getConfiguredFileSystemManager();
@@ -251,6 +261,40 @@ function readTemporaryAudio(filePath: string): Promise<ArrayBuffer> {
       fail: (error) => reject(formatError('FileSystemManager.readFile', error)),
     });
   });
+}
+
+function unlinkTemporaryFile(filePath: string): Promise<void> {
+  let manager: FileSystemManager;
+  try {
+    manager = getConfiguredFileSystemManager();
+  } catch (error) {
+    return Promise.reject(error);
+  }
+  return new Promise<void>((resolve, reject) => {
+    manager.unlink({
+      filePath,
+      success: resolve,
+      fail: (error) => reject(formatError('FileSystemManager.unlink', error)),
+    });
+  });
+}
+
+function imageUploadMetadata(bytes: ArrayBuffer, requestedFileName: string): {
+  mediaType: 'image/jpeg' | 'image/png';
+  fileName: string;
+} {
+  const header = new Uint8Array(bytes, 0, Math.min(bytes.byteLength, 8));
+  const isJpeg = header.length >= 3 && header[0] === 0xff && header[1] === 0xd8 && header[2] === 0xff;
+  if (isJpeg) {
+    return { mediaType: 'image/jpeg', fileName: requestedFileName.replace(/\.[^.]+$/, '') + '.jpg' };
+  }
+  const isPng = header.length >= 8
+    && header[0] === 0x89 && header[1] === 0x50 && header[2] === 0x4e && header[3] === 0x47
+    && header[4] === 0x0d && header[5] === 0x0a && header[6] === 0x1a && header[7] === 0x0a;
+  if (isPng) {
+    return { mediaType: 'image/png', fileName: requestedFileName.replace(/\.[^.]+$/, '') + '.png' };
+  }
+  throw new Error('相机返回的照片不是可识别的 JPEG 或 PNG，请重新拍摄');
 }
 
 function getConfiguredRecorderManager(): RecorderManager {
@@ -447,7 +491,7 @@ export const realAdapter: IFeishuAdapter = {
   },
 
   async uploadRecording(clip, target) {
-    const audioBytes = await readTemporaryAudio(clip.tempFilePath);
+    const audioBytes = await readTemporaryFile(clip.tempFilePath);
     const body = new FormData();
     body.append('file', new Blob([audioBytes], { type: 'audio/aac' }), target.fileName);
     for (const [key, value] of Object.entries(target.formData)) body.append(key, value);
@@ -463,19 +507,63 @@ export const realAdapter: IFeishuAdapter = {
   },
 
   discardRecording(clip) {
-    let manager: FileSystemManager;
-    try {
-      manager = getConfiguredFileSystemManager();
-    } catch (error) {
-      return Promise.reject(error);
+    return unlinkTemporaryFile(clip.tempFilePath);
+  },
+
+  getCameraStatus(): CapabilityStatus {
+    if (!this.isJsapiAvailable()
+        || !window.tt?.chooseImage
+        || !window.tt?.getFileSystemManager) return 'unsupported';
+    return 'ready';
+  },
+
+  captureStorefrontPhoto() {
+    const tt = getJsapi();
+    if (!tt.chooseImage) {
+      return Promise.reject(new Error('当前客户端不支持 chooseImage；请使用飞书手机端拍摄门头照'));
     }
-    return new Promise<void>((resolve, reject) => {
-      manager.unlink({
-        filePath: clip.tempFilePath,
-        success: resolve,
-        fail: (error) => reject(formatError('FileSystemManager.unlink', error)),
+    return new Promise((resolve, reject) => {
+      tt.chooseImage!({
+        count: 1,
+        sizeType: ['compressed'],
+        // 只传 camera，禁止飞书弹出系统相册或文件选择入口。
+        sourceType: ['camera'],
+        success: (result) => {
+          const tempFilePath = result.tempFilePaths?.[0];
+          if (!tempFilePath) {
+            reject(new Error('chooseImage 未返回现场照片临时路径'));
+            return;
+          }
+          const capturedAt = Date.now();
+          localPhotoSequence += 1;
+          resolve({
+            localPhotoId: `photo-${capturedAt}-${localPhotoSequence}`,
+            tempFilePath,
+            capturedAt,
+          });
+        },
+        fail: (error) => reject(formatError('chooseImage(camera)', error)),
       });
     });
+  },
+
+  async uploadPhoto(photo, target) {
+    const imageBytes = await readTemporaryFile(photo.tempFilePath);
+    const metadata = imageUploadMetadata(imageBytes, target.fileName);
+    const body = new FormData();
+    body.append('file', new Blob([imageBytes], { type: metadata.mediaType }), metadata.fileName);
+    for (const [key, value] of Object.entries(target.formData)) body.append(key, value);
+    const response = await fetch(target.url, {
+      method: 'POST', headers: target.headers, body,
+    });
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(`门头照上传失败：HTTP ${response.status} ${detail.slice(0, 120)}`);
+    }
+  },
+
+  discardPhoto(photo) {
+    return unlinkTemporaryFile(photo.tempFilePath);
   },
 
   destroy() {
@@ -497,6 +585,7 @@ export const realAdapter: IFeishuAdapter = {
     continuousRecordingRequested = false;
     recordingObserver = null;
     lastClip = null;
+    localPhotoSequence = 0;
     if (shouldStop && managerToStop) managerToStop.stop();
   },
 };

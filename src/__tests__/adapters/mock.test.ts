@@ -95,6 +95,13 @@ describe('Mock Feishu Adapter', () => {
     // 不应抛出
   });
 
+  it('门头照Mock仍只暴露相机采集结果', async () => {
+    expect(mockAdapter.getCameraStatus()).toBe('ready');
+    const photo = await mockAdapter.captureStorefrontPhoto();
+    expect(photo.localPhotoId).toContain('mock-photo');
+    expect(photo.tempFilePath).toMatch(/^mock:\/\/photos\//);
+  });
+
   // =========================================================================
   // destroy
   // =========================================================================
