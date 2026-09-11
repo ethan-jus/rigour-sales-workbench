@@ -30,6 +30,7 @@ vi.mock('@/api/core/sales', async (importOriginal) => {
 });
 
 import VisitPage from '@/pages/VisitPage.vue';
+import { useAuthStore } from '@/stores/auth';
 import { useSalesStore } from '@/stores/sales';
 
 function visitFixture(saved = false): VisitView {
@@ -68,15 +69,20 @@ function visitFixture(saved = false): VisitView {
   };
 }
 
-function recordingFixture(uploadedTotalDurationMs: number, minimumRecordingSeconds = 600): RecordingSessionView {
+function recordingFixture(
+  uploadedTotalDurationMs: number,
+  minimumRecordingSeconds = 600,
+  evidenceStatus = uploadedTotalDurationMs ? 'TECHNICALLY_VERIFIED' : 'PENDING',
+  verifiedTotalDurationMs = uploadedTotalDurationMs,
+): RecordingSessionView {
   return {
     sessionId: uploadedTotalDurationMs ? 'session-1' : null,
     visitId: 'visit-1',
     status: uploadedTotalDurationMs ? 'UPLOADED' : 'NOT_STARTED',
-    evidenceStatus: uploadedTotalDurationMs ? 'TECHNICALLY_VERIFIED' : 'PENDING',
+    evidenceStatus,
     clipCount: uploadedTotalDurationMs ? 1 : 0,
     uploadedTotalDurationMs,
-    verifiedTotalDurationMs: uploadedTotalDurationMs,
+    verifiedTotalDurationMs,
     recordingEnabled: true,
     minimumRecordingSeconds,
     minimumClipSeconds: 30,
@@ -104,6 +110,7 @@ describe('VisitPage 真实拜访状态流', () => {
     const pinia = createPinia();
     setActivePinia(pinia);
     setFeishuAdapter(mockAdapter);
+    localStorage.clear();
     mocks.recordings.mockReset();
     mocks.discardRecordingClip.mockReset();
     mocks.visitEvidence.mockReset();
@@ -126,6 +133,7 @@ describe('VisitPage 真实拜访状态流', () => {
     wrapper?.unmount();
     wrapper = null;
     vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   async function render(visit: VisitView, recording: RecordingSessionView) {
@@ -177,6 +185,17 @@ describe('VisitPage 真实拜访状态流', () => {
     expect(buttonLabels).toContain('完成拜访并离店');
   });
 
+  it('结构可接收但未可信解码的录音明确显示待核验且不会显示已完成', async () => {
+    const page = await render(visitFixture(true), recordingFixture(600_000, 600, 'PENDING', 0));
+
+    expect(page.text()).toContain('待核验');
+    expect(page.text()).toContain('已接收 600 秒');
+    expect(page.text()).toContain('尚未全部通过服务端核验');
+    expect(page.text()).toContain('本次将进入主管复核');
+    expect(page.text()).toContain('不会自动判为有效拜访');
+    expect(page.text()).not.toContain('录音要求已完成');
+  });
+
   it('录音权限读取失败时展示可恢复错误而不是无说明灰色按钮', async () => {
     const store = useSalesStore();
     store.activeVisit = visitFixture(false);
@@ -219,5 +238,91 @@ describe('VisitPage 真实拜访状态流', () => {
     );
     expect(page.text()).toContain('本次已丢弃 1 段过短录音');
     expect(page.text()).toContain('已接收 0 秒');
+  });
+
+  it('业务校验失败只显示安全提示并保留片段供重传，不会自动离店', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-09T00:00:00Z'));
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        code: 'SALES_RECORDING_MEDIA_INVALID',
+        message: '录音文件校验失败',
+        details: [{ field: 'file', reason: '音频内容无法解码' }],
+        requestId: 'req-page-upload',
+        debug: 'Bearer secret-token',
+      }), { status: 400, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response('', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const page = await render(visitFixture(true), recordingFixture(0));
+
+    await page.findAll('button').find((button) => button.text() === '开始现场录音')!.trigger('click');
+    await vi.advanceTimersByTimeAsync(30_000);
+    await page.findAll('button').find((button) => button.text() === '停止并上传录音')!.trigger('click');
+    await flushPromises();
+
+    expect(page.text()).toContain('录音片段等待重传');
+    expect(page.text()).toContain('录音文件校验失败');
+    expect(page.text()).toContain('音频内容无法解码');
+    expect(page.text()).toContain('请求编号：req-page-upload');
+    expect(page.text()).not.toContain('secret-token');
+    expect(page.text()).not.toContain('{"code"');
+    expect(page.findAll('button').map((button) => button.text())).toContain('重传全部待上传录音');
+    expect(page.findAll('button').map((button) => button.text())).toContain('完成拜访并离店');
+    expect(useSalesStore().activeVisit?.status).toBe('CHECKED_IN');
+
+    await page.findAll('button').find((button) => button.text() === '重传全部待上传录音')!.trigger('click');
+    await flushPromises();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(page.text()).not.toContain('录音片段等待重传');
+    expect(page.findAll('button').map((button) => button.text())).not.toContain('重传全部待上传录音');
+    expect(useSalesStore().activeVisit?.status).toBe('CHECKED_IN');
+  });
+
+  it('上传401时在当前页重新飞书免登，并用同一pending clip和新Token重传', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-09T00:00:00Z'));
+    localStorage.setItem('auth_token', 'stale-token');
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        code: 'IAM_TOKEN_INVALID',
+        message: '登录凭证无效或已过期',
+        details: [],
+        requestId: 'req-auth-expired',
+      }), { status: 401, headers: { 'Content-Type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response('', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const authStore = useAuthStore();
+    const login = vi.spyOn(authStore, 'login').mockImplementation(async () => {
+      localStorage.setItem('auth_token', 'renewed-token');
+      authStore.userId = 'user-renewed';
+    });
+    const page = await render(visitFixture(true), recordingFixture(0));
+
+    await page.findAll('button').find((button) => button.text() === '开始现场录音')!.trigger('click');
+    await vi.advanceTimersByTimeAsync(30_000);
+    await page.findAll('button').find((button) => button.text() === '停止并上传录音')!.trigger('click');
+    await flushPromises();
+
+    expect(page.text()).toContain('登录状态已失效');
+    expect(page.text()).toContain('请求编号：req-auth-expired');
+    expect(page.findAll('button').map((button) => button.text())).toContain('恢复登录并重传录音');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await page.findAll('button').find((button) => button.text() === '恢复登录并重传录音')!.trigger('click');
+    await flushPromises();
+
+    expect(login).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const firstRequest = fetchMock.mock.calls[0]![1] as RequestInit;
+    const retriedRequest = fetchMock.mock.calls[1]![1] as RequestInit;
+    expect((firstRequest.headers as Record<string, string>).Authorization).toBe('Bearer stale-token');
+    expect((retriedRequest.headers as Record<string, string>).Authorization).toBe('Bearer renewed-token');
+    const firstBody = firstRequest.body as FormData;
+    const retriedBody = retriedRequest.body as FormData;
+    expect(retriedBody.get('clientClipId')).toBe(firstBody.get('clientClipId'));
+    expect(retriedBody.get('recordedFrom')).toBe(firstBody.get('recordedFrom'));
+    expect(page.text()).not.toContain('录音片段等待重传');
+    expect(page.findAll('button').map((button) => button.text())).not.toContain('恢复登录并重传录音');
   });
 });

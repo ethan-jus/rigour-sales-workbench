@@ -152,7 +152,7 @@ async function startVisit(
         longitude: current.longitude,
         latitude: current.latitude,
         accuracyMeters: current.accuracy,
-        source: 'FEISHU',
+        source: 'APP_NATIVE',
       },
       clientOccurredAt: new Date().toISOString(),
       deviceEventId: `visit-check-in-${createIdempotencyKey('device')}`,

@@ -7,6 +7,7 @@ import type {
   RecordingObserver,
   RecorderStopResult,
 } from './types';
+import { uploadRecordingMultipart } from './recording-upload';
 
 interface RequestAccessOptions {
   appID: string;
@@ -495,15 +496,11 @@ export const realAdapter: IFeishuAdapter = {
     const body = new FormData();
     body.append('file', new Blob([audioBytes], { type: 'audio/aac' }), target.fileName);
     for (const [key, value] of Object.entries(target.formData)) body.append(key, value);
-    const response = await fetch(target.url, {
+    await uploadRecordingMultipart(target.url, {
       method: 'POST',
       headers: target.headers,
       body,
-    });
-    if (!response.ok) {
-      const detail = await response.text();
-      throw new Error(`录音上传失败：HTTP ${response.status} ${detail.slice(0, 120)}`);
-    }
+    }, target.headers['X-Request-Id']);
   },
 
   discardRecording(clip) {

@@ -11,8 +11,18 @@ const mocks = vi.hoisted(() => ({
     userId: null as string | null,
   },
   salesStore: {
+    lastCurrentLocation: null as null | {
+      latitude: number;
+      longitude: number;
+      accuracy: number;
+      timestamp: number;
+    },
     loadWorkDay: vi.fn(),
     ensureLocationTracking: vi.fn(),
+  },
+  workbenchCapabilities: {
+    getRuntimeLabel: vi.fn(),
+    getCurrentLocation: vi.fn(),
   },
   detectRuntimeContainer: vi.fn(),
   initFeishuJsbridge: vi.fn(),
@@ -23,6 +33,7 @@ vi.mock('@/stores/app', () => ({ useAppStore: () => mocks.appStore }));
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => mocks.authStore }));
 vi.mock('@/stores/sales', () => ({ useSalesStore: () => mocks.salesStore }));
 vi.mock('@/adapters', () => ({ detectRuntimeContainer: mocks.detectRuntimeContainer }));
+vi.mock('@/adapters/workbench', () => ({ getWorkbenchCapabilities: () => mocks.workbenchCapabilities }));
 vi.mock('@/adapters/feishu/jsbridge', () => ({
   initFeishuJsbridge: mocks.initFeishuJsbridge,
   getJsbridgeFailureDetail: mocks.getJsbridgeFailureDetail,
@@ -33,6 +44,15 @@ import { bootstrap } from '@/bootstrap';
 describe('bootstrap 飞书鉴权门禁', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllEnvs();
+    mocks.salesStore.lastCurrentLocation = null;
+    mocks.workbenchCapabilities.getRuntimeLabel.mockReturnValue('feishu');
+    mocks.workbenchCapabilities.getCurrentLocation.mockResolvedValue({
+      latitude: 31.2304,
+      longitude: 121.4737,
+      accuracy: 20,
+      timestamp: 1_800_000_000_000,
+    });
     mocks.getJsbridgeFailureDetail.mockReturnValue(null);
     mocks.detectRuntimeContainer.mockReturnValue({
       container: 'feishu',
@@ -87,5 +107,50 @@ describe('bootstrap 飞书鉴权门禁', () => {
     await vi.waitFor(() => {
       expect(mocks.salesStore.ensureLocationTracking).toHaveBeenCalledWith('wd-active');
     });
+  });
+
+  it('App OIDC 启动时强制拿到一次定位并缓存首个点', async () => {
+    vi.stubEnv('VITE_AUTH_MODE', 'oidc');
+    vi.stubEnv('VITE_REQUIRE_LOCATION_ON_BOOT', 'true');
+    mocks.detectRuntimeContainer.mockReturnValue({
+      container: 'unknown',
+      clientVersion: undefined,
+      jsapiAvailable: false,
+      mockMode: false,
+    });
+    mocks.workbenchCapabilities.getRuntimeLabel.mockReturnValue('native-app');
+    mocks.authStore.login.mockResolvedValue(undefined);
+
+    await bootstrap();
+
+    expect(mocks.initFeishuJsbridge).not.toHaveBeenCalled();
+    expect(mocks.workbenchCapabilities.getCurrentLocation).toHaveBeenCalledTimes(1);
+    expect(mocks.salesStore.lastCurrentLocation).toEqual(expect.objectContaining({
+      latitude: 31.2304,
+      longitude: 121.4737,
+    }));
+    expect(mocks.appStore.setBootstrapReady).toHaveBeenCalledTimes(1);
+  });
+
+  it('App OIDC 启动定位失败时阻断进入业务', async () => {
+    vi.stubEnv('VITE_AUTH_MODE', 'oidc');
+    vi.stubEnv('VITE_REQUIRE_LOCATION_ON_BOOT', 'true');
+    mocks.detectRuntimeContainer.mockReturnValue({
+      container: 'unknown',
+      clientVersion: undefined,
+      jsapiAvailable: false,
+      mockMode: false,
+    });
+    mocks.workbenchCapabilities.getRuntimeLabel.mockReturnValue('native-app');
+    mocks.workbenchCapabilities.getCurrentLocation.mockRejectedValue(new Error('系统定位已关闭'));
+    mocks.authStore.login.mockResolvedValue(undefined);
+
+    await bootstrap();
+
+    expect(mocks.appStore.setBootstrapError).toHaveBeenCalledWith(
+      expect.stringContaining('公司要求开启定位后才能使用门户工作台'),
+    );
+    expect(mocks.appStore.setBootstrapReady).not.toHaveBeenCalled();
+    expect(mocks.salesStore.ensureLocationTracking).not.toHaveBeenCalled();
   });
 });

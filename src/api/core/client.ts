@@ -1,4 +1,10 @@
 import type { ApiResponse } from '@/types';
+import {
+  clearLegacyAuthToken,
+  getAuthToken,
+  getCachedAuthToken,
+  setLegacyAuthToken,
+} from '@/auth/token-storage';
 
 /**
  * HTTP 客户端核心模块。
@@ -18,6 +24,7 @@ import type { ApiResponse } from '@/types';
  * - 写请求不自动重试；超时后由页面保留幂等键语义并提示用户主动重试
  */
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
+const WS_BASE_URL = import.meta.env.VITE_WS_BASE_URL || '';
 const DEFAULT_TENANT_ID = import.meta.env.VITE_DEFAULT_TENANT_ID || 'demo';
 const configuredTimeoutMs = Number(import.meta.env.VITE_API_TIMEOUT_MS || 15_000);
 const REQUEST_TIMEOUT_MS = Number.isFinite(configuredTimeoutMs)
@@ -39,19 +46,13 @@ function generateRequestId(): string {
   return `${Date.now().toString(36)}-${result}`;
 }
 
-function buildHeaders(overrides?: Record<string, string>): Record<string, string> {
+function buildBaseHeaders(overrides?: Record<string, string>): Record<string, string> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'Accept-Language': 'zh-CN',
     'X-Tenant-Id': currentTenantId(),
     'X-Request-Id': generateRequestId(),
   };
-
-  // Token 从 localStorage 读取（免登后由 authStore 或 apiClient.setToken 写入）
-  const token = localStorage.getItem('auth_token');
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
 
   if (overrides) {
     Object.assign(headers, overrides);
@@ -60,14 +61,31 @@ function buildHeaders(overrides?: Record<string, string>): Record<string, string
   return headers;
 }
 
+async function buildHeaders(overrides?: Record<string, string>): Promise<Record<string, string>> {
+  const headers = buildBaseHeaders(overrides);
+  const token = await getAuthToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  return headers;
+}
+
 /**
  * multipart 上传所需的完整请求地址与鉴权头。
  * 与 buildHeaders 保持一致，但不含 JSON Content-Type（由浏览器/客户端按 multipart 自动生成）。
  */
 export function buildUploadRequest(path: string): { url: string; headers: Record<string, string> } {
-  const headers = buildHeaders();
+  const headers = buildBaseHeaders();
+  const token = getCachedAuthToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
   delete headers['Content-Type'];
   return { url: new URL(`${BASE_URL}${path}`, window.location.origin).toString(), headers };
+}
+
+/** 构造 WebSocket 地址，默认跟随当前页面来源。 */
+export function buildWebSocketUrl(path: string): string {
+  if (WS_BASE_URL) return `${WS_BASE_URL}${path}`;
+  const url = new URL(path, window.location.origin);
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  return url.toString();
 }
 
 async function handleResponse<T>(response: Response): Promise<ApiResponse<T>> {
@@ -129,7 +147,7 @@ export const apiClient = {
     }
     const response = await fetchWithTimeout(url.toString(), {
       method: 'GET',
-      headers: buildHeaders(),
+      headers: await buildHeaders(),
     });
     return handleResponse<T>(response);
   },
@@ -137,7 +155,7 @@ export const apiClient = {
   async post<T>(path: string, data?: unknown): Promise<ApiResponse<T>> {
     const response = await fetchWithTimeout(`${BASE_URL}${path}`, {
       method: 'POST',
-      headers: buildHeaders(),
+      headers: await buildHeaders(),
       body: data ? JSON.stringify(data) : undefined,
     });
     return handleResponse<T>(response);
@@ -146,7 +164,7 @@ export const apiClient = {
   async put<T>(path: string, data?: unknown): Promise<ApiResponse<T>> {
     const response = await fetchWithTimeout(`${BASE_URL}${path}`, {
       method: 'PUT',
-      headers: buildHeaders(),
+      headers: await buildHeaders(),
       body: data ? JSON.stringify(data) : undefined,
     });
     return handleResponse<T>(response);
@@ -155,7 +173,7 @@ export const apiClient = {
   async delete<T>(path: string): Promise<ApiResponse<T>> {
     const response = await fetchWithTimeout(`${BASE_URL}${path}`, {
       method: 'DELETE',
-      headers: buildHeaders(),
+      headers: await buildHeaders(),
     });
     return handleResponse<T>(response);
   },
@@ -165,13 +183,13 @@ export const apiClient = {
    * 写入 localStorage，后续请求自动带 Authorization 头。
    */
   setToken(token: string): void {
-    localStorage.setItem('auth_token', token);
+    setLegacyAuthToken(token);
   },
 
   /**
    * 清除认证 Token（登出时调用）。
    */
   clearToken(): void {
-    localStorage.removeItem('auth_token');
+    clearLegacyAuthToken();
   },
 };

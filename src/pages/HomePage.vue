@@ -17,7 +17,8 @@ interface NextAction {
 const authStore = useAuthStore();
 const salesStore = useSalesStore();
 const refreshing = ref(false);
-const displayName = computed(() => authStore.userName || '销售同事');
+const displayName = computed(() => authStore.userName || '同事');
+const isSalesUser = computed(() => authStore.isSalesUser);
 const context = computed(() => salesStore.context);
 const workDay = computed(() => salesStore.workDay);
 const todaySummary = computed(() => salesStore.todaySummary);
@@ -31,6 +32,7 @@ const today = new Intl.DateTimeFormat('zh-CN', {
 const todayDate = localDate();
 
 const workStatus = computed(() => {
+  if (!isSalesUser.value) return { label: '内部沟通', tone: 'active' };
   if (workDay.value?.status === 'ACTIVE') return { label: '工作中', tone: 'active' };
   if (workDay.value?.status === 'FINISHED') return { label: '已签退', tone: 'finished' };
   if (workDay.value?.status === 'PENDING_REVIEW') return { label: '考勤待复核', tone: 'warning' };
@@ -47,6 +49,16 @@ const homeErrorMessage = computed(() => [
 ].find((message): message is string => Boolean(message)) ?? null);
 
 const nextAction = computed<NextAction>(() => {
+  if (!isSalesUser.value) {
+    return {
+      eyebrow: '内部沟通',
+      title: '进入公司群聊',
+      description: '当前账号未配置销售外勤权限，只开放内部沟通、群聊和会议相关能力。',
+      label: '打开沟通',
+      icon: 'chat-o',
+      to: '/chat',
+    };
+  }
   if (activeVisit.value) {
     const storeName = activeVisit.value.targetSnapshot?.storeName || '进行中的门店拜访';
     return {
@@ -111,7 +123,7 @@ const nextAction = computed<NextAction>(() => {
     return {
       eyebrow: '暂未就绪',
       title: '工作台数据未能完整读取',
-      description: '请检查网络后重新读取；若登录已过期，请从飞书重新进入应用。',
+      description: '请检查网络后重新读取；若会话失效，请重新登录 App。',
       label: '重新读取',
       icon: 'warning-o',
       retry: true,
@@ -120,7 +132,7 @@ const nextAction = computed<NextAction>(() => {
   return {
     eyebrow: '开始今天',
     title: '先完成上班签到',
-    description: '签到成功后开始前台定位，再从客户门店发起今天的第一场拜访。',
+    description: '签到成功后开始定位采样，再从客户门店发起今天的第一场拜访。',
     label: '去上班签到',
     icon: 'clock-o',
     to: '/attendance',
@@ -136,13 +148,23 @@ const todayProgressHint = computed(() => {
   return '已完成的拜访均已自动判定或复核';
 });
 
-const quickActions = [
-  { to: '/targets', icon: 'shop-o', title: '客户门店', subtitle: '计划与临时拜访' },
-  { to: '/attendance', icon: 'clock-o', title: '外勤考勤', subtitle: '签到与签退' },
-  { to: '/track', icon: 'location-o', title: '工作记录', subtitle: '轨迹与拜访' },
-] as const;
+const quickActions = computed(() => [
+  ...(authStore.hasFeature('sales.targets')
+    ? [{ to: '/targets', icon: 'shop-o', title: '客户门店', subtitle: '计划与临时拜访' }]
+    : []),
+  ...(authStore.hasFeature('sales.attendance')
+    ? [{ to: '/attendance', icon: 'clock-o', title: '外勤考勤', subtitle: '签到与签退' }]
+    : []),
+  ...(authStore.hasFeature('sales.track')
+    ? [{ to: '/track', icon: 'location-o', title: '工作记录', subtitle: '轨迹与拜访' }]
+    : []),
+  ...(authStore.hasFeature('chat')
+    ? [{ to: '/chat', icon: 'chat-o', title: '内部沟通', subtitle: '单聊群聊与会议' }]
+    : []),
+]);
 
 async function loadHome(forceContext = false) {
+  if (!isSalesUser.value) return;
   await Promise.all([
     salesStore.loadContext(forceContext),
     salesStore.loadWorkDay(todayDate),
@@ -225,10 +247,10 @@ onMounted(() => {
       </div>
 
       <div class="section-heading">
-        <h2>今日拜访</h2>
-        <router-link class="section-link" to="/track">查看明细</router-link>
+        <h2>{{ isSalesUser ? '今日拜访' : '可用功能' }}</h2>
+        <router-link v-if="isSalesUser" class="section-link" to="/track">查看明细</router-link>
       </div>
-      <section class="today-card surface-card">
+      <section v-if="isSalesUser" class="today-card surface-card">
         <div class="summary-grid">
           <div><span>已拜访</span><strong>{{ todaySummary?.totalVisitCount ?? '--' }}</strong></div>
           <div><span>完成离店</span><strong>{{ todaySummary?.completedVisitCount ?? '--' }}</strong></div>
@@ -240,7 +262,7 @@ onMounted(() => {
 
       <div class="section-heading">
         <h2>快捷入口</h2>
-        <span>销售本人</span>
+        <span>{{ isSalesUser ? '销售本人' : '按角色授权' }}</span>
       </div>
       <nav class="action-grid" aria-label="快捷入口">
         <router-link v-for="item in quickActions" :key="item.to" :to="item.to" class="action-card">
@@ -251,11 +273,11 @@ onMounted(() => {
         </router-link>
       </nav>
 
-      <div class="section-heading">
+      <div v-if="isSalesUser" class="section-heading">
         <h2>本月个人进展</h2>
         <span>截至今天</span>
       </div>
-      <section class="month-card surface-card">
+      <section v-if="isSalesUser" class="month-card surface-card">
         <div class="month-card__primary">
           <span>累计完成拜访</span>
           <strong>{{ monthSummary?.completedVisitCount ?? '--' }}<small> 次</small></strong>

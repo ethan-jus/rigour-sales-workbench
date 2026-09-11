@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { showToast } from 'vant';
-import { getFeishuAdapter } from '@/adapters';
+import { getWorkbenchCapabilities } from '@/adapters/workbench';
 import { useSalesStore } from '@/stores/sales';
 import type { AttendanceMonthDayView, LocationEvidence } from '@/api/core/sales';
 import { createIdempotencyKey } from '@/utils/id';
 import { formatDurationMinutes, formatTime, localDate } from '@/utils/datetime';
 
 const salesStore = useSalesStore();
-const adapter = getFeishuAdapter();
+const capabilities = getWorkbenchCapabilities();
 
 const workDate = localDate();
 const workDay = computed(() => salesStore.workDay);
@@ -45,8 +45,8 @@ const statusLabel = computed(() => ({
   NOT_STARTED: '未签到', ACTIVE: '工作中', FINISHED: '已签退', PENDING_REVIEW: '待复核',
 })[workStatus.value] || workStatus.value);
 const statusHint = computed(() => ({
-  NOT_STARTED: '签到成功后才开始前台定位',
-  ACTIVE: '当前处于工作期间，请保持飞书页面可用',
+  NOT_STARTED: '签到成功后开始定位采样',
+  ACTIVE: '当前处于工作期间，请保持 App 定位权限可用',
   FINISHED: '已签退，可重新签到继续今日工作',
   PENDING_REVIEW: '工作日已结束，等待异常复核',
 })[workStatus.value] || '服务端返回了未知工作日状态');
@@ -62,7 +62,7 @@ async function checkIn() {
   try {
     salesStore.locationStatus = 'loading';
     // 先获取一次真实客户端定位；只有服务端签到事务成功后才启动持续采样。
-    const point = await adapter.getCurrentLocation();
+    const point = await capabilities.getCurrentLocation();
     const created = await salesStore.checkIn({
       idempotencyKey: createIdempotencyKey('check-in'),
       clientInstanceId: clientInstanceId(),
@@ -78,7 +78,7 @@ async function checkIn() {
     }
     await salesStore.ensureLocationTracking(created.id);
     await salesStore.loadAttendanceMonth(calendarMonth.value);
-    showToast(isReCheckIn ? '已重新签到，继续前台定位' : '签到成功，已开始前台定位');
+    showToast(isReCheckIn ? '已重新签到，继续定位采样' : '签到成功，已开始定位采样');
   } catch (error) {
     salesStore.locationStatus = 'failed';
     showToast(error instanceof Error ? error.message : '签到失败');
@@ -89,7 +89,7 @@ async function checkOut() {
   if (workStatus.value !== 'ACTIVE' || !workDay.value) return;
   try {
     salesStore.locationStatus = 'loading';
-    const point = await adapter.getCurrentLocation();
+    const point = await capabilities.getCurrentLocation();
     const updated = await salesStore.checkOut(workDay.value.id, {
       idempotencyKey: createIdempotencyKey('check-out'),
       clientOccurredAt: new Date(point.timestamp).toISOString(),
@@ -115,7 +115,7 @@ function toEvidence(point: { latitude: number; longitude: number; accuracy: numb
     latitude: point.latitude,
     longitude: point.longitude,
     accuracyMeters: point.accuracy,
-    source: 'FEISHU',
+    source: 'APP_NATIVE',
   };
 }
 

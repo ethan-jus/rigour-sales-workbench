@@ -1,5 +1,6 @@
 import type { IFeishuAdapter } from './types';
 import type { CapabilityStatus } from '@/types';
+import { uploadRecordingMultipart } from './recording-upload';
 
 // ============================================================================
 // Mock 飞书 Adapter
@@ -135,15 +136,11 @@ export const mockAdapter: IFeishuAdapter = {
     for (const [key, value] of Object.entries(target.formData)) {
       body.append(key, value);
     }
-    const response = await fetch(target.url, {
+    await uploadRecordingMultipart(target.url, {
       method: 'POST',
       headers: target.headers,
       body,
-    });
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`录音上传失败：HTTP ${response.status} ${text.slice(0, 120)}`);
-    }
+    }, target.headers['X-Request-Id']);
     console.log('[Mock] 录音片段已上传', target.url);
   },
 

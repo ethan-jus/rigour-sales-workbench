@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
 import type { VisitView } from '@/api/core/sales';
-import { mockAdapter, setFeishuAdapter } from '@/adapters';
+import { mockAdapter } from '@/adapters';
+import { setWorkbenchCapabilities } from '@/adapters/workbench';
+import type { WorkbenchCapabilities } from '@/adapters/workbench';
 
 const mocks = vi.hoisted(() => ({
   nearbyStores: vi.fn(),
@@ -68,11 +70,19 @@ function ok<T>(data: T) {
   return { code: 'SUCCESS', message: 'ok', data, requestId: 'r-1', timestamp: '2026-08-08T00:00:00Z' };
 }
 
+function workbenchMock(overrides: Partial<WorkbenchCapabilities> = {}): WorkbenchCapabilities {
+  return {
+    ...(mockAdapter as unknown as WorkbenchCapabilities),
+    getRuntimeLabel: () => 'mock',
+    ...overrides,
+  };
+}
+
 describe('salesStore 拜访闭环', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     vi.clearAllMocks();
-    setFeishuAdapter(mockAdapter);
+    setWorkbenchCapabilities(workbenchMock());
   });
 
   it('附近门店查询失败只写入 nearbyError，不污染其他页共享的 errorMessage', async () => {
@@ -122,7 +132,7 @@ describe('salesStore 拜访闭环', () => {
     const getCurrentLocation = vi.fn(async () => ({
       latitude: 31.23, longitude: 121.47, accuracy: 12, timestamp: Date.now(),
     }));
-    setFeishuAdapter({ ...mockAdapter, getCurrentLocation });
+    setWorkbenchCapabilities(workbenchMock({ getCurrentLocation }));
     const store = useSalesStore();
 
     const [first, second] = await Promise.all([
@@ -229,11 +239,10 @@ describe('salesStore 拜访闭环', () => {
     expect(recordings?.minimumClipSeconds).toBe(30);
   });
 
-  it('门头照由相机采集并固定声明FEISHU_CAMERA后上传', async () => {
+  it('门头照由App相机采集并固定声明APP_CAMERA后上传', async () => {
     const uploadPhoto = vi.fn(async () => {});
     const discardPhoto = vi.fn(async () => {});
-    setFeishuAdapter({
-      ...mockAdapter,
+    setWorkbenchCapabilities(workbenchMock({
       getCurrentLocation: async () => ({
         latitude: 31.23, longitude: 121.47, accuracy: 12, timestamp: Date.now(),
       }),
@@ -242,7 +251,7 @@ describe('salesStore 拜访闭环', () => {
       }),
       uploadPhoto,
       discardPhoto,
-    });
+    }));
     mocks.visitEvidence.mockResolvedValue(ok({
       visitId: 'v-1', requiredStorefrontPhotoCount: 1, storefrontPhotoCount: 1,
       storefrontPhotoSatisfied: true, photos: [],
@@ -256,7 +265,7 @@ describe('salesStore 拜访闭环', () => {
       expect.objectContaining({ localPhotoId: 'photo-1' }),
       expect.objectContaining({
         formData: expect.objectContaining({
-          clientEvidenceId: 'photo-1', captureSource: 'FEISHU_CAMERA',
+          clientEvidenceId: 'photo-1', captureSource: 'APP_CAMERA',
           longitude: '121.47', latitude: '31.23', accuracyMeters: '12',
         }),
       }),
@@ -296,13 +305,12 @@ describe('salesStore 拜访闭环', () => {
 
   it('应用级定位会话在页面外仍把采样点上传到当前工作日', async () => {
     const stopLocation = vi.fn(async () => {});
-    setFeishuAdapter({
-      ...mockAdapter,
+    setWorkbenchCapabilities(workbenchMock({
       startLocation: async (onPoint) => {
         onPoint({ latitude: 31.23, longitude: 121.47, accuracy: 12, timestamp: 1_786_227_200_000 });
       },
       stopLocation,
-    });
+    }));
     mocks.uploadLocationPoints.mockResolvedValue(ok({
       workDayId: 'wd-1', acceptedCount: 1, duplicateCount: 0, rejectedCount: 0,
       lastReceivedAt: '2026-08-09T04:00:00Z',

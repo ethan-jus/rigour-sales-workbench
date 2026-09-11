@@ -31,7 +31,8 @@ function requestTracePlugin(): Plugin {
 
       server.middlewares.use((request, response, next) => {
         const path = (request.url ?? '/').split('?', 1)[0];
-        const traceable = path === '/' || path === '/index.html' || path.startsWith('/api/');
+        const traceable = path === '/' || path === '/index.html'
+          || path.startsWith('/api/') || path.startsWith('/ws/');
         const startedAt = Date.now();
         const requestId = request.headers['x-request-id'];
         response.once('finish', () => {
@@ -73,6 +74,11 @@ export function createViteConfig(mode: string) {
           // 只在Vite开发服务器进程内使用；部署到其他服务器时由VITE_API_TARGET覆盖。
           target: apiTarget,
           changeOrigin: true,
+        },
+        '/ws': {
+          target: apiTarget,
+          changeOrigin: true,
+          ws: true,
         },
       },
     },

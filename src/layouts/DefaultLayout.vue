@@ -1,16 +1,20 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
+import { useAuthStore } from '@/stores/auth';
 
 const router = useRouter();
 const route = useRoute();
+const authStore = useAuthStore();
 
-const tabs = [
-  { to: '/home', icon: 'home-o', label: '工作台' },
-  { to: '/attendance', icon: 'clock-o', label: '考勤' },
-  { to: '/visit', icon: 'friends-o', label: '拜访' },
-  { to: '/track', icon: 'location-o', label: '轨迹' },
+const tabs = computed(() => [
+  ...(authStore.isSalesUser ? [{ to: '/home', icon: 'home-o', label: '工作台' }] : []),
+  ...(authStore.hasFeature('sales.attendance') ? [{ to: '/attendance', icon: 'clock-o', label: '考勤' }] : []),
+  ...(authStore.hasFeature('sales.visit') ? [{ to: '/visit', icon: 'friends-o', label: '拜访' }] : []),
+  ...(authStore.hasFeature('sales.track') ? [{ to: '/track', icon: 'location-o', label: '轨迹' }] : []),
+  ...(authStore.hasFeature('chat') ? [{ to: '/chat', icon: 'chat-o', label: '沟通' }] : []),
   { to: '/profile', icon: 'user-o', label: '个人' },
-] as const;
+]);
 
 function onTabChange(path: string) {
   router.push(path);

@@ -2,6 +2,7 @@ import { useAppStore } from '@/stores/app';
 import { useAuthStore } from '@/stores/auth';
 import { useSalesStore } from '@/stores/sales';
 import { detectRuntimeContainer } from '@/adapters';
+import { getWorkbenchCapabilities } from '@/adapters/workbench';
 import { getJsbridgeFailureDetail, initFeishuJsbridge } from '@/adapters/feishu/jsbridge';
 import { createRequestId, elapsedMs, pageTraceContext } from '@/diagnostics/trace';
 import { localDate } from '@/utils/datetime';
@@ -27,6 +28,8 @@ export async function bootstrap(): Promise<void> {
   const authStore = useAuthStore();
 
   const env = detectRuntimeContainer();
+  const authMode = import.meta.env.VITE_AUTH_MODE || (env.mockMode ? 'mock' : 'feishu');
+  const useFeishuAuth = authMode !== 'oidc';
   appStore.env = env;
 
   console.info('[BootstrapTrace] bootstrap-start', {
@@ -36,10 +39,11 @@ export async function bootstrap(): Promise<void> {
     clientVersion: env.clientVersion,
     jsapiAvailable: env.jsapiAvailable,
     mockMode: env.mockMode,
+    authMode,
   });
 
   // 飞书容器内：注入 JSSDK 并签名
-  if (!env.mockMode && env.container !== 'unknown') {
+  if (useFeishuAuth && !env.mockMode && env.container !== 'unknown') {
     console.info('[BootstrapTrace] jsbridge-start', { traceId });
     const jssdkReady = await initFeishuJsbridge();
     if (!jssdkReady) {
@@ -62,18 +66,19 @@ export async function bootstrap(): Promise<void> {
   }
 
   // 非 mock 且非飞书环境：警告
-  if (!env.mockMode && env.container === 'unknown') {
+  if (useFeishuAuth && !env.mockMode && env.container === 'unknown') {
     console.warn('[Bootstrap] 非飞书环境且未开启 mock，将使用 unsupportedAdapter 阻断');
   }
 
   // 飞书容器内检查 JSAPI 可用性
-  if (env.container !== 'unknown' && !env.jsapiAvailable) {
+  if (useFeishuAuth && env.container !== 'unknown' && !env.jsapiAvailable) {
     console.warn('[Bootstrap] 在飞书/Lark 中但 window.tt 不可用，请检查 JSSDK 注入');
   }
 
   try {
     console.info('[BootstrapTrace] auth-start', { traceId, elapsedMs: elapsedMs(startedAt) });
     await authStore.login();
+    await ensureMandatoryLocation(traceId);
     appStore.setBootstrapReady();
     void restoreActiveLocationTracking(traceId);
     console.info('[BootstrapTrace] bootstrap-ready', {
@@ -93,6 +98,32 @@ export async function bootstrap(): Promise<void> {
     if (env.mockMode) {
       appStore.setBootstrapReady();
     }
+  }
+}
+
+/** App 原生环境强制拿到一次定位；拒绝授权或系统定位关闭时不进入业务。 */
+async function ensureMandatoryLocation(traceId: string): Promise<void> {
+  const capabilities = getWorkbenchCapabilities();
+  const runtime = capabilities.getRuntimeLabel();
+  const configured = import.meta.env.VITE_REQUIRE_LOCATION_ON_BOOT;
+  const required = configured === 'true' || (configured !== 'false' && runtime === 'native-app');
+  if (!required) return;
+  try {
+    const point = await capabilities.getCurrentLocation();
+    const salesStore = useSalesStore();
+    salesStore.lastCurrentLocation = point;
+    console.info('[BootstrapTrace] mandatory-location-ready', {
+      traceId,
+      runtime,
+      accuracy: point.accuracy,
+      timestamp: point.timestamp,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '定位权限不可用';
+    console.warn('[BootstrapTrace] mandatory-location-blocked', { traceId, runtime, message });
+    throw new Error(`${message}。公司要求开启定位后才能使用门户工作台。`, {
+      cause: error,
+    });
   }
 }
 

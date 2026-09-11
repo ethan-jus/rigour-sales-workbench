@@ -1,6 +1,11 @@
 # Dependencies and build outputs
 node_modules/
 dist/
+android/.gradle/
+android/**/build/
+android/local.properties
+ios/App/DerivedData/
+ios/App/build/
 coverage/
 .nyc_output/
 reports/

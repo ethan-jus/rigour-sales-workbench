@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { onBeforeRouteLeave, useRoute } from 'vue-router';
 import { showToast } from 'vant';
-import { getFeishuAdapter } from '@/adapters';
+import { getWorkbenchCapabilities } from '@/adapters/workbench';
+import { RecordingUploadError } from '@/adapters/feishu/recording-upload';
 import type { RecorderStopResult } from '@/adapters/feishu/types';
 import { buildUploadRequest } from '@/api/core/client';
+import { useAuthStore } from '@/stores/auth';
 import { useSalesStore } from '@/stores/sales';
 import type { CapabilityStatus } from '@/types';
 import { formatTime } from '@/utils/datetime';
@@ -13,8 +15,9 @@ import { createIdempotencyKey } from '@/utils/id';
 type PrimaryAction = 'STOP_RECORDING' | 'EDIT_RESULT' | 'CHECK_OUT' | 'BLOCKED';
 
 const route = useRoute();
+const authStore = useAuthStore();
 const salesStore = useSalesStore();
-const adapter = getFeishuAdapter();
+const capabilities = getWorkbenchCapabilities();
 
 const audioStatus = ref<CapabilityStatus>('idle');
 const cameraStatus = ref<CapabilityStatus>('idle');
@@ -23,8 +26,9 @@ const uploadingRecording = ref(false);
 const loadingRecordings = ref(false);
 const checkingOut = ref(false);
 const savingResult = ref(false);
+const restoringRecordingAuth = ref(false);
 const pendingClips = ref<RecorderStopResult[]>([]);
-const recordingUploadError = ref<string | null>(null);
+const recordingUploadFailure = shallowRef<Error | null>(null);
 const recordingSessionStartedAt = ref<number | null>(null);
 const recordingBaselineUploadedMs = ref(0);
 const discardedShortClipCount = ref(0);
@@ -54,6 +58,11 @@ const intentionOptions = [
 ] as const;
 
 const visit = computed(() => salesStore.activeVisit);
+const recordingUploadError = computed(() => recordingUploadFailure.value?.message ?? null);
+const recordingAuthExpired = computed(() => (
+  recordingUploadFailure.value instanceof RecordingUploadError
+  && recordingUploadFailure.value.kind === 'AUTH'
+));
 const isActiveVisit = computed(() => visit.value?.status === 'CHECKED_IN');
 const isCompletedVisit = computed(() => visit.value?.status === 'CHECKED_OUT');
 const resultSaved = computed(() => Boolean(visit.value?.resultSubmittedAt));
@@ -255,14 +264,14 @@ async function discardPendingStorefrontPhoto() {
   showToast('已放弃本地待上传照片，可重新拍摄');
 }
 
-function startRecording() {
+async function startRecording() {
   if (!canRecord.value) {
     showToast(salesStore.recordingError || '录音规则尚未就绪');
     return;
   }
   try {
     audioStatus.value = 'loading';
-    adapter.startRecording({
+    await capabilities.startRecording({
       onSegment: (clip) => {
         void enqueueClip(clip).catch(() => undefined);
       },
@@ -270,14 +279,14 @@ function startRecording() {
         isRecording.value = false;
         recordingSessionStartedAt.value = null;
         audioStatus.value = 'failed';
-        recordingUploadError.value = error.message;
+        recordingUploadFailure.value = error;
         showToast(error.message);
       },
     });
     isRecording.value = true;
     recordingSessionStartedAt.value = Date.now();
     recordingBaselineUploadedMs.value = verifiedDurationMs.value;
-    recordingUploadError.value = null;
+    recordingUploadFailure.value = null;
     audioStatus.value = 'active';
   } catch (error) {
     audioStatus.value = 'failed';
@@ -287,20 +296,23 @@ function startRecording() {
 }
 
 async function stopRecording() {
+  let clip: RecorderStopResult | null;
   try {
-    const clip = await adapter.stopRecording();
-    isRecording.value = false;
-    recordingSessionStartedAt.value = null;
-    if (clip) {
-      await enqueueClip(clip);
-    } else {
-      showToast('未检测到正在进行的录音');
-    }
+    clip = await capabilities.stopRecording();
   } catch (error) {
     isRecording.value = false;
     recordingSessionStartedAt.value = null;
     audioStatus.value = 'failed';
     showToast(error instanceof Error ? error.message : '录音停止失败');
+    return;
+  }
+  isRecording.value = false;
+  recordingSessionStartedAt.value = null;
+  if (clip) {
+    // 上传失败已由processClip统一写入卡片和Toast；这里不重复弹第二次错误。
+    await enqueueClip(clip).catch(() => undefined);
+  } else {
+    showToast('未检测到正在进行的录音');
   }
 }
 
@@ -309,7 +321,7 @@ function enqueueClip(clip: RecorderStopResult): Promise<void> {
     pendingClips.value.push(clip);
   }
   // 前一片段失败时保留后续片段，等待销售一次性按时间顺序重传，避免服务端clipIndex错序。
-  if (recordingUploadError.value) return Promise.resolve();
+  if (recordingUploadFailure.value) return Promise.resolve();
   const task = uploadQueue.then(() => processClip(clip));
   uploadQueue = task.catch(() => undefined);
   return task;
@@ -318,7 +330,7 @@ function enqueueClip(clip: RecorderStopResult): Promise<void> {
 async function processClip(clip: RecorderStopResult) {
   if (!visit.value) return;
   uploadingRecording.value = true;
-  recordingUploadError.value = null;
+  recordingUploadFailure.value = null;
   try {
     if (clip.duration < minimumClipSeconds.value * 1_000) {
       const command = {
@@ -331,7 +343,7 @@ async function processClip(clip: RecorderStopResult) {
       const discardError = await salesStore.recordDiscardedClip(visit.value.id, command);
       if (discardError) throw new Error(discardError);
       try {
-        await adapter.discardRecording(clip);
+        await capabilities.discardRecording(clip);
       } catch (error) {
         console.warn('[VisitRecording] 短录音临时文件删除失败，等待客户端清理', error);
       }
@@ -342,7 +354,7 @@ async function processClip(clip: RecorderStopResult) {
       return;
     }
     const target = buildUploadRequest(`/sales/me/visits/${visit.value.id}/recordings/clips`);
-    await adapter.uploadRecording(clip, {
+    await capabilities.uploadRecording(clip, {
       ...target,
       formData: {
         clientClipId: clip.localClipId,
@@ -354,7 +366,7 @@ async function processClip(clip: RecorderStopResult) {
     });
     pendingClips.value = pendingClips.value.filter((item) => item.localClipId !== clip.localClipId);
     try {
-      await adapter.discardRecording(clip);
+      await capabilities.discardRecording(clip);
     } catch (error) {
       console.warn('[VisitRecording] 已上传录音的临时文件删除失败，等待客户端清理', error);
     }
@@ -363,9 +375,10 @@ async function processClip(clip: RecorderStopResult) {
     showToast(`录音已上传：${Math.round(clip.duration / 1000)} 秒`);
   } catch (error) {
     audioStatus.value = 'failed';
-    recordingUploadError.value = error instanceof Error ? error.message : '录音上传失败';
-    showToast(recordingUploadError.value);
-    throw error;
+    const failure = error instanceof Error ? error : new Error('录音上传失败');
+    recordingUploadFailure.value = failure;
+    showToast(failure.message);
+    throw failure;
   } finally {
     uploadingRecording.value = false;
   }
@@ -374,13 +387,32 @@ async function processClip(clip: RecorderStopResult) {
 async function retryPendingClips() {
   const clips = [...pendingClips.value];
   if (!clips.length) return;
-  recordingUploadError.value = null;
+  recordingUploadFailure.value = null;
   for (const clip of clips) {
     try {
       await processClip(clip);
     } catch {
       break;
     }
+  }
+}
+
+/**
+ * Access Token过期时在当前WebView内重新执行飞书免登，再复用原pending clip重传。
+ * 禁止通过刷新页面恢复登录：pendingClips包含飞书临时文件句柄，刷新后无法可靠重建。
+ */
+async function restoreAuthAndRetryPendingClips() {
+  if (!recordingAuthExpired.value || !pendingClips.value.length || restoringRecordingAuth.value) return;
+  restoringRecordingAuth.value = true;
+  try {
+    await authStore.login();
+    await retryPendingClips();
+  } catch (error) {
+    // 免登失败时保留原AUTH失败对象和pending clip，允许用户在当前页再次尝试。
+    const message = error instanceof Error ? error.message : '登录恢复失败';
+    showToast(`登录恢复失败，录音仍保留在本页：${message}`);
+  } finally {
+    restoringRecordingAuth.value = false;
   }
 }
 
@@ -419,7 +451,7 @@ async function checkOut() {
         longitude: current.longitude,
         latitude: current.latitude,
         accuracyMeters: current.accuracy,
-        source: 'FEISHU',
+        source: 'APP_NATIVE',
       },
       deviceEventId: `visit-check-out-${createIdempotencyKey('device')}`,
     });
@@ -460,8 +492,8 @@ onMounted(async () => {
       salesStore.recordingSession = null;
     }
   }
-  audioStatus.value = adapter.getAudioStatus();
-  cameraStatus.value = adapter.getCameraStatus();
+  audioStatus.value = capabilities.getAudioStatus();
+  cameraStatus.value = capabilities.getCameraStatus();
   if (visit.value) {
     await Promise.all([reloadRecordings(), salesStore.loadVisitEvidence(visit.value.id)]);
   }
@@ -639,14 +671,17 @@ onBeforeRouteLeave(() => {
 
             <div v-if="salesStore.recordingSession.recordingEnabled && !recordingPolicyInvalid" class="recording-progress">
               <div><span :style="{ width: `${recordingProgress}%` }" /></div>
-              <p v-if="isRecording && remainingRecordingSeconds === 0">
+              <p v-if="!isRecording && uploadedDurationMs > verifiedDurationMs">
+                已接收录音正在等待可信核验，本次不会自动判为有效拜访
+              </p>
+              <p v-else-if="isRecording && remainingRecordingSeconds === 0">
                 已达到考核时长，正在继续录音；停止后上传才计入有效证据
               </p>
               <p v-else>{{ recordingRequirementSatisfied ? '录音要求已完成，可按实际沟通继续录制' : `距离要求预计还剩 ${remainingRecordingSeconds} 秒` }}</p>
             </div>
 
             <p class="recording-policy-note">
-              单段不足 {{ minimumClipSeconds }} 秒将删除音频，仅登记短录音审计；达到该时长即正常上传并累计。
+              单段不足 {{ minimumClipSeconds }} 秒将删除音频，仅登记短录音审计；达到该时长会上传并计入已接收时长，可信核验通过后才计入有效证据。
             </p>
 
             <p v-if="pendingClips.length" class="recording-pending">
@@ -678,9 +713,9 @@ onBeforeRouteLeave(() => {
             block
             plain
             type="warning"
-            :loading="uploadingRecording"
-            @click="retryPendingClips"
-          >重传全部待上传录音</van-button>
+            :loading="uploadingRecording || restoringRecordingAuth || authStore.loginLoading"
+            @click="recordingAuthExpired ? restoreAuthAndRetryPendingClips() : retryPendingClips()"
+          >{{ recordingAuthExpired ? '恢复登录并重传录音' : '重传全部待上传录音' }}</van-button>
           <van-button
             v-if="isActiveVisit && !isRecording && canRecord"
             class="recording-retry"
@@ -776,7 +811,7 @@ onBeforeRouteLeave(() => {
         <van-button
           v-if="primaryAction !== 'BLOCKED'"
           :type="primaryAction === 'STOP_RECORDING' ? 'danger' : 'primary'"
-          :loading="checkingOut || uploadingRecording || loadingRecordings || savingResult"
+          :loading="checkingOut || uploadingRecording || restoringRecordingAuth || loadingRecordings || savingResult"
           @click="handlePrimaryAction"
         >{{ primaryActionLabel }}</van-button>
         <van-icon v-else name="warning-o" class="visit-action-bar__warning" size="22" />

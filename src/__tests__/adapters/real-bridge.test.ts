@@ -268,6 +268,40 @@ describe('realAdapter 官方 callback bridge', () => {
         body: expect.any(FormData),
       }),
     );
+    const uploadBody = fetchMock.mock.calls[0][1]?.body as FormData;
+    const uploadedFile = uploadBody.get('file') as File;
+    expect(uploadedFile.type).toBe('audio/aac');
+    expect(Array.from(new Uint8Array(await uploadedFile.arrayBuffer()))).toEqual([1, 2, 3]);
+  });
+
+  it('服务端响应未带requestId时保留上传头中的X-Request-Id用于排查', async () => {
+    const readFile = vi.fn((options: CallbackOptions) => {
+      (options.success as (result: { data: ArrayBuffer }) => void)({
+        data: new Uint8Array([1, 2, 3]).buffer,
+      });
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 503 })));
+    installTt({
+      getFileSystemManager: () => ({ readFile, unlink: vi.fn() }),
+    });
+
+    await expect(realAdapter.uploadRecording({
+      localClipId: 'local-fallback-request',
+      tempFilePath: 'ttfile://clip.aac',
+      duration: 30_000,
+      startedAt: 1_000,
+      endedAt: 31_000,
+    }, {
+      url: 'https://sales.example.com/api/v1/sales/me/visits/v-1/recordings/clips',
+      headers: { 'X-Request-Id': 'req-from-upload-header' },
+      formData: { clientClipId: 'local-fallback-request', durationMs: '30000' },
+      fileName: 'local-fallback-request.aac',
+    })).rejects.toMatchObject({
+      kind: 'SERVER',
+      code: 'HTTP_503',
+      requestId: 'req-from-upload-header',
+      message: expect.stringContaining('请求编号：req-from-upload-header'),
+    });
   });
 
   it('单段到达10分钟上限后立即续录并把完成片段交给上传队列', async () => {

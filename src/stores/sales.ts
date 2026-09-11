@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
-import { getFeishuAdapter } from '@/adapters';
+import { getWorkbenchCapabilities } from '@/adapters/workbench';
 import type { CapturedPhoto } from '@/adapters/feishu/types';
 import { buildUploadRequest } from '@/api/core/client';
 import { normalizeError } from '@/api/core/error';
@@ -68,7 +68,7 @@ export const useSalesStore = defineStore('sales', () => {
   const hasPendingStorefrontPhoto = ref(false);
   const summaryLoading = ref(false);
   const summaryError = ref<string | null>(null);
-  const locationStatus = ref<CapabilityStatus>(getFeishuAdapter().getLocationStatus());
+  const locationStatus = ref<CapabilityStatus>(getWorkbenchCapabilities().getLocationStatus());
   const trackingWorkDayId = ref<string | null>(null);
   const currentLocationLoading = ref(false);
   const lastCurrentLocation = ref<{
@@ -170,7 +170,7 @@ export const useSalesStore = defineStore('sales', () => {
   }
 
   /**
-   * 合并同一时刻的定位请求，并短时复用飞书返回的缓存点。
+   * 合并同一时刻的定位请求，并短时复用客户端返回的缓存点。
    * 拜访创建仍由服务端做围栏校验；这里仅避免“查工作日 → 定位 → 创建拜访”中的重复等待。
    */
   async function getCurrentLocation(maxAgeMs = 0): Promise<{
@@ -184,7 +184,7 @@ export const useSalesStore = defineStore('sales', () => {
     if (currentLocationRequest) return currentLocationRequest;
     currentLocationLoading.value = true;
     const generation = locationRequestGeneration;
-    const request = getFeishuAdapter().getCurrentLocation()
+    const request = getWorkbenchCapabilities().getCurrentLocation()
       .then((point) => {
         if (generation === locationRequestGeneration) lastCurrentLocation.value = point;
         return point;
@@ -360,7 +360,7 @@ export const useSalesStore = defineStore('sales', () => {
       photoEvidenceError.value = '上一张门头照尚未上传，请先重试或放弃后再拍摄';
       return null;
     }
-    const adapter = getFeishuAdapter();
+    const adapter = getWorkbenchCapabilities();
     photoEvidenceError.value = null;
     try {
       photoOperationStage.value = 'CAMERA';
@@ -392,7 +392,7 @@ export const useSalesStore = defineStore('sales', () => {
   async function uploadPendingStorefrontPhoto(): Promise<VisitEvidenceSummaryView | null> {
     const pending = pendingStorefrontPhoto;
     if (!pending) return null;
-    const adapter = getFeishuAdapter();
+    const adapter = getWorkbenchCapabilities();
     if (!pending.location) {
       photoOperationStage.value = 'LOCATION';
       pending.location = await getCurrentLocation(30_000);
@@ -403,7 +403,7 @@ export const useSalesStore = defineStore('sales', () => {
       ...target,
       formData: {
         clientEvidenceId: pending.photo.localPhotoId,
-        captureSource: 'FEISHU_CAMERA',
+        captureSource: 'APP_CAMERA',
         capturedAt: new Date(pending.photo.capturedAt).toISOString(),
         longitude: String(pending.location.longitude),
         latitude: String(pending.location.latitude),
@@ -428,7 +428,7 @@ export const useSalesStore = defineStore('sales', () => {
     photoEvidenceError.value = null;
     if (!pending) return;
     try {
-      await getFeishuAdapter().discardPhoto(pending.photo);
+      await getWorkbenchCapabilities().discardPhoto(pending.photo);
     } catch (error) {
       console.warn('[VisitEvidence] 待上传门头照临时文件删除失败，等待客户端清理', error);
     }
@@ -531,16 +531,20 @@ export const useSalesStore = defineStore('sales', () => {
 
   /**
    * 应用级定位会话。页面跳转不会停止；应用恢复且服务端工作日仍 ACTIVE 时可重新启动。
-   * 飞书 WebView 退到后台仍只能尽力采样，中断事实由服务端记录。
+   * App 原生前台使用 Capacitor 定位；后台持续轨迹仍需要原生前台服务/Background Mode。
    */
   async function ensureLocationTracking(workDayId: string): Promise<boolean> {
     if (trackingWorkDayId.value === workDayId
         && ['loading', 'ready', 'active'].includes(locationStatus.value)) {
       return true;
     }
-    const adapter = getFeishuAdapter();
+    const adapter = getWorkbenchCapabilities();
     trackingWorkDayId.value = workDayId;
     locationStatus.value = 'loading';
+    const intervalMinutes = context.value?.fieldPolicy.locationIntervalMinutes;
+    const intervalMs = intervalMinutes && intervalMinutes > 0
+      ? intervalMinutes * 60_000
+      : undefined;
     try {
       await adapter.startLocation(
         (point) => {
@@ -553,6 +557,7 @@ export const useSalesStore = defineStore('sales', () => {
           locationStatus.value = 'interrupted';
           recordLocationInterruption(workDayId);
         },
+        { intervalMs },
       );
       if (locationStatus.value === 'loading') locationStatus.value = 'ready';
       return true;
@@ -567,8 +572,8 @@ export const useSalesStore = defineStore('sales', () => {
 
   async function stopLocationTracking(): Promise<void> {
     trackingWorkDayId.value = null;
-    await getFeishuAdapter().stopLocation();
-    locationStatus.value = getFeishuAdapter().getLocationStatus();
+    await getWorkbenchCapabilities().stopLocation();
+    locationStatus.value = getWorkbenchCapabilities().getLocationStatus();
   }
 
   function queueTrackedPoint(
@@ -584,7 +589,7 @@ export const useSalesStore = defineStore('sales', () => {
         latitude: point.latitude,
         accuracyMeters: point.accuracy,
         clientOccurredAt: new Date(point.timestamp).toISOString(),
-        source: 'FEISHU',
+        source: 'APP_NATIVE',
       }]);
       if (!result) {
         locationStatus.value = 'interrupted';
