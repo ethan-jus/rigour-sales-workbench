@@ -42,7 +42,7 @@ async function ensureLocationPermission(): Promise<void> {
   }
   const requested = await Geolocation.requestPermissions({ permissions: ['location'] });
   if (requested.location !== 'granted') {
-    throw new Error('必须允许定位权限后才能使用门户工作台');
+    throw new Error('必须允许定位权限后才能使用瑞盖销售工作台');
   }
 }
 

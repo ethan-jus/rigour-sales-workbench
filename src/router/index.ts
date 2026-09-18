@@ -49,24 +49,10 @@ const router = createRouter({
       component: () => import('@/pages/TrackPage.vue'),
       meta: { title: '轨迹', feature: 'sales.track' },
     },
-    {
-      path: '/chat',
-      name: 'chat',
-      component: () => import('@/pages/ChatPage.vue'),
-      meta: { title: '内部沟通', feature: 'chat' },
-    },
-    {
-      path: '/chat/:conversationId',
-      name: 'conversation',
-      component: () => import('@/pages/ConversationPage.vue'),
-      meta: { title: '会话', feature: 'chat' },
-    },
-    {
-      path: '/meetings/:meetingId',
-      name: 'meeting',
-      component: () => import('@/pages/MeetingPage.vue'),
-      meta: { title: '语音会议', feature: 'chat' },
-    },
+    // 历史协同链接回到个人中心，当前版本不再提供聊天和会议。
+    { path: '/chat', redirect: '/profile' },
+    { path: '/chat/:conversationId', redirect: '/profile' },
+    { path: '/meetings/:meetingId', redirect: '/profile' },
     {
       path: '/delivery',
       name: 'delivery',
@@ -104,12 +90,12 @@ router.beforeEach((to) => {
   const authStore = useAuthStore();
   if (!authStore.isLoggedIn) return true;
   if (to.name === 'home' && !authStore.isSalesUser) {
-    return authStore.hasFeature('chat') ? '/chat' : '/profile';
+    return '/profile';
   }
   const routeName = typeof to.name === 'string' ? to.name : '';
   const feature = (to.meta.feature as AppFeature | undefined) || ROUTE_FEATURES[routeName];
   if (feature && !authStore.hasFeature(feature)) {
-    return authStore.hasFeature('chat') ? '/chat' : '/profile';
+    return '/profile';
   }
   return true;
 });

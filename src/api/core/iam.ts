@@ -11,22 +11,6 @@ export interface CurrentUserView {
   permissions: string[];
 }
 
-export interface NavigationNodeView {
-  id: string;
-  parentId: string | null;
-  code: string;
-  type: 'MENU' | 'PAGE' | string;
-  displayName: string;
-  permissionCode: string | null;
-  routeKey: string | null;
-  routePath: string | null;
-  iconKey: string | null;
-  sortOrder: number;
-  visible: boolean;
-  keepAlive: boolean;
-  children: NavigationNodeView[];
-}
-
 function unwrap<T>(response: unknown): T {
   if (response && typeof response === 'object' && 'code' in response && 'data' in response) {
     return (response as { data: T }).data;
@@ -48,11 +32,4 @@ export const iamApi = {
     return normalizeCurrentUser(unwrap<CurrentUserView>(response));
   },
 
-  async navigation(applicationCode = 'FEISHU_SALES'): Promise<NavigationNodeView[]> {
-    const response = await apiClient.get<NavigationNodeView[]>(
-      `/portal/navigation/${encodeURIComponent(applicationCode)}`,
-    );
-    const nodes = unwrap<NavigationNodeView[]>(response);
-    return Array.isArray(nodes) ? nodes : [];
-  },
 };

@@ -83,7 +83,9 @@ describe('AttendancePage 月度出勤事实', () => {
   });
 
   it('展示达标、未达标和无记录，并明确无排班时不判定旷工', async () => {
-    const page = mount(AttendancePage, { global: { plugins: [Vant] } });
+    const page = mount(AttendancePage, {
+      global: { plugins: [Vant], stubs: { 'van-nav-bar': true } },
+    });
     await flushPromises();
 
     expect(page.text()).toContain('本月出勤');

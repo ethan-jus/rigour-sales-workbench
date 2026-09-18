@@ -148,7 +148,7 @@ describe('bootstrap 飞书鉴权门禁', () => {
     await bootstrap();
 
     expect(mocks.appStore.setBootstrapError).toHaveBeenCalledWith(
-      expect.stringContaining('公司要求开启定位后才能使用门户工作台'),
+      expect.stringContaining('公司要求开启定位后才能使用瑞盖销售工作台'),
     );
     expect(mocks.appStore.setBootstrapReady).not.toHaveBeenCalled();
     expect(mocks.salesStore.ensureLocationTracking).not.toHaveBeenCalled();

@@ -121,7 +121,7 @@ async function ensureMandatoryLocation(traceId: string): Promise<void> {
   } catch (error) {
     const message = error instanceof Error ? error.message : '定位权限不可用';
     console.warn('[BootstrapTrace] mandatory-location-blocked', { traceId, runtime, message });
-    throw new Error(`${message}。公司要求开启定位后才能使用门户工作台。`, {
+    throw new Error(`${message}。公司要求开启定位后才能使用瑞盖销售工作台。`, {
       cause: error,
     });
   }

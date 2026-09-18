@@ -4,7 +4,7 @@ import { getFeishuAdapter } from '@/adapters';
 import { getWorkbenchCapabilities } from '@/adapters/workbench';
 import { loginWithMobileOidc } from '@/auth/mobile-oidc';
 import { clearLegacyAuthToken, setAuthToken } from '@/auth/token-storage';
-import { iamApi, type CurrentUserView, type NavigationNodeView } from '@/api/core/iam';
+import { iamApi, type CurrentUserView } from '@/api/core/iam';
 import { createRequestId, elapsedMs, responseMeta } from '@/diagnostics/trace';
 import {
   SALES_FEATURES,
@@ -57,10 +57,8 @@ export const useAuthStore = defineStore('auth', () => {
   const loginError = ref<string | null>(null);
   const roles = ref<string[]>([]);
   const permissions = ref<string[]>([]);
-  const navigation = ref<NavigationNodeView[]>([]);
   const grantedFeatures = computed(() => inferGrantedFeatures(
     permissions.value,
-    navigation.value,
     isMockMode || authMode === 'mock',
   ));
   const isSalesUser = computed(() => Array.from(grantedFeatures.value).some((feature) => (
@@ -96,8 +94,6 @@ export const useAuthStore = defineStore('auth', () => {
         feishuOpenId.value = 'ou_mock_001';
         roles.value = ['MOCK_SALES'];
         permissions.value = [
-          'collaboration:im:use',
-          'collaboration:meeting:use',
           'sales:context:read',
           'sales:visit-target:read',
           'sales:visit-plan:own:read',
@@ -112,7 +108,6 @@ export const useAuthStore = defineStore('auth', () => {
           'sales:evidence:own:write',
           'sales:poi:read',
         ];
-        navigation.value = [];
 
         localStorage.setItem('auth_user_id', 'mock-user-001');
         localStorage.setItem('auth_tenant_id', defaultTenantId);
@@ -242,14 +237,6 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.setItem('auth_user_id', loaded.id);
     localStorage.setItem('auth_tenant_id', loaded.tenantId || defaultTenantId);
 
-    try {
-      navigation.value = await iamApi.navigation(
-        import.meta.env.VITE_WORKBENCH_APPLICATION_CODE || 'FEISHU_SALES',
-      );
-    } catch (error) {
-      navigation.value = [];
-      console.warn('[AuthTrace] workbench-navigation-load-failed', error);
-    }
     return loaded;
   }
 
@@ -272,7 +259,6 @@ export const useAuthStore = defineStore('auth', () => {
     feishuOpenId.value = null;
     roles.value = [];
     permissions.value = [];
-    navigation.value = [];
     clearLegacyAuthToken();
     localStorage.removeItem('auth_user_id');
     localStorage.removeItem('auth_tenant_id');
@@ -288,7 +274,6 @@ export const useAuthStore = defineStore('auth', () => {
     feishuOpenId,
     roles,
     permissions,
-    navigation,
     grantedFeatures,
     isSalesUser,
     isLoggedIn,

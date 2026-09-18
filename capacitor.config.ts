@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.rigour.workbench',
-  appName: '门户工作台',
+  appName: '瑞盖销售工作台',
   webDir: 'dist',
   bundledWebRuntime: false,
   server: {

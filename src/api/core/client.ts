@@ -24,7 +24,6 @@ import {
  * - 写请求不自动重试；超时后由页面保留幂等键语义并提示用户主动重试
  */
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
-const WS_BASE_URL = import.meta.env.VITE_WS_BASE_URL || '';
 const DEFAULT_TENANT_ID = import.meta.env.VITE_DEFAULT_TENANT_ID || 'demo';
 const configuredTimeoutMs = Number(import.meta.env.VITE_API_TIMEOUT_MS || 15_000);
 const REQUEST_TIMEOUT_MS = Number.isFinite(configuredTimeoutMs)
@@ -78,14 +77,6 @@ export function buildUploadRequest(path: string): { url: string; headers: Record
   if (token) headers.Authorization = `Bearer ${token}`;
   delete headers['Content-Type'];
   return { url: new URL(`${BASE_URL}${path}`, window.location.origin).toString(), headers };
-}
-
-/** 构造 WebSocket 地址，默认跟随当前页面来源。 */
-export function buildWebSocketUrl(path: string): string {
-  if (WS_BASE_URL) return `${WS_BASE_URL}${path}`;
-  const url = new URL(path, window.location.origin);
-  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-  return url.toString();
 }
 
 async function handleResponse<T>(response: Response): Promise<ApiResponse<T>> {

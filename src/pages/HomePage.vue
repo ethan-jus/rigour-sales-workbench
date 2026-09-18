@@ -32,7 +32,7 @@ const today = new Intl.DateTimeFormat('zh-CN', {
 const todayDate = localDate();
 
 const workStatus = computed(() => {
-  if (!isSalesUser.value) return { label: '内部沟通', tone: 'active' };
+  if (!isSalesUser.value) return { label: '未配置外勤权限', tone: 'idle' };
   if (workDay.value?.status === 'ACTIVE') return { label: '工作中', tone: 'active' };
   if (workDay.value?.status === 'FINISHED') return { label: '已签退', tone: 'finished' };
   if (workDay.value?.status === 'PENDING_REVIEW') return { label: '考勤待复核', tone: 'warning' };
@@ -51,12 +51,12 @@ const homeErrorMessage = computed(() => [
 const nextAction = computed<NextAction>(() => {
   if (!isSalesUser.value) {
     return {
-      eyebrow: '内部沟通',
-      title: '进入公司群聊',
-      description: '当前账号未配置销售外勤权限，只开放内部沟通、群聊和会议相关能力。',
-      label: '打开沟通',
-      icon: 'chat-o',
-      to: '/chat',
+      eyebrow: '个人中心',
+      title: '查看个人信息',
+      description: '当前账号未配置销售外勤权限，请联系管理员配置。',
+      label: '打开个人中心',
+      icon: 'user-o',
+      to: '/profile',
     };
   }
   if (activeVisit.value) {
@@ -157,9 +157,6 @@ const quickActions = computed(() => [
     : []),
   ...(authStore.hasFeature('sales.track')
     ? [{ to: '/track', icon: 'location-o', title: '工作记录', subtitle: '轨迹与拜访' }]
-    : []),
-  ...(authStore.hasFeature('chat')
-    ? [{ to: '/chat', icon: 'chat-o', title: '内部沟通', subtitle: '单聊群聊与会议' }]
     : []),
 ]);
 
