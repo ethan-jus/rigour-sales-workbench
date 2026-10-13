@@ -5,6 +5,12 @@
   "type": "module",
   "packageManager": "pnpm@11.9.0",
   "scripts": {
+    "app:g0:open": "node scripts/app-g0.mjs open",
+    "app:g0:web": "node scripts/app-g0.mjs web",
+    "app:g0:check:android": "node scripts/app-g0.mjs app-android",
+    "app:g0:check:ios": "node scripts/app-g0.mjs app-ios",
+    "app:g0:check:harmony": "node scripts/app-g0.mjs app-harmony",
+    "app:g0:test": "node scripts/test-app-g0-native.cjs",
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",

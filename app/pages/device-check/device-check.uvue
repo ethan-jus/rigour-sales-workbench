@@ -1,0 +1,204 @@
+<template>
+  <scroll-view class="page" scroll-y>
+    <view class="content">
+      <text class="eyebrow">G0 · 三端真机验证</text>
+      <text class="heading">定位与录音检查</text>
+      <text class="intro">{{ runtimeName }} · 测试文件仅留本机，不上传生产，不计入拜访。</text>
+
+      <view class="card">
+        <text class="title">1. 系统定位</text>
+        <text class="body">手动请求系统高精度 WGS84 定位，不调用高德。地图与地址接入尚未完成。</text>
+        <button class="primary" :disabled="locating" @click="locate">{{ locating ? '正在定位…' : '获取当前位置' }}</button>
+        <text class="result" selectable>{{ locationMessage }}</text>
+        <text class="note">接收时间是客户端收到回调的时间，不代表硬件采样时间；精度缺失不会记为 0。</text>
+      </view>
+
+      <view class="card">
+        <text class="title">2. 原生录音与停止后保存</text>
+        <text class="timer">{{ elapsed }}</text>
+        <text class="note">活动计时估值，排除已收到的暂停和中断；实际音频时长仍需回放核验。</text>
+        <text class="result">{{ capture.message }}</text>
+        <button class="primary" :disabled="!canStart" @click="startCapture">开始录音测试</button>
+        <view class="button-row">
+          <button class="secondary half" :disabled="capture.phase != 'recording'" @click="pauseCapture">暂停</button>
+          <button class="secondary half last" :disabled="capture.phase != 'paused' && capture.phase != 'interrupted'" @click="resumeCapture">继续</button>
+        </view>
+        <button class="secondary" :disabled="!canStop" @click="stopCapture">停止并保存到本机</button>
+        <button v-if="capture.phase == 'save-error'" class="secondary" @click="retrySave">重试保存</button>
+        <text v-if="capture.savedPath.length > 0" class="path" selectable>{{ capture.savedPath }}</text>
+        <text v-if="capture.phase == 'save-error'" class="path" selectable>临时文件：{{ capture.temporaryPath }}</text>
+        <text class="warning">当前仅验证停止后保存。尚未实现录制中的分段持久化，录制中强制关闭可能丢失文件。锁屏、后台及两小时连续录音均待真机验收。</text>
+      </view>
+
+      <view class="card">
+        <text class="title">3. 本机已保存录音 · {{ savedClips.length }}</text>
+        <text class="body">停止录音后，重新打开 App，再刷新列表和回放，检查文件与索引是否保留。</text>
+        <button class="secondary" @click="reloadClips">重新读取本机文件</button>
+        <text v-if="fileMessage.length > 0" class="result">{{ fileMessage }}</text>
+        <view v-for="clip in savedClips" :key="clip.id" class="clip">
+          <text class="clip-name" selectable>{{ clip.fileName }}</text>
+          <text class="note">保存于 {{ formatDate(clip.savedAt) }} · 活动计时 {{ formatClock(clip.activeDurationEstimateMs) }}（估值）</text>
+          <text v-if="clip.interrupted" class="warning">本次录音出现过中断，请核验内容。</text>
+          <button class="secondary" @click="playClip(clip)">回放本机录音</button>
+        </view>
+        <text v-if="playbackMessage.length > 0" class="result">{{ playbackMessage }}</text>
+        <button v-if="playing" class="secondary" @click="stopPlayback">停止回放</button>
+      </view>
+
+      <view class="card">
+        <text class="title">前后台事件</text>
+        <text class="body">切换应用仅记录事件，不主动停止录音。离开本页会尝试停止并保存，验证后台时请保留本页。</text>
+        <text v-for="(event, index) in lifecycleEvents" :key="index" class="event">{{ event }}</text>
+        <text class="note">这些事件只证明页面生命周期发生变化，不证明后台一直录到了声音。</text>
+      </view>
+    </view>
+  </scroll-view>
+</template>
+
+<script setup lang="uts">
+import { createCaptureSession, loadSavedClips, savedClipPath, CaptureSession, CaptureState, SavedClip } from '../../services/capture.uts'
+import { requestDeviceLocation } from '../../services/location.uts'
+
+const runtimeName = ref('浏览器预览 · 原生能力不可用')
+// #ifdef APP-ANDROID
+runtimeName.value = 'Android 原生测试'
+// #endif
+// #ifdef APP-IOS
+runtimeName.value = 'iOS 原生测试'
+// #endif
+// #ifdef APP-HARMONY
+runtimeName.value = 'HarmonyOS 原生测试'
+// #endif
+
+const capture = ref({ phase: 'idle', message: '未开始录音', activeDurationEstimateMs: 0, temporaryPath: '', savedPath: '' } as CaptureState)
+const savedClips = ref([] as SavedClip[])
+const fileMessage = ref('')
+const playbackMessage = ref('')
+const playing = ref(false)
+const locating = ref(false)
+const locationMessage = ref('尚未请求定位')
+const lifecycleEvents = ref([] as string[])
+let session: CaptureSession | null = null
+let ticker = 0
+// #ifdef APP
+let player: InnerAudioContext | null = null
+// #endif
+
+function formatClock(ms: number): string {
+  const seconds = Math.floor(ms / 1000)
+  return Math.floor(seconds / 3600).toString().padStart(2, '0') + ':' + Math.floor(seconds % 3600 / 60).toString().padStart(2, '0') + ':' + (seconds % 60).toString().padStart(2, '0')
+}
+
+function formatDate(timestamp: number): string {
+  const date = new Date(timestamp)
+  return date.getFullYear().toString() + '-' + (date.getMonth() + 1).toString().padStart(2, '0') + '-' + date.getDate().toString().padStart(2, '0') + ' ' + date.getHours().toString().padStart(2, '0') + ':' + date.getMinutes().toString().padStart(2, '0') + ':' + date.getSeconds().toString().padStart(2, '0')
+}
+
+const elapsed = computed((): string => formatClock(capture.value.activeDurationEstimateMs))
+const canStart = computed((): boolean => capture.value.phase == 'idle' || capture.value.phase == 'saved' || capture.value.phase == 'error' || capture.value.phase == 'busy' || capture.value.phase == 'unsupported')
+const canStop = computed((): boolean => ['starting', 'recording', 'paused', 'interrupted', 'error'].includes(capture.value.phase))
+
+function reloadClips(): void {
+  fileMessage.value = '正在读取本机文件…'
+  loadSavedClips((clips) => {
+    savedClips.value = clips
+    fileMessage.value = clips.length == 0 ? '暂无已保存录音' : '已读取文件索引并检查文件存在。请回放核验。'
+  }, (message) => { fileMessage.value = message }, (warning) => {
+    fileMessage.value += '\n' + warning
+  })
+}
+
+function locate(): void {
+  if (locating.value) return
+  locating.value = true
+  locationMessage.value = '正在请求系统定位…'
+  requestDeviceLocation((location) => {
+    locating.value = false
+    const accuracy = location.accuracy == null ? '未提供' : location.accuracy!.toFixed(1) + ' 米'
+    locationMessage.value = 'WGS84：' + location.longitude.toFixed(6) + '，' + location.latitude.toFixed(6) + '\n精度：' + accuracy + '\n回调接收：' + formatDate(location.receivedAt)
+  }, (message) => { locating.value = false; locationMessage.value = message })
+}
+
+function stopPlayback(): void {
+  // #ifdef APP
+  player?.stop()
+  // #endif
+  playing.value = false
+}
+
+function startCapture(): void { stopPlayback(); session?.start() }
+function pauseCapture(): void { session?.pause() }
+function resumeCapture(): void { session?.resume() }
+function stopCapture(): void { session?.stop() }
+function retrySave(): void { session?.retrySave() }
+
+function playClip(clip: SavedClip): void {
+  if (!canStart.value) { playbackMessage.value = '请先停止录音再回放'; return }
+  // #ifdef APP
+  if (player != null) {
+    player!.stop()
+    player!.src = savedClipPath(clip)
+    playbackMessage.value = '正在打开：' + clip.fileName
+    player!.play()
+  }
+  // #endif
+  // #ifndef APP
+  playbackMessage.value = '浏览器预览不能回放原生沙盒中的录音。'
+  // #endif
+}
+
+function recordLifecycle(message: string): void {
+  lifecycleEvents.value.unshift(formatDate(Date.now()) + ' · ' + message)
+  if (lifecycleEvents.value.length > 12) lifecycleEvents.value.pop()
+}
+
+onLoad(() => {
+  session = createCaptureSession((state) => {
+    capture.value = state
+    if (state.phase == 'saved') reloadClips()
+  })
+  ticker = setInterval(() => { if (session != null) capture.value = session!.snapshot() }, 1000)
+  // #ifdef APP
+  player = uni.createInnerAudioContext()
+  player!.onPlay(() => { playing.value = true; playbackMessage.value = '正在回放本机录音' })
+  player!.onEnded(() => { playing.value = false; playbackMessage.value = '回放结束' })
+  player!.onError((error) => { playing.value = false; playbackMessage.value = '回放失败：' + error.errMsg })
+  // #endif
+  reloadClips()
+})
+onShow(() => recordLifecycle('页面进入前台'))
+onHide(() => recordLifecycle('页面离开前台；未主动停止录音'))
+onUnload(() => {
+  clearInterval(ticker)
+  session?.dispose()
+  session = null
+  // #ifdef APP
+  player?.destroy()
+  player = null
+  // #endif
+})
+</script>
+
+<style>
+.page { flex: 1; background-color: #f3f5f9; }
+.content { padding: 20px; padding-bottom: 40px; }
+.eyebrow { color: #2456d6; font-size: 13px; margin-bottom: 8px; }
+.heading { color: #17233a; font-size: 25px; font-weight: bold; margin-bottom: 10px; }
+.intro { color: #637088; font-size: 14px; line-height: 22px; margin-bottom: 20px; }
+.card { padding: 18px; background-color: #ffffff; border-radius: 14px; margin-bottom: 16px; }
+.title { color: #17233a; font-size: 18px; font-weight: bold; margin-bottom: 12px; }
+.body { color: #54637c; font-size: 14px; line-height: 22px; margin-bottom: 12px; }
+.primary { background-color: #2456d6; color: #ffffff; border-radius: 10px; margin-top: 12px; font-size: 15px; }
+.secondary { background-color: #eef3ff; color: #21489f; border-radius: 10px; margin-top: 12px; font-size: 14px; }
+.button-row { flex-direction: row; }
+.half { flex: 1; margin-right: 10px; }
+.last { margin-right: 0; }
+.result { color: #25374f; font-size: 14px; line-height: 22px; margin-top: 12px; }
+.timer { color: #17233a; font-size: 38px; font-weight: bold; margin-bottom: 8px; }
+.note { color: #778399; font-size: 12px; line-height: 19px; margin-top: 10px; }
+.warning { color: #9c641a; font-size: 12px; line-height: 20px; margin-top: 12px; }
+.path { color: #54637c; font-size: 11px; line-height: 18px; margin-top: 12px; }
+.clip { border-top-width: 1px; border-top-color: #e9edf4; padding-top: 14px; margin-top: 14px; }
+.clip-name { color: #25374f; font-size: 13px; }
+.event { color: #54637c; font-size: 12px; line-height: 20px; margin-top: 8px; }
+</style>

@@ -1,0 +1,98 @@
+<template>
+  <scroll-view class="page" scroll-y>
+    <view class="content">
+      <view class="brand-row">
+        <view class="brand"><text class="brand-letter">R</text></view>
+        <view class="brand-copy">
+          <text class="brand-name">RIGOUR</text>
+          <text class="brand-detail">瑞盖销售工作台</text>
+        </view>
+        <text class="version">内部开发版</text>
+      </view>
+
+      <text class="heading">开始今天的拜访</text>
+      <text class="intro">找到门店，记录沟通，完成现场打卡。</text>
+
+      <view class="visit-card">
+        <text class="card-label">拜访打卡</text>
+        <text class="card-heading">每一次到店，都有记录</text>
+        <text class="card-description">门店位置、现场照片与沟通录音，汇集到同一条拜访记录。</text>
+        <view class="flow">
+          <text class="flow-text">01 选择门店</text>
+          <text class="flow-arrow">→</text>
+          <text class="flow-text">02 记录沟通</text>
+          <text class="flow-arrow">→</text>
+          <text class="flow-text">03 拍照打卡</text>
+        </view>
+        <view class="pending-action"><text class="pending-action-text">平台登录接入后开放拜访</text></view>
+      </view>
+
+      <view class="notice">
+        <view class="notice-dot"></view>
+        <text class="notice-text">当前为基础工程验证版，尚未连接业务账号，不会生成正式打卡。</text>
+      </view>
+
+      <view class="section-heading">
+        <text class="section-title">设备准备</text>
+        <text class="section-caption">首轮内部验证</text>
+      </view>
+      <view class="device-card">
+        <text class="device-title">先检查定位和录音</text>
+        <text class="device-description">在手机上检查定位、录音保存和回放。测试录音只保存在当前设备。</text>
+        <button class="primary" @click="openDeviceCheck">打开设备检查</button>
+      </view>
+      <text class="footer">{{ runtimeLabel }}</text>
+    </view>
+  </scroll-view>
+</template>
+
+<script setup lang="uts">
+const runtimeLabel = ref('浏览器预览 · 原生定位与录音需安装测试包验证')
+// #ifdef APP-ANDROID
+runtimeLabel.value = 'Android · 原生能力验证版'
+// #endif
+// #ifdef APP-IOS
+runtimeLabel.value = 'iOS · 原生能力验证版'
+// #endif
+// #ifdef APP-HARMONY
+runtimeLabel.value = 'HarmonyOS · 原生能力验证版'
+// #endif
+
+function openDeviceCheck(): void {
+  uni.navigateTo({ url: '/pages/device-check/device-check' })
+}
+</script>
+
+<style>
+.page { flex: 1; background-color: #f3f5f9; }
+.content { padding: 24px; padding-bottom: 36px; }
+.brand-row { flex-direction: row; align-items: center; margin-bottom: 36px; }
+.brand { width: 42px; height: 42px; border-radius: 12px; background-color: #174bea; align-items: center; justify-content: center; }
+.brand-letter { color: #ffffff; font-size: 26px; font-weight: bold; }
+.brand-copy { margin-left: 12px; flex: 1; }
+.brand-name { color: #192c4d; font-size: 14px; font-weight: bold; }
+.brand-detail { color: #71809b; font-size: 11px; margin-top: 3px; }
+.version { color: #556885; font-size: 11px; background-color: #e7edf6; padding: 6px 9px; border-radius: 6px; }
+.heading { color: #17233a; font-size: 27px; font-weight: bold; margin-bottom: 9px; }
+.intro { color: #6f7c90; font-size: 14px; margin-bottom: 26px; }
+.visit-card { background-color: #174bea; border-radius: 18px; padding: 22px; }
+.card-label { color: #c2d1ff; font-size: 12px; margin-bottom: 18px; }
+.card-heading { color: #ffffff; font-size: 21px; font-weight: bold; margin-bottom: 12px; }
+.card-description { color: #d9e3ff; font-size: 13px; line-height: 22px; }
+.flow { flex-direction: row; align-items: center; justify-content: space-between; margin-top: 26px; margin-bottom: 24px; }
+.flow-text { color: #ffffff; font-size: 11px; }
+.flow-arrow { color: #adc3ff; font-size: 12px; }
+.pending-action { background-color: #e0e9ff; padding: 15px 10px; border-radius: 10px; align-items: center; }
+.pending-action-text { color: #2b4b9f; font-size: 13px; }
+.notice { flex-direction: row; padding: 16px 0; margin-bottom: 20px; }
+.notice-dot { width: 6px; height: 6px; border-radius: 3px; background-color: #d59e47; margin-top: 7px; margin-right: 8px; }
+.notice-text { flex: 1; color: #7b715f; font-size: 12px; line-height: 20px; }
+.section-heading { flex-direction: row; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.section-title { color: #17233a; font-size: 18px; font-weight: bold; }
+.section-caption { color: #7c889c; font-size: 12px; }
+.device-card { background-color: #ffffff; padding: 21px; border-radius: 16px; }
+.device-title { color: #25374f; font-size: 17px; font-weight: bold; margin-bottom: 10px; }
+.device-description { color: #738199; font-size: 13px; line-height: 22px; }
+.primary { background-color: #edf2ff; color: #174bea; border-radius: 10px; font-size: 15px; margin-top: 18px; }
+.footer { color: #8490a4; font-size: 11px; line-height: 18px; margin-top: 24px; text-align: center; }
+</style>

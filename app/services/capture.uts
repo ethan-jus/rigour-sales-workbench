@@ -1,0 +1,261 @@
+export type SavedClip = {
+  id: string,
+  fileName: string,
+  createdAt: number,
+  savedAt: number,
+  activeDurationEstimateMs: number,
+  interrupted: boolean
+}
+
+export type CaptureState = {
+  phase: string,
+  message: string,
+  activeDurationEstimateMs: number,
+  temporaryPath: string,
+  savedPath: string
+}
+
+export type CaptureSession = {
+  start: () => void,
+  pause: () => void,
+  resume: () => void,
+  stop: () => void,
+  retrySave: () => void,
+  snapshot: () => CaptureState,
+  dispose: () => void
+}
+
+// #ifdef APP
+// getRecorderManager is shared and its off* APIs remove every listener for an
+// event. Only the owning session may bind or clear listeners, including while
+// an earlier page's asynchronous stop is still completing.
+let nativeCaptureOwner = 0
+let nextCaptureSessionId = 0
+
+function captureDirectory(): string {
+  return uni.env.USER_DATA_PATH + '/rigour-capture'
+}
+
+function ensureCaptureDirectory(success: () => void, fail: (message: string) => void): void {
+  const fs = uni.getFileSystemManager()
+  fs.access({
+    path: captureDirectory(),
+    success: () => success(),
+    fail: () => fs.mkdir({
+      dirPath: captureDirectory(), recursive: true,
+      success: () => success(),
+      fail: (error) => fail('无法建立录音保存目录：' + error.errMsg)
+    })
+  })
+}
+// #endif
+
+export function savedClipPath(clip: SavedClip): string {
+  // #ifdef APP
+  // Derive the sandbox path on each launch; an absolute iOS sandbox prefix can change.
+  return captureDirectory() + '/' + clip.fileName
+  // #endif
+  // #ifndef APP
+  return ''
+  // #endif
+}
+
+export function loadSavedClips(success: (clips: SavedClip[]) => void, fail: (message: string) => void, warn: ((message: string) => void) | null = null): void {
+  // #ifdef APP
+  const fs = uni.getFileSystemManager()
+  ensureCaptureDirectory(() => {
+    fs.readdir({
+      dirPath: captureDirectory(),
+      success: (result) => {
+        const files = result.files.filter((name: string): boolean => name.endsWith('.json'))
+        const clips = [] as SavedClip[]
+        let pending = files.length
+        if (pending == 0) { success(clips); return }
+        const issues = [] as string[]
+        const finishEntry = (): void => {
+          pending -= 1
+          if (pending == 0) {
+            clips.sort((a: SavedClip, b: SavedClip): number => b.savedAt - a.savedAt)
+            success(clips)
+            if (issues.length > 0) warn?.(issues.join('；'))
+          }
+        }
+        const rejectEntry = (message: string): void => {
+          issues.push(message)
+          finishEntry()
+        }
+        files.forEach((name: string) => {
+          fs.readFile({
+            filePath: captureDirectory() + '/' + name,
+            encoding: 'utf-8',
+            success: (result) => {
+              let clip: SavedClip | null = null
+              try { clip = JSON.parse<SavedClip>(result.data as string) } catch (error) { clip = null }
+              if (clip == null || clip.fileName.indexOf('/') >= 0 || !clip.fileName.endsWith('.aac')) {
+                rejectEntry('跳过损坏的录音索引，文件未被删除：' + name)
+                return
+              }
+              const validClip = clip!
+              fs.access({
+                path: savedClipPath(validClip),
+                success: () => {
+                  clips.push(validClip)
+                  finishEntry()
+                },
+                fail: (error) => rejectEntry('录音索引存在但文件不可读取：' + validClip.fileName + '；' + error.errMsg)
+              })
+            },
+            fail: (error) => rejectEntry('读取录音索引失败：' + error.errMsg)
+          })
+        })
+      },
+      fail: (error) => fail('读取本机录音列表失败：' + error.errMsg)
+    })
+  }, fail)
+  // #endif
+  // #ifndef APP
+  fail('浏览器预览不读取本机录音，请使用原生测试包。')
+  // #endif
+}
+
+// G0 probe only: stop -> native file copy -> metadata receipt. This is not a
+// crash-safe streaming recorder or a production upload queue.
+export function createCaptureSession(onChange: (state: CaptureState) => void): CaptureSession {
+  let phase = 'idle'
+  let message = '未开始录音'
+  let activeMs = 0
+  let activeSince = 0
+  let temporaryPath = ''
+  let savedPath = ''
+  let disposed = false
+  const snapshot = (): CaptureState => ({
+    phase: phase, message: message,
+    activeDurationEstimateMs: activeMs + (activeSince > 0 ? Math.max(0, Date.now() - activeSince) : 0),
+    temporaryPath: temporaryPath, savedPath: savedPath
+  } as CaptureState)
+  const emit = (): void => { if (!disposed) onChange(snapshot()) }
+  // #ifdef APP
+  const manager = uni.getRecorderManager()
+  nextCaptureSessionId += 1
+  const sessionId = nextCaptureSessionId
+  let nativeStarted = false
+  let createdAt = 0
+  let fileId = ''
+  let interrupted = false
+  const collectTime = (): void => {
+    if (activeSince > 0) { activeMs += Math.max(0, Date.now() - activeSince); activeSince = 0 }
+  }
+  const detach = (): void => {
+    if (nativeCaptureOwner != sessionId) return
+    manager.offStart(); manager.offPause(); manager.offResume(); manager.offStop()
+    manager.offError(); manager.offInterruptionBegin(); manager.offInterruptionEnd()
+    nativeCaptureOwner = 0
+  }
+  const saveFailure = (error: string): void => {
+    phase = 'save-error'
+    message = error + '。请保留当前页面并重试保存。'
+    emit()
+  }
+  const save = (): void => {
+    if (temporaryPath.length == 0 || phase == 'saving') return
+    phase = 'saving'; message = '正在复制录音并保存索引'; emit()
+    const fs = uni.getFileSystemManager()
+    const fileName = fileId + '.aac'
+    const destination = captureDirectory() + '/' + fileName
+    ensureCaptureDirectory(() => fs.copyFile({
+      srcPath: temporaryPath, destPath: destination,
+      success: () => {
+        // Each file has its own small index; audio bytes never cross into JS memory.
+        const metadata: SavedClip = {
+          id: fileId, fileName: fileName, createdAt: createdAt, savedAt: Date.now(),
+          activeDurationEstimateMs: activeMs, interrupted: interrupted
+        }
+        fs.writeFile({
+          filePath: captureDirectory() + '/' + fileId + '.json',
+          data: JSON.stringify(metadata), encoding: 'utf-8',
+          success: () => {
+            savedPath = destination; temporaryPath = ''; phase = 'saved'
+            message = '已保存文件和索引。请回放，并重新打开 App 检查。'; emit()
+          },
+          fail: (error) => saveFailure('录音文件已复制，但索引保存失败：' + error.errMsg)
+        })
+      },
+      fail: (error) => saveFailure('录音文件保存失败：' + error.errMsg)
+    }), saveFailure)
+  }
+  const bind = (): void => {
+    manager.onStart(() => {
+      if (nativeCaptureOwner != sessionId) return
+      nativeStarted = true
+      activeSince = Date.now(); phase = 'recording'; message = '录音中，文件尚未完成持久保存'; emit()
+      if (disposed) manager.stop()
+    })
+    manager.onPause(() => {
+      if (nativeCaptureOwner != sessionId) return
+      collectTime(); phase = 'paused'; message = '已暂停'; emit()
+    })
+    manager.onResume(() => {
+      if (nativeCaptureOwner != sessionId) return
+      activeSince = Date.now(); phase = 'recording'; message = '录音已继续'; emit()
+    })
+    manager.onInterruptionBegin(() => {
+      if (nativeCaptureOwner != sessionId) return
+      collectTime(); interrupted = true; phase = 'interrupted'; message = '系统中断了录音，请确认后继续或停止保存'; emit()
+    })
+    manager.onInterruptionEnd(() => {
+      if (nativeCaptureOwner != sessionId) return
+      message = '系统中断结束，请手动继续或停止保存'; emit()
+    })
+    manager.onStop((result) => {
+      if (nativeCaptureOwner != sessionId) return
+      collectTime(); temporaryPath = result.tempFilePath
+      detach()
+      if (temporaryPath.length == 0) { phase = 'error'; message = '录音结束但未返回文件，请检查设备日志'; emit() }
+      else save()
+    })
+    manager.onError((error) => {
+      if (nativeCaptureOwner != sessionId) return
+      collectTime(); interrupted = true; phase = 'error'
+      if (!nativeStarted) detach()
+      message = '录音异常（' + error.errCode.toString() + '）：' + error.errMsg + '。尚未确认已保存。'; emit()
+    })
+  }
+  return {
+    start: () => {
+      if (disposed || (phase != 'idle' && phase != 'saved' && phase != 'error' && phase != 'busy')) return
+      if (nativeCaptureOwner != 0) {
+        if (nativeCaptureOwner != sessionId) phase = 'busy'
+        message = '上一段录音尚未结束，请稍后重试；不会覆盖其文件。'; emit()
+        return
+      }
+      nativeCaptureOwner = sessionId
+      nativeStarted = false
+      createdAt = Date.now(); fileId = createdAt.toString() + '-' + Math.floor(Math.random() * 1000000).toString()
+      activeMs = 0; activeSince = 0; interrupted = false; savedPath = ''; temporaryPath = ''
+      phase = 'starting'; message = '正在请求麦克风并启动录音'; emit()
+      bind()
+      manager.start({ duration: 7200000, sampleRate: 16000, numberOfChannels: 1, encodeBitRate: 48000, format: 'aac' })
+    },
+    pause: () => { if (nativeCaptureOwner == sessionId && phase == 'recording') manager.pause() },
+    resume: () => { if (nativeCaptureOwner == sessionId && (phase == 'paused' || phase == 'interrupted')) manager.resume() },
+    stop: () => {
+      if (nativeCaptureOwner != sessionId) return
+      if (phase == 'recording' || phase == 'paused' || phase == 'interrupted' || phase == 'starting' || phase == 'error') {
+        phase = 'stopping'; message = '正在结束录音'; emit(); manager.stop()
+      }
+    },
+    retrySave: () => { if (phase == 'save-error') save() },
+    snapshot: snapshot,
+    dispose: () => {
+      disposed = true
+      if (nativeCaptureOwner != sessionId) return
+      if (phase == 'starting' || phase == 'recording' || phase == 'paused' || phase == 'interrupted' || phase == 'error') manager.stop()
+      else if (phase != 'stopping') detach()
+    }
+  } as CaptureSession
+  // #endif
+  // #ifndef APP
+  const unsupported = (): void => { phase = 'unsupported'; message = '浏览器不能验证原生录音、文件保存或后台能力，请安装测试包。'; emit() }
+  return { start: unsupported, pause: unsupported, resume: unsupported, stop: unsupported, retrySave: unsupported, snapshot: snapshot, dispose: () => { disposed = true } } as CaptureSession
+  // #endif
+}

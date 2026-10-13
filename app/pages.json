@@ -1,0 +1,17 @@
+{
+  "pages": [
+    {
+      "path": "pages/home/home",
+      "style": { "navigationBarTitleText": "销售工作台" }
+    },
+    {
+      "path": "pages/device-check/device-check",
+      "style": { "navigationBarTitleText": "设备检查" }
+    }
+  ],
+  "globalStyle": {
+    "navigationBarTextStyle": "black",
+    "navigationBarBackgroundColor": "#ffffff",
+    "backgroundColor": "#f3f5f9"
+  }
+}

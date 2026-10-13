@@ -1,0 +1,11 @@
+<script setup lang="uts">
+onLaunch(() => {
+  // G0 makes no production requests or automatic location/recording requests.
+})
+</script>
+
+<style>
+/* #ifdef WEB */
+uni-page-body { min-height: 100%; }
+/* #endif */
+</style>

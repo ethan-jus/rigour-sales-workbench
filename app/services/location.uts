@@ -1,0 +1,40 @@
+export type DeviceLocation = {
+  latitude: number,
+  longitude: number,
+  accuracy: number | null,
+  coordinateSystem: string,
+  requestedAt: number,
+  receivedAt: number
+}
+
+// receivedAt is callback receipt time; this API does not expose the GPS fix timestamp.
+export function requestDeviceLocation(success: (location: DeviceLocation) => void, fail: (message: string) => void): void {
+  // #ifdef APP
+  const requestedAt = Date.now()
+  uni.getLocation({
+    provider: 'system',
+    type: 'wgs84',
+    geocode: false,
+    isHighAccuracy: true,
+    highAccuracyExpireTime: 12000,
+    success: (result) => {
+      if (!Number.isFinite(result.latitude) || !Number.isFinite(result.longitude) || Math.abs(result.latitude) > 90 || Math.abs(result.longitude) > 180) {
+        fail('定位服务返回了无效坐标，请重新定位。')
+        return
+      }
+      success({
+        latitude: result.latitude,
+        longitude: result.longitude,
+        accuracy: Number.isFinite(result.accuracy) && result.accuracy > 0 ? result.accuracy : null,
+        coordinateSystem: 'WGS84',
+        requestedAt: requestedAt,
+        receivedAt: Date.now()
+      } as DeviceLocation)
+    },
+    fail: (error) => fail('定位失败（' + error.errCode.toString() + '）：' + error.errMsg)
+  })
+  // #endif
+  // #ifndef APP
+  fail('浏览器预览不执行原生定位，请安装三端测试包验证。')
+  // #endif
+}

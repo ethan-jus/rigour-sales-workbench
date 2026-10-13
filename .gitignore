@@ -12,6 +12,13 @@ reports/
 outputs/
 playwright-report/
 test-results/
+app/unpackage/
+app/.hbuilderx/
+*.p12
+*.mobileprovision
+*.keystore
+*.jks
+*.p7b
 
 # Vite and tool caches
 .cache/
