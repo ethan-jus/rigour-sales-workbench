@@ -12,7 +12,9 @@
 4. iOS：使用 macOS + Xcode，连接 iPhone 或启动模拟器。真机安装涉及 Apple 签名及设备配置。
 5. 纯鸿蒙：安装 DevEco Studio 和相应 SDK，配置开发者签名、设备，再从 HBuilderX 的 HarmonyOS 运行入口选择设备。
 
-用户已在 HBuilderX 登录，项目已首次获取并绑定 DCloud AppID `__UNI__EE5460C`。不要再次点击“重新获取”随意更换这个标识。正式包继续沿用本仓库规划的 `com.rigour.workbench` 标识，Android/iOS 签名和鸿蒙 profile 均未提交。
+用户已在 HBuilderX 登录、绑定手机号，项目已首次获取并绑定 DCloud AppID `__UNI__EE5460C`，Web 本地发行构建已通过。不要再次点击“重新获取”随意更换这个标识。正式包继续沿用本仓库规划的 `com.rigour.workbench` 标识，Android/iOS 签名和鸿蒙 profile 均未提交。
+
+本机 Xcode 27 使用 Device Hub；HBuilderX 5.26 普通模拟器入口仍使用旧名称，且标准基座架构与本机 iOS 26.5 不匹配。目前已用现有 iOS 17 模拟器显示原生首页，具体兼容路径及验收范围见 [验证记录](../docs/app-g0-validation.md#xcode-27-模拟器兼容性)。这不影响浏览器预览和目标编译，不需要重复处理 Xcode 许可。
 
 在仓库根目录也可运行：
 

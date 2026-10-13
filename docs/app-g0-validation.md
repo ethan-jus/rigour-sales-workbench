@@ -8,12 +8,14 @@
 |---|---|---|
 | HBuilderX 安装/导入 | 5.26.2026091802 ARM64，`app/` 已导入 | 本机已有官方稳定版工具和新工程 |
 | Web 开发编译 | 通过，VDOM / 样式隔离 2.0 | 工程可生成浏览器预览 |
-| Web 本地发行构建 | 账号前置未满足 | 已登录并绑定 AppID；DCloud 仍要求账号绑定手机号，未生成发行产物 |
+| Web 本地发行构建 | 通过，账号手机号前置已解除 | 已生成 `app/unpackage/dist/build/web`，仅本地导出，未托管发布 |
 | Android 编译 | 通过，日志确认编译为 Android class | 页面/服务通过 Kotlin 目标编译；未生成签名 APK |
 | iOS 目标编译 | 通过，`app-service.js` / `app-config.js` 已生成 | iOS VDOM 目标资源编译通过；不是 Xcode 链接/IPA/真机验收 |
-| HarmonyOS 编译 | 未通过环境前置 | 本机未安装/配置 DevEco 工具链，不能据其他两端宣称鸿蒙通过 |
+| iOS 模拟器原生首页 | iOS 17 / iPhone 15 Pro 标准基座显示成功 | 通过 `simctl` 安装及资源同步显示首页；Device Hub 自动触控未得到页面跳转回执，不能宣称交互/录音通过 |
+| HarmonyOS 编译 | 等待首次启动配置 | 已安装并验证 DevEco Studio 26.0.0.851 ARM64；尚未完成首次启动和实际鸿蒙构建，不能据其他两端宣称鸿蒙通过 |
 | 录音/定位 API 模拟测试 | 11 项通过 | 状态顺序、失败重试、快速重进会话隔离等应用逻辑；不证明麦克风或 GPS 工作 |
 | Playwright 浏览器检查 | Chrome 与 WebKit 各通过 | 390×844：首页、页面跳转、刷新、返回、无横向溢出、原生能力门禁、无 JS 异常及外部请求 |
+| Web 发行版 Playwright | 两引擎功能检查通过；零外部请求检查未通过 | 导航、能力门禁、刷新、返回正常；框架 CSS 各请求一次外部阴影图片，未发现统计接口请求 |
 | 真机 / 两小时后台录音 | 尚未执行 | 不将 UI 计时或模拟器结果当作连续录音证据 |
 
 第一次 Android 编译定位到了 UTS 局部函数前向引用错误；调整声明顺序后通过。iOS 编译提示全局标签选择器不受支持，已移除后重编通过。
@@ -33,11 +35,24 @@ pnpm app:g0:check:harmony
 
 Web 开发服务器本次为 `http://localhost:5173/`，后续以运行输出为准。浏览器检查使用本机 Playwright 1.62.1、已安装 Chrome 与 WebKit，分别执行首页 → 设备检查 → 定位/录音按钮 → 刷新 → 返回；检查没有离开 loopback 的网络请求。截图保存在未提交的 `outputs/app-g0/`。
 
+发行版使用 `cli publish web --project <app目录>` 本地导出后，在 `http://127.0.0.1:8791/` 验证。新编译器在未配置时会默认启用 uni统计，已在 `manifest.json` 显式设置 `uniStatistics.enable: false` 后重构建；日志不再显示启用统计，发行文件未命中指定统计域名/接收器签名。浏览器静置后仍会请求框架 CSS 的 `https://cdn1000.dcloud.net.cn/img/shadow-grey.png`，这是外部视觉资源，不代表统计开启，也不能把此构建描述为完全无外部依赖。完整报告见忽略产物 `outputs/app-g0/release-browser-report.md` / `.json`。
+
+## Xcode 27 模拟器兼容性
+
+用户已自行完成 Xcode 许可与首次设置，`xcodebuild -version` 返回 Xcode 27.0（27A266a），`simctl` 已可用。剩下的问题与许可无关：
+
+- HBuilderX 5.26 普通运行入口仍调用 `open -a Simulator`；本机 Xcode 27 提供的是 `/Applications/Xcode.app/Contents/Applications/DeviceHub.app`，该旧名称启动失败。
+- 标准基座 `uniappx-launcher/base/Pandora_simulator.app` 的主二进制是 x86_64；本机 iOS 26.5 runtime 只有 arm64。不能靠“编译成功”略过这个安装架构限制。
+- 改用本机已有的 iOS 17 runtime（同时支持 x86_64 / arm64），以 `simctl` 安装、启动 `io.dcloud.uniappx` 标准基座。参照本机 DCloud launcher/automator 的同步流程，将 `app/unpackage/dist/dev/app-ios/` 内容复制到基座沙盒 `Documents/uni-app-x/apps/__UNI__uniappx/www/`；在 `apps/.debug/.reset` 写入 `HBuilderX`，向 `apps/.debug/.debug/.debug` 写入 `<root cmd="restart"></root>` 刷新指令。没有修改 HBuilderX/Xcode 安装文件或项目 AppID。
+- 首页已实际渲染，截图为 `outputs/app-g0/ios-native-home.png`。本轮 Device Hub 的自动点击/拖动未收到导航结果，因此只记录原生首页渲染，不把尝试点击当作交互验收；没有采集麦克风或真实位置。
+
+工具依据：[Apple Device Hub](https://developer.apple.com/documentation/xcode/device-hub)、[DCloud 模拟器架构要求](https://uniapp.dcloud.net.cn/tutorial/run/installSimulator)。5.31 当前为 Alpha，本轮未为此替换稳定编译器，也未删除现有模拟器。
+
 ## 下一步实际前置
 
-1. 用户已自行登录 HBuilderX，已在空项目首次获取并保存 AppID `__UNI__EE5460C`。发行检查提示还需用户绑定手机号；已告知用户，不接收手机号/验证码。没有借用示例 AppID、没有云打包上传源码。
-2. Xcode 当前尚未完成首次许可确认，`xcrun simctl` 被许可提示拦截，需用户本人阅读并处理。未代替用户接受许可。
-3. 安装并配置 DevEco Studio / SDK，完成 HarmonyOS 开发者与设备签名配置。
+1. DCloud 登录、AppID `__UNI__EE5460C` 和手机号绑定已完成并通过本地发行检查；不再要求重复处理。没有借用示例 AppID、没有云打包上传源码。
+2. Xcode 许可已由用户处理。iOS 继续完成交互及自定义原生包验证，记录好上面的工具兼容限制。
+3. DevEco Studio 26.0.0.851 已安装，官方 SHA-256、华为签名及 Apple 公证检查通过，见 [鸿蒙工具链记录](app-g0-harmony-setup.md)。当前 Mac 锁屏使首次启动交互暂不可用，已请用户解锁；解锁后完成首次设置、工具链配置和鸿蒙编译，再处理真机签名。
 4. 准备 Android、iPhone、纯 HarmonyOS 真机，检查标准基座与自定义包的实际原生配置。基座可录音不等于正式包具备后台能力。
 5. 确认平台 DEV 的 OAuth 公共客户端、回调、员工身份及规则，按合同接入，只在明确测试环境生成拜访。
 

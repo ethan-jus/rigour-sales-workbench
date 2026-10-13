@@ -5,6 +5,9 @@
 	"versionName": "0.1.0",
 	"versionCode": 100,
 	"vueVersion": "3",
+	"uniStatistics": {
+		"enable": false
+	},
 	"uni-app-x": {
 		"vapor": false,
 		"styleIsolationVersion": "2"
