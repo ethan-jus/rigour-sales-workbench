@@ -1,5 +1,5 @@
 <template>
-  <scroll-view class="page" scroll-y>
+  <scroll-view class="page" direction="vertical">
     <view class="content">
       <text class="eyebrow">G0 · 三端真机验证</text>
       <text class="heading">定位与录音检查</text>

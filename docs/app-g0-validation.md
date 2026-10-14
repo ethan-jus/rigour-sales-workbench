@@ -10,6 +10,7 @@
 | Web 开发编译 | 通过，VDOM / 样式隔离 2.0 | 工程可生成浏览器预览 |
 | Web 本地发行构建 | 通过，账号手机号前置已解除 | 已生成 `app/unpackage/dist/build/web`，仅本地导出，未托管发布 |
 | Android 编译 | 通过，日志确认编译为 Android class | 页面/服务通过 Kotlin 目标编译；未生成签名 APK |
+| Android 真机滚动修复 | 2026-10-14，小米 M2007J22C / Android 12 / MIUI 14 | 标准基座已安装，新文件已同步；用户确认设备检查页能完整上下滑动，访问录音列表及前后台事件并返回顶部。不代表定位或录音验收通过 |
 | iOS 目标编译 | 通过，`app-service.js` / `app-config.js` 已生成 | iOS VDOM 目标资源编译通过；不是 Xcode 链接/IPA/真机验收 |
 | iOS 模拟器原生首页 | iOS 17 / iPhone 15 Pro 标准基座显示成功 | 通过 `simctl` 安装及资源同步显示首页；Device Hub 自动触控未得到页面跳转回执，不能宣称交互/录音通过 |
 | HarmonyOS 原生编译 | 通过，收到编译及运行包制作成功回执 | DevEco Studio 26.0.0.851 / API 26 已生成本地未签名 HAP；不代表真机发行包通过 |
@@ -20,6 +21,8 @@
 | 真机 / 两小时后台录音 | 尚未执行 | 不将 UI 计时或模拟器结果当作连续录音证据 |
 
 第一次 Android 编译定位到了 UTS 局部函数前向引用错误；调整声明顺序后通过。iOS 编译提示全局标签选择器不受支持，已移除后重编通过。
+
+2026-10-14 Android 真机反馈设备检查页在“停止并保存到本机”附近截断，无法滑动。首页和设备检查页的裸 `scroll-y` 在 Android Kotlin 产物中均为 `"scroll-y" to ""`；将两页统一改为官方推荐的 `direction="vertical"`，保留原有 `flex: 1` 布局。重新编译后的两页 DEX 已生成，HBuilderX 显示同步成功并进入设备检查页，用户随后明确确认“可以完整上下滑动”。此结果验证本次修复有效；未反编译真实运行时断言空串的底层布尔转换机制，也未将页面滚动验收扩大为定位/后台录音验收。参考：[DCloud scroll-view](https://doc.dcloud.net.cn/uni-app-x/component/scroll-view.html)。
 
 HBuilderX 的失败/缺插件场景也可能退出码为 0，因此 `scripts/app-g0.mjs` 除检查退出码外，还要求本机编译器的成功回执。鸿蒙还必须出现“运行包制作成功”，只有页面编译成功不能判定 HAP 构建通过。14 项本地假 CLI 检查通过，覆盖缺回执、非零退出码和其他目标兼容性；这些检查不代替真实构建。
 

@@ -1,5 +1,5 @@
 <template>
-  <scroll-view class="page" scroll-y>
+  <scroll-view class="page" direction="vertical">
     <view class="content">
       <view class="brand-row">
         <view class="brand"><text class="brand-letter">R</text></view>
