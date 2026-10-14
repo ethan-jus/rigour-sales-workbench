@@ -7,6 +7,30 @@ const fs = require('fs'),
 const ts = require('typescript');
 const path = require('node:path');
 const check = require('node:test');
+check('native app lifecycle accepts missing launch/show options and forwards actual auth links', () => {
+  const app = fs.readFileSync(path.join(__dirname, '../app/App.uvue'), 'utf8');
+  const nativeScript = app.split('// #ifdef APP')[1].split('// #endif')[0];
+  const hooks = {}, links = [];
+  const lifecycle = ts.transpileModule(nativeScript, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText;
+  vm.runInNewContext(lifecycle, {
+    exports: {},
+    require: () => ({ handleAuthCallback: (link) => links.push(link) }),
+    onLaunch: (hook) => { hooks.launch = hook; },
+    onShow: (hook) => { hooks.show = hook; },
+  });
+  for (const hook of Object.values(hooks)) {
+    assert.doesNotThrow(() => hook(null));
+    assert.doesNotThrow(() => hook(undefined));
+    assert.doesNotThrow(() => hook({}));
+    hook({ appScheme: 'com.rigour.workbench://auth/callback?code=scheme' });
+    hook({ appLink: 'https://example.test/auth/callback?code=link' });
+  }
+  assert.equal(links.length, 4);
+  assert.equal(links[0], 'com.rigour.workbench://auth/callback?code=scheme');
+  assert.equal(links[1], 'https://example.test/auth/callback?code=link');
+});
 const filename = path.join(__dirname, '../app/services/auth.uts');
 let source = fs.readFileSync(filename, 'utf8'),
   enabled = true,
