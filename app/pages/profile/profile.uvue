@@ -1,0 +1,45 @@
+<template>
+  <scroll-view class="page" direction="vertical"><view class="content">
+    <view class="profile-hero" @click="account"><text class="profile-avatar">{{ initial }}</text><view class="grow"><text class="h1">{{ name }}</text><text class="muted">{{ session.authenticated ? session.username : '使用供应链系统账号' }}</text><text class="profile-scope">{{ session.authenticated ? '公司统一管理权限' : '登录后查看个人工作' }}</text></view><text class="arrow">›</text></view>
+    <button v-if="!session.authenticated" class="primary" @click="login">登录公司账号</button>
+    <view class="profile-stats"><view class="stat" @click="customers"><image class="stat-icon" src="/static/tabs/customer.png"/><text class="muted">客户</text></view><view class="stat" @click="visits"><image class="stat-icon" src="/static/tabs/visit.png"/><text class="muted">拜访</text></view><view class="stat" @click="orders"><image class="stat-icon" src="/static/tabs/order.png"/><text class="muted">订单</text></view></view>
+    <text class="section-label">我的成长</text>
+    <view class="menu-row" @click="work('performance')"><image class="menu-icon" src="/static/tabs/chart.png"/><view class="grow"><text class="h3">目标与业绩</text><text class="muted">业务进度与明细</text></view><text class="arrow">›</text></view>
+    <view class="menu-row" @click="work('commission')"><image class="menu-icon" src="/static/tabs/wallet.png"/><text class="h3 grow">我的提成</text><text class="arrow">›</text></view>
+    <text class="section-label">工作与设置</text>
+    <view class="menu-row" @click="plan"><image class="menu-icon" src="/static/tabs/calendar.png"/><text class="h3 grow">拜访计划</text><text class="arrow">›</text></view>
+    <view class="menu-row" @click="uploads"><image class="menu-icon" src="/static/tabs/upload.png"/><text class="h3 grow">上传任务</text><text class="fine">{{ count > 0 ? count.toString() + ' 份本机草稿' : '' }}</text><text class="arrow">›</text></view>
+    <view class="menu-row" @click="work('messages')"><image class="menu-icon" src="/static/tabs/bell.png"/><text class="h3 grow">消息与待办</text><text class="arrow">›</text></view>
+    <view class="menu-row" @click="account"><image class="menu-icon" src="/static/tabs/shield.png"/><text class="h3 grow">账号与设置</text><text class="arrow">›</text></view>
+    <text class="version">瑞盖销售工作台 · 内部试用版 0.2.0</text>
+  </view></scroll-view>
+</template>
+<script setup lang="uts">
+import { session } from '../../services/session.uts'
+import { loadLocalVisits, visitDraftCount } from '../../services/visits.uts'
+const name = computed((): string => session.authenticated ? session.displayName : '欢迎使用')
+const initial = computed((): string => session.displayName.length > 0 ? session.displayName.substring(0, 1) : '我')
+const count = computed((): number => visitDraftCount())
+function login(): void { uni.navigateTo({ url: '/pages/login/login' }) }
+function customers(): void { uni.switchTab({ url: '/pages/customers/customers' }) }
+function visits(): void { uni.switchTab({ url: '/pages/visits/visits' }) }
+function orders(): void { uni.switchTab({ url: '/pages/orders/orders' }) }
+function plan(): void { uni.navigateTo({ url: '/pages/visit/visit?view=plan' }) }
+function uploads(): void { uni.navigateTo({ url: '/pages/visit/visit?view=uploads' }) }
+function work(view: string): void { uni.navigateTo({ url: '/pages/work/work?view=' + view }) }
+function account(): void { work('account') }
+onShow(() => { loadLocalVisits() })
+</script>
+<style>
+.profile-hero { flex-direction: row; align-items: center; padding-top: 8px; padding-bottom: 22px; }
+.profile-avatar { width: 66px; height: 66px; line-height: 66px; text-align: center; border-radius: 33px; background-color: #f7e7d8; color: #9e5d38; font-size: 25px; margin-right: 18px; }
+.profile-scope { color: #a95532; font-size: 11px; margin-top: 7px; }
+.arrow { color: #a5a6a5; font-size: 23px; margin-left: 8px; }
+.profile-stats { flex-direction: row; background-color: #f8f7f4; padding: 20px 0; border-radius: 8px; margin-top: 12px; margin-bottom: 12px; }
+.stat { flex: 1; align-items: center; }
+.stat-icon { width: 25px; height: 25px; margin-bottom: 9px; }
+.section-label { font-size: 13px; color: #888b8d; margin-top: 25px; margin-bottom: 5px; }
+.menu-row { flex-direction: row; align-items: center; padding: 19px 0; border-bottom-width: 1px; border-bottom-color: #ededea; }
+.menu-icon { width: 23px; height: 23px; margin-right: 14px; }
+.version { margin-top: 32px; text-align: center; color: #999c9e; font-size: 11px; }
+</style>

@@ -1,9 +1,9 @@
 {
 	"name": "瑞盖销售工作台",
 	"appid": "__UNI__EE5460C",
-	"description": "公司内部销售作业 App · G0 原生能力验证",
-	"versionName": "0.1.0",
-	"versionCode": 100,
+	"description": "公司内部销售作业 App",
+	"versionName": "0.2.0",
+	"versionCode": 200,
 	"vueVersion": "3",
 	"uniStatistics": {
 		"enable": false

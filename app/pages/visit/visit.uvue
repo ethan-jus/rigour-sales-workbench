@@ -1,0 +1,229 @@
+<template>
+  <scroll-view class="page" direction="vertical">
+    <view class="content">
+      <view v-if="!session.authenticated" class="panel"><text class="title">使用供应链账号登录</text><text class="body">登录后查看本人门店、拜访计划与记录。</text><button class="primary" @click="login">去登录</button></view>
+      <view v-if="hasDraft && !visitState.storageHealthy" class="notice"><text class="notice-title">当前草稿尚未保存到本机</text><text class="notice-text">请保留当前页面。填写内容仍在内存中，退出或关闭应用可能丢失。</text><button class="secondary" @click="saveDraft">重试保存草稿</button></view>
+      <view v-if="view == 'select'">
+        <text class="eyebrow">开始一次新的拜访</text><text class="heading">选择拜访门店</text>
+        <view class="location"><view class="location-copy"><text class="location-title">当前位置</text><text class="body">{{ visitState.locationText }}</text></view><button class="small-button" :disabled="visitState.locating" @click="relocate">{{ visitState.locating ? '定位中' : '重新定位' }}</button></view>
+        <view class="search-row"><input class="search" v-model="query" placeholder="搜索客户、门店或地址" @input="searchChanged" @confirm="searchStores" /><button class="search-button" :disabled="loading" @click="searchStores">搜索</button></view>
+        <text class="caption">我的负责门店 · 按门店名称排序</text>
+        <view v-for="target in targets" :key="target.projectionId" :class="selectedId == target.storeId ? 'store selected-store' : 'store'" @click="selectedId = target.storeId"><view class="store-mark"><text class="store-mark-text">店</text></view><view class="grow"><text class="store-name">{{ target.storeName }}</text><text class="body">{{ target.address }}</text><text class="muted">{{ target.customerName }}</text></view><text class="choice">{{ selectedId == target.storeId ? '●' : '○' }}</text></view>
+        <button v-if="targets.length < targetTotal" class="secondary" :disabled="loading" @click="loadTargets(false)">加载更多门店</button>
+        <view v-if="!loading && targets.length == 0 && error.length == 0" class="empty"><text class="empty-title">没有找到负责门店</text><text class="body">可更换关键字，或由管理员核对门店分配。</text></view>
+        <view class="notice"><text class="notice-title">先记录，保留现场材料</text><text class="notice-text">正式打卡需核验门店 200 米范围。目前地图、地址和距离核验尚未接通，当前只能保存本机草稿。</text></view>
+        <button class="primary" :disabled="selectedId.length == 0 || !session.authenticated" @click="startDraft">记录本次拜访 →</button>
+      </view>
+      <view v-else-if="view == 'active' && hasDraft">
+        <text class="tag">{{ visitState.storageHealthy ? '本机草稿 · 未提交' : '草稿未保存 · 请勿退出' }}</text><text class="heading">{{ draft.storeName }}</text><text class="body">{{ draft.address }}</text>
+        <view class="recorder"><view class="split"><text class="title">现场录音</text><text class="orange">{{ captureHere ? phaseLabel : '选填' }}</text></view><text class="clock">{{ captureHere ? formatClock(visitState.capture.activeDurationEstimateMs) : '00:00' }}</text><text class="body">{{ captureHere ? visitState.capture.message : '记录现场沟通，停止后保存到手机' }}</text><view class="button-row"><button v-if="!captureHere || canStart" class="record-button grow" @click="startRecording">● 开始录音</button><button v-if="captureHere && visitState.capture.phase == 'recording'" class="record-button grow" @click="pauseRecording">暂停</button><button v-if="captureHere && (visitState.capture.phase == 'paused' || visitState.capture.phase == 'interrupted')" class="record-button grow" @click="resumeRecording">继续录音</button><button v-if="captureHere && canStop" class="record-button grow last-button" @click="stopRecording">停止并保存</button></view><button v-if="captureHere && visitState.capture.phase == 'save-error'" class="secondary" @click="retryRecordingSave">重试保存录音</button><text class="fine">切换业务页面不会主动停止录音。若系统中断会明确提示；录制中请勿强制关闭 App。</text></view>
+        <text class="section-title">这次聊了什么</text><text class="label">沟通对象</text><input class="field" v-model="contact" placeholder="客户姓名或称呼" maxlength="100" @input="persistText" /><text class="label">拜访记录</text><textarea class="textarea" v-model="note" placeholder="客户需求、沟通结果、下一步安排…" maxlength="2000" @input="persistText" /><text class="count">{{ note.length }} / 2000</text>
+        <view v-if="draft.clips.length > 0"><text class="section-title">本机已保存录音 · {{ draft.clips.length }}</text><view v-for="clip in draft.clips" :key="clip.id" class="clip"><view class="grow"><text class="clip-title">现场录音 · {{ formatClock(clip.activeDurationEstimateMs) }}</text><text class="muted">{{ clip.interrupted ? '录制出现过中断，请回放核验' : '活动时长估值 · 本机已保存' }}</text></view><button class="small-button" @click="playClip(clip)">回放</button></view></view>
+        <text v-if="playing" class="playback" @click="stopPlayback">{{ playbackMessage }} · 点击停止</text><text v-else-if="playbackMessage.length > 0" class="fine">{{ playbackMessage }}</text>
+        <button class="primary" @click="nextEvidence">下一步 · 添加现场照片 →</button><button class="secondary" @click="saveDraft">保存草稿</button>
+      </view>
+      <view v-else-if="view == 'evidence' && hasDraft">
+        <text class="eyebrow">{{ draft.storeName }}</text><text class="heading">留下到访记录</text><view class="split section-space"><text class="section-title">现场照片</text><text class="muted">{{ draft.photos.length }} / 9 张</text></view><text class="body">拍清门头，也可补充店内照片。</text>
+        <view class="photos"><view v-for="(photo, index) in draft.photos" :key="photo.fileName" class="photo-item"><image class="photo" :src="photoSource(photo)" mode="aspectFill" @click="previewPhoto(index)" /><text class="photo-remove" @click="deletePhoto(index)">×</text></view></view>
+        <view class="button-row"><button class="secondary grow" @click="choosePhotos(true)">{{ draft.photos.length > 0 ? '继续拍照' : '拍摄照片' }}</button><button class="secondary grow last-button" @click="choosePhotos(false)">从相册添加</button></view>
+        <text class="section-title section-space">现场录音</text><view v-if="captureHere && !canStart" class="notice"><text class="notice-text">{{ visitState.capture.message }}</text><button v-if="canStop" class="secondary" @click="stopRecording">停止并保存录音</button><button v-if="visitState.capture.phase == 'save-error'" class="secondary" @click="retryRecordingSave">重试保存录音</button></view><view v-for="clip in draft.clips" :key="clip.id" class="clip"><view class="grow"><text class="clip-title">现场录音 · {{ formatClock(clip.activeDurationEstimateMs) }}</text><text class="muted">已保存到手机 · 未上传</text></view><button class="small-button" @click="playClip(clip)">回放</button></view><text v-if="draft.clips.length == 0" class="body">本次暂无已保存录音</text>
+        <view class="location section-space"><view class="grow"><text class="location-title">当前设备位置</text><text class="body">{{ draft.location != null ? '已采集位置 · 地址待解析' : '尚未获取当前位置' }}</text><text class="muted">距离未核验 · 需确认在门店 200 米内</text></view><button class="small-button" :disabled="visitState.locating" @click="relocate">重新定位</button></view>
+        <view class="notice"><text class="notice-title">尚不能提交正式打卡</text><text class="notice-text">当前草稿未计入打卡。等待正式位置核验与材料上传接通后，再提交到平台。</text></view><button class="primary" @click="saveDraft">保存到本机草稿</button><button class="secondary" @click="toUploads">查看本机材料</button>
+      </view>
+      <view v-else-if="view == 'uploads'"><text class="eyebrow">材料保存与上传</text><text class="heading">本机材料</text><view class="notice"><text class="notice-title">{{ localDraftCount }} 份草稿尚未提交</text><text class="notice-text">照片和已停止保存的录音保留在本机。当前尚未开放正式上传，请勿卸载 App 或清除应用数据。</text></view><view v-for="item in visitState.drafts" :key="item.id" class="panel" @click="editDraft(item.id)"><text class="title">{{ item.storeName }}</text><text class="body">{{ formatTime(item.updatedAt) }} · 本机草稿</text><view class="split"><text class="body">现场照片 {{ item.photos.length }} 张</text><text class="orange">未上传</text></view><view class="split"><text class="body">沟通录音 {{ item.clips.length }} 段</text><text class="orange">未上传</text></view><text class="text-action">继续编辑 →</text></view><view v-if="localDraftCount == 0" class="empty"><text class="empty-title">暂无本机材料</text><text class="body">门店拜访草稿和材料会保留在这里。</text></view></view>
+      <view v-else-if="view == 'detail' && remote != null"><text class="tag">{{ statusLabel(remote!.status) }} · {{ reviewLabel(remote!.review) }}</text><text class="heading">{{ remote!.storeName }}</text><text class="body">{{ remote!.time }} · 本人拜访</text><view class="panel"><text class="label">门店地址</text><text class="body">{{ remote!.address }}</text><text class="label">打卡地址</text><text class="body">地址待解析</text><text class="label">与门店距离</text><text class="distance">{{ distanceText }}</text><text class="fine">地图服务尚未接入。距离仅显示服务端已有核验结果。</text></view><text class="section-title">沟通记录</text><text class="body">{{ remote!.contact.length > 0 ? remote!.contact : '沟通对象未提供' }}</text><text class="body">{{ remote!.note.length > 0 ? remote!.note : '尚未填写沟通记录' }}</text><view class="panel section-space"><text class="title">现场材料</text><text class="body">{{ evidenceText }}</text><text class="body">{{ recordingsText }}</text><text class="fine">接口暂未提供照片及录音访问地址，当前不能在线查看或回放。</text></view></view>
+      <view v-else-if="view == 'plan'"><text class="eyebrow">{{ today }} · 北京时间</text><text class="heading">今天的拜访计划</text><view v-for="plan in plans" :key="plan.getString('planId') ?? ''" class="panel"><view class="split"><text class="title">{{ plan.getString('storeName') ?? '门店名称未提供' }}</text><text class="orange">{{ planLabel(plan.getString('status') ?? '') }}</text></view><text class="body">{{ plan.getString('storeAddress') ?? '门店地址未提供' }}</text><text class="body">{{ plan.getString('objective') ?? '' }}</text><button v-if="(plan.getString('visitId') ?? '').length > 0" class="secondary" @click="openPlanVisit(plan)">查看拜访记录</button></view><view v-if="!loading && plans.length == 0 && error.length == 0" class="empty"><text class="empty-title">今天暂无拜访计划</text><text class="body">平台分配的本人计划会显示在这里。</text></view><button class="primary" @click="goSelect">临时拜访其他门店</button></view>
+      <view v-else-if="!loading && error.length == 0" class="empty"><text class="empty-title">没有找到这份拜访</text><text class="body">草稿属于保存时的平台账号，请确认登录账号。</text><button class="secondary" @click="goSelect">选择拜访门店</button></view>
+      <text v-if="loading" class="loading">正在加载…</text><view v-if="error.length > 0" class="notice"><text class="notice-text">{{ error }}</text><button class="secondary" @click="reload">重试</button></view><view v-if="visitState.notice.length > 0" class="notice"><text class="notice-text">{{ visitState.notice }}</text><text class="dismiss" @click="visitState.notice = ''">知道了</text></view>
+    </view>
+  </scroll-view>
+</template>
+<script setup lang="uts">
+import { session } from '../../services/session.uts'
+import { SavedClip, savedClipPath } from '../../services/capture.uts'
+import { VisitPhoto, visitState, VisitDraft, VisitTarget, VisitItem, loadLocalVisits, saveLocalVisits, selectVisitDraft, activeVisitDraft, createVisitDraft, updateVisitText, visitDraftCount, visitClock, visitTime, visitToday, locateForVisit, getVisitData, parseVisitTarget, parseVisitItem, visitStatus, visitReview, visitPhotoPath, addVisitPhotos, removeVisitPhoto, startVisitRecording, pauseVisitRecording, resumeVisitRecording, stopVisitRecording, retryVisitRecordingSave, hasActiveVisitRecording } from '../../services/visits.uts'
+const localDraftCount = computed((): number => visitDraftCount())
+
+const today = ref(visitToday())
+
+const view = ref('select')
+const recordId = ref('')
+const query = ref('')
+const selectedId = ref('')
+const targets = ref([] as VisitTarget[])
+const targetTotal = ref(0)
+const targetPage = ref(1)
+const loading = ref(false)
+const error = ref('')
+const contact = ref('')
+const note = ref('')
+const remote = ref<VisitItem | null>(null)
+const distanceText = ref('未提供核验结果')
+const evidenceText = ref('照片信息尚未加载')
+const recordingsText = ref('录音信息尚未加载')
+const plans = ref([] as UTSJSONObject[])
+const playing = ref(false)
+const playbackMessage = ref('')
+let searchTimer = 0
+let searchVersion = 0
+// #ifdef APP
+let player: InnerAudioContext | null = null
+// #endif
+const hasDraft = computed((): boolean => activeVisitDraft() != null)
+const draft = computed((): VisitDraft => activeVisitDraft() ?? { id: '', storeId: '', customerId: '', storeName: '', address: '', contact: '', note: '', createdAt: 0, updatedAt: 0, photos: [], clips: [], location: null } as VisitDraft)
+const captureHere = computed((): boolean => visitState.recordingDraftId == draft.value.id && visitState.recordingOwner == session.tenantId + ':' + session.userId)
+const canStart = computed((): boolean => ['idle', 'saved', 'error', 'busy', 'unsupported'].includes(visitState.capture.phase))
+const canStop = computed((): boolean => ['starting', 'recording', 'paused', 'interrupted', 'error'].includes(visitState.capture.phase))
+const phaseLabel = computed((): string => visitState.capture.phase == 'recording' ? '正在录音' : visitState.capture.phase == 'saved' ? '已保存' : visitState.capture.phase == 'paused' ? '已暂停' : visitState.capture.phase == 'interrupted' ? '已中断' : '等待处理')
+
+
+function formatClock(ms: number): string { return visitClock(ms) }
+function formatTime(ms: number): string { return visitTime(ms) }
+function photoSource(photo: VisitPhoto): string { return visitPhotoPath(photo) }
+function statusLabel(status: string): string { return visitStatus(status) }
+function reviewLabel(status: string): string { return visitReview(status) }
+function pauseRecording(): void { pauseVisitRecording() }
+function resumeRecording(): void { resumeVisitRecording() }
+function stopRecording(): void { stopVisitRecording() }
+function retryRecordingSave(): void { retryVisitRecordingSave() }
+function deletePhoto(index: number): void { removeVisitPhoto(index) }
+function choosePhotos(camera: boolean): void { addVisitPhotos(camera) }
+function relocate(): void { locateForVisit(view.value != 'select') }
+function login(): void { uni.navigateTo({ url: '/pages/login/login' }) }
+function openView(destination: string, targetId: string = ''): void {
+  if (view.value == destination && recordId.value == targetId) return
+  const pages = getCurrentPages()
+  for (let index = pages.length - 2; index >= 0; index--) {
+    const page = pages[index]
+    if (page.route == 'pages/visit/visit' && (page.options.getString('view') ?? 'select') == destination && (page.options.getString('id') ?? '') == targetId) {
+      uni.navigateBack({ delta: pages.length - 1 - index })
+      return
+    }
+  }
+  uni.navigateTo({ url: '/pages/visit/visit?view=' + destination + (targetId.length > 0 ? '&id=' + encodeURIComponent(targetId) : '') })
+}
+function goSelect(): void { openView('select') }
+function toUploads(): void { openView('uploads') }
+function editDraft(id: string): void { openView('active', id) }
+function persistText(): void { updateVisitText(contact.value, note.value) }
+function saveDraft(): void { persistText(); if (saveLocalVisits()) uni.showToast({ title: '草稿已保存，尚未提交', icon: 'none' }) }
+function nextEvidence(): void { persistText(); openView('evidence', draft.value.id) }
+function startDraft(): void { const target = targets.value.find((t: VisitTarget): boolean => t.storeId == selectedId.value); if (target == null) return; const id = createVisitDraft(target); if (id.length > 0) editDraft(id) }
+function loadTargets(reset: boolean): void {
+  if (!reset && loading.value) return
+  if (reset) { targetPage.value = 1; targets.value = []; targetTotal.value = 0; selectedId.value = '' }
+  searchVersion += 1; const version = searchVersion
+  loading.value = true; error.value = ''
+  getVisitData('/sales/me/visit-targets?q=' + encodeURIComponent(query.value.trim()) + '&page=' + targetPage.value.toString() + '&pageSize=20', 'sales:visit-target:read', (data) => {
+    if (version != searchVersion) return
+    loading.value = false
+    const items = data['items'] as UTSJSONObject[] | null
+    if (items == null) { error.value = '门店数据格式异常，请稍后重试。'; return }
+    items.forEach((item: UTSJSONObject): void => { targets.value.push(parseVisitTarget(item)) })
+    targetTotal.value = data.getNumber('total') ?? targets.value.length; targetPage.value += 1
+  }, (message) => { if (version == searchVersion) { loading.value = false; error.value = message } })
+}
+function searchChanged(): void { clearTimeout(searchTimer); searchTimer = setTimeout(() => loadTargets(true), 350) }
+function searchStores(): void { clearTimeout(searchTimer); locateForVisit(false); loadTargets(true) }
+function loadDetail(): void {
+  if (recordId.value.length == 0) { error.value = '缺少拜访编号。'; return }
+  loading.value = true; error.value = ''; remote.value = null
+  const path = '/sales/me/visits/' + encodeURIComponent(recordId.value)
+  getVisitData(path, 'sales:visit:own:read', (data) => {
+    loading.value = false; remote.value = parseVisitItem(data)
+    const points = data['checkpoints'] as UTSJSONObject[] | null
+    if (points != null && points.length > 0) { const meters = points[0].getNumber('distanceToTargetMeters'); distanceText.value = meters != null ? meters!.toFixed(0) + ' 米' : '未提供核验结果' }
+  }, (message) => { loading.value = false; error.value = message })
+  getVisitData(path + '/evidence', 'sales:evidence:own:read', (data) => { evidenceText.value = '平台已收门头照片 ' + (data.getNumber('storefrontPhotoCount') ?? 0).toString() + ' 张' }, (message) => { evidenceText.value = message })
+  getVisitData(path + '/recordings', 'sales:recording:own:read', (data) => { const count = data.getNumber('clipCount') ?? 0; const duration = data.getNumber('uploadedTotalDurationMs') ?? 0; recordingsText.value = count > 0 ? '平台录音 ' + count.toString() + ' 段 · 上传时长 ' + visitClock(duration) : '本次未附录音' }, (message) => { recordingsText.value = message })
+}
+function loadPlans(): void { loading.value = true; error.value = ''; getVisitData('/sales/me/visit-plans?date=' + visitToday(), 'sales:visit-plan:own:read', (data) => { loading.value = false; plans.value = data['items'] as UTSJSONObject[] ?? [] as UTSJSONObject[] }, (message) => { loading.value = false; error.value = message }) }
+function planLabel(status: string): string { if (status == 'COMPLETED') return '已完成'; if (status == 'IN_PROGRESS') return '进行中'; if (status == 'PLANNED') return '待拜访'; return '状态待确认' }
+function openPlanVisit(plan: UTSJSONObject): void { const id = plan.getString('visitId') ?? ''; if (id.length > 0) openView('detail', id) }
+function reload(): void { if (view.value == 'select') loadTargets(true); else if (view.value == 'detail') loadDetail(); else if (view.value == 'plan') loadPlans() }
+function previewPhoto(index: number): void { const urls = draft.value.photos.map((photo): string => visitPhotoPath(photo)); uni.previewImage({ urls: urls, current: index }) }
+function stopPlayback(): void {
+  // #ifdef APP
+  player?.stop()
+  // #endif
+  playing.value = false
+}
+function startRecording(): void { stopPlayback(); startVisitRecording() }
+function playClip(clip: SavedClip): void {
+  if (hasActiveVisitRecording()) { playbackMessage.value = '请先停止并保存当前录音，再回放。'; return }
+  // #ifdef APP
+  if (player == null) { player = uni.createInnerAudioContext(); player!.onPlay(() => { playing.value = true; playbackMessage.value = '正在回放本机录音' }); player!.onEnded(() => { playing.value = false; playbackMessage.value = '回放结束' }); player!.onError((error) => { playing.value = false; playbackMessage.value = '回放失败：' + error.errMsg }) }
+  player!.stop(); player!.src = savedClipPath(clip); player!.play()
+  // #endif
+  // #ifndef APP
+  playbackMessage.value = '请在手机 App 中回放本机录音。'
+  // #endif
+}
+onLoad((options) => { view.value = options['view'] ?? 'select'; recordId.value = options['id'] ?? ''; loadLocalVisits(); if (recordId.value.startsWith('local-')) selectVisitDraft(recordId.value); reload(); if (view.value == 'select') locateForVisit(false) })
+onShow(() => { loadLocalVisits(); if (recordId.value.startsWith('local-')) selectVisitDraft(recordId.value); const d = activeVisitDraft(); if (d != null) { contact.value = d.contact; note.value = d.note } })
+onHide(() => { stopPlayback() })
+onUnload(() => { clearTimeout(searchTimer); stopPlayback();
+  // The recorder belongs to the service, so navigating away must not dispose it.
+  // #ifdef APP
+  player?.destroy(); player = null
+  // #endif
+})
+</script>
+<style>
+.page { flex: 1; background-color: #faf9f6; }
+.content { padding: 22px; padding-bottom: 44px; }
+.eyebrow { color: #958779; font-size: 12px; margin-bottom: 8px; }
+.heading { color: #21252b; font-size: 27px; font-weight: bold; margin-bottom: 13px; }
+.title { color: #262a2f; font-size: 17px; font-weight: bold; margin-bottom: 7px; }
+.body { color: #82796e; font-size: 13px; line-height: 21px; margin-bottom: 6px; }
+.muted { color: #9b9185; font-size: 12px; line-height: 19px; }
+.fine { color: #978c7e; font-size: 11px; line-height: 18px; margin-top: 12px; }
+.panel { padding: 18px; background-color: #ffffff; border-radius: 13px; margin-bottom: 16px; }
+.location { flex-direction: row; align-items: center; background-color: #f1eee8; border-radius: 12px; padding: 15px; margin-bottom: 19px; }
+.location-copy { flex: 1; margin-right: 10px; }
+.location-title { font-size: 14px; color: #4d463e; font-weight: bold; margin-bottom: 4px; }
+.small-button { padding: 0 10px; margin: 0; font-size: 12px; line-height: 36px; background-color: #ffffff; color: #b95632; border-radius: 8px; }
+.search-row { flex-direction: row; margin-bottom: 20px; }
+.search { flex: 1; background-color: #ffffff; border-width: 1px; border-color: #e9e3da; border-radius: 10px; padding: 13px; height: 46px; font-size: 14px; }
+.search-button { font-size: 14px; background-color: #e56335; color: #ffffff; margin: 0 0 0 9px; padding: 0 14px; line-height: 46px; border-radius: 10px; }
+.caption { color: #92877a; font-size: 12px; margin-bottom: 10px; }
+.store { flex-direction: row; align-items: center; padding: 17px 12px; border-radius: 11px; margin-bottom: 7px; border-width: 1px; border-color: #eae4da; background-color: #ffffff; }
+.selected-store { background-color: #fff3ec; border-color: #e8a38a; }
+.store-mark { width: 34px; height: 40px; align-items: center; justify-content: center; margin-right: 11px; }
+.store-mark-text { color: #b8967d; font-size: 21px; }
+.store-name { color: #33302b; font-size: 15px; font-weight: bold; margin-bottom: 6px; }
+.grow { flex: 1; }
+.choice { color: #d6673f; font-size: 22px; margin-left: 10px; }
+.notice { background-color: #fff0e4; border-radius: 12px; padding: 15px; margin-top: 15px; margin-bottom: 14px; }
+.notice-title { color: #a3643e; font-size: 14px; font-weight: bold; margin-bottom: 7px; }
+.notice-text { color: #a16f49; font-size: 12px; line-height: 20px; }
+.primary { background-color: #e56335; color: #ffffff; font-size: 15px; border-radius: 10px; line-height: 48px; margin-top: 17px; }
+.secondary { background-color: #f0eae1; color: #75604c; font-size: 14px; border-radius: 10px; margin-top: 12px; line-height: 44px; }
+.tag { align-self: flex-start; color: #a97741; background-color: #f4e9dc; padding: 5px 9px; border-radius: 5px; font-size: 11px; margin-bottom: 13px; }
+.recorder { background-color: #fff1e9; padding: 19px; border-radius: 15px; margin-top: 16px; margin-bottom: 26px; }
+.split { flex-direction: row; align-items: center; justify-content: space-between; }
+.orange { color: #ca6b42; font-size: 12px; }
+.clock { color: #35332d; font-size: 43px; font-weight: bold; margin: 12px 0; }
+.button-row { flex-direction: row; }
+.record-button { color: #ae5130; background-color: #ffffff; font-size: 14px; border-radius: 9px; line-height: 43px; margin-top: 12px; padding: 0 8px; }
+.last-button { margin-left: 10px; }
+.section-title { color: #2e2c28; font-size: 17px; font-weight: bold; margin-bottom: 14px; }
+.section-space { margin-top: 26px; }
+.label { color: #5e564c; font-size: 13px; margin-top: 9px; margin-bottom: 10px; }
+.field { height: 46px; background-color: #ffffff; border-width: 1px; border-color: #e8e1d7; border-radius: 9px; padding: 13px; font-size: 14px; margin-bottom: 17px; }
+.textarea { height: 144px; background-color: #ffffff; border-width: 1px; border-color: #e8e1d7; border-radius: 10px; padding: 13px; font-size: 14px; }
+.count { color: #9f968b; text-align: right; font-size: 11px; margin-top: 6px; margin-bottom: 13px; }
+.clip { flex-direction: row; align-items: center; padding: 15px 0; border-bottom-width: 1px; border-bottom-color: #e7dfd4; }
+.clip-title { color: #605546; font-size: 14px; margin-bottom: 5px; }
+.playback { color: #cc6d40; font-size: 12px; margin-top: 12px; }
+.photos { flex-direction: row; flex-wrap: wrap; margin-top: 7px; }
+.photo-item { width: 96px; height: 113px; margin-right: 9px; margin-bottom: 12px; position: relative; }
+.photo { width: 96px; height: 113px; border-radius: 9px; }
+.photo-remove { position: absolute; right: 4px; top: 4px; border-radius: 15px; background-color: #ffffff; color: #5f5346; font-size: 22px; width: 29px; height: 29px; text-align: center; line-height: 27px; }
+.text-action { color: #cb673d; font-size: 13px; margin-top: 13px; }
+.distance { font-size: 25px; color: #524538; font-weight: bold; }
+.empty { padding: 35px 8px; align-items: center; }
+.empty-title { color: #6d5e4b; font-size: 17px; font-weight: bold; margin-bottom: 10px; }
+.loading { color: #a28e77; font-size: 13px; margin-top: 17px; }
+.dismiss { font-size: 12px; color: #b96938; margin-top: 10px; text-align: right; }
+</style>

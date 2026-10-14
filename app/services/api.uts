@@ -1,0 +1,39 @@
+import { session, clearSession } from './session.uts'
+import { appEnvironment } from './config.uts'
+
+export function requestApi(path: string, method: string, body: UTSJSONObject | null, success: (data: UTSJSONObject) => void, fail: (message: string) => void): void {
+  if (!appEnvironment.gatewayOrigin.startsWith('https://')) {
+    fail('公司服务尚未配置，请联系管理员完成接入。')
+    return
+  }
+  if (!path.startsWith('/') || path.startsWith('//')) { fail('请求路径无效。'); return }
+  if (!session.authenticated || session.accessToken.length == 0 || session.expiresAt <= Date.now()) {
+    clearSession()
+    fail('登录已失效，请重新登录公司账号。')
+    return
+  }
+  const revision = session.revision
+  const headers: UTSJSONObject = { 'Authorization': 'Bearer ' + session.accessToken, 'Accept-Language': 'zh-CN', 'Content-Type': 'application/json' }
+  uni.request<UTSJSONObject>({
+    url: appEnvironment.gatewayOrigin + '/api/v1' + path,
+    method: method as RequestMethod,
+    data: body,
+    header: headers,
+    timeout: 20000,
+    success: (response) => {
+      if (session.revision != revision) { fail('账号已变更，请重新加载。'); return }
+      if (response.statusCode == 401) { clearSession(); fail('登录已失效，请重新登录公司账号。'); return }
+      if (response.statusCode == 403) { fail('暂无此功能或数据的权限，请联系管理员。'); return }
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        fail('服务暂时不可用（' + response.statusCode.toString() + '），请稍后重试。')
+        return
+      }
+      const result = response.data
+      if (result == null) { fail('服务未返回有效数据，请重试。'); return }
+      const code = result.getString('code')
+      if (code != null && code != 'OK') { fail(result.getString('message') ?? '业务处理未完成，请重试。'); return }
+      success(result)
+    },
+    fail: (_) => fail('无法连接公司服务，请检查网络后重试。')
+  })
+}

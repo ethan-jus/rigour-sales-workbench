@@ -1,0 +1,79 @@
+<template>
+  <scroll-view class="page" direction="vertical"><view class="content">
+    <view class="heading-row"><text class="heading">订单</text><text class="new-order" @click="newOrder">＋ 下单</text></view>
+    <text class="intro">订单进度与金额以供应链平台为准。</text>
+    <view v-if="!session.authenticated" class="empty"><text class="empty-icon">▤</text><text class="empty-title">登录后查看订单</text><text class="empty-copy">同一个平台账号，同步你的业务权限。</text><button class="primary" @click="login">使用平台账号登录</button></view>
+    <view v-else>
+      <view class="search"><input class="search-input" v-model="query" placeholder="搜索客户名称" confirm-type="search" @confirm="search"/><button class="search-button" @click="search">搜索</button></view>
+      <scroll-view class="filters" direction="horizontal"><view class="filter-options"><view v-for="item in filters" :key="item.code" :class="selectedStatus == item.code ? 'filter-chip active-chip' : 'filter-chip'" @click="changeStatus(item.code)"><text :class="selectedStatus == item.code ? 'filter-text active-text' : 'filter-text'">{{ item.label }}</text></view></view></scroll-view><view class="filter-row"><text class="filter-label">订单记录</text><text class="filter-caption">{{ commerce.ordersTotal }} 笔 · 权限范围内</text></view>
+      <view v-if="commerce.ordersError.length > 0" class="notice"><text class="notice-title">订单加载失败</text><text class="notice-copy">{{ commerce.ordersError }}</text><button class="secondary" @click="search">重新加载</button></view>
+      <view v-if="commerce.ordersLoading && commerce.orders.length == 0" class="empty"><text class="empty-copy">正在加载订单…</text></view>
+      <view v-for="order in commerce.orders" :key="order.id" class="order-row" @click="openOrder(order)">
+        <view class="row"><text class="customer-name">{{ order.customerName.length > 0 ? order.customerName : '客户资料待完善' }}</text><text class="tag">{{ orderStatus(order.status) }}</text></view>
+        <text class="order-number">{{ order.number }}</text><view class="order-summary"><text class="summary-icon">▤</text><text class="summary-copy">查看商品明细与订单进度</text><text class="chevron">›</text></view>
+        <view class="row"><text class="time">{{ order.time }}</text><text class="amount">{{ money(order.total) }}</text></view>
+      </view>
+      <view v-if="!commerce.ordersLoading && commerce.ordersError.length == 0 && commerce.orders.length == 0" class="empty"><text class="empty-icon">▤</text><text class="empty-title">{{ query.length > 0 ? '没有找到匹配订单' : '暂无可查看订单' }}</text><text class="empty-copy">{{ query.length > 0 ? '换个客户名称再搜索试试。' : '新订单审核与处理进度将在这里展示。' }}</text></view>
+      <button v-if="commerce.orders.length < commerce.ordersTotal" class="load-more" :disabled="commerce.ordersLoading" @click="loadMore">{{ commerce.ordersLoading ? '加载中…' : '加载更多订单' }}</button>
+    </view>
+  </view></scroll-view>
+</template>
+<script setup lang="uts">
+import { session, requireSession } from '../../services/session.uts'
+import { commerce, loadOrders, loadDrafts, formatMoney, orderStatusLabel } from '../../services/commerce.uts'
+import type { SalesOrder } from '../../services/commerce.uts'
+type OrderFilter = { code: string, label: string }
+const filters = [{ code: '', label: '全部' }, { code: 'DRAFT', label: '草稿' }, { code: 'SUBMITTED', label: '已提交' }, { code: 'COMPLETED', label: '已完成' }, { code: 'CANCELLED', label: '已取消' }] as OrderFilter[]
+const selectedStatus = ref('')
+const query = ref('')
+onShow(() => { loadDrafts(); if (session.authenticated) { query.value = commerce.orderQuery; loadOrders(query.value, selectedStatus.value) } })
+function login(): void { requireSession() }
+function search(): void { loadOrders(query.value.trim(), selectedStatus.value) }
+function loadMore(): void { loadOrders(query.value.trim(), selectedStatus.value, true) }
+function changeStatus(status: string): void { selectedStatus.value = status; search() }
+function newOrder(): void { if (!requireSession()) return; uni.switchTab({ url: '/pages/customers/customers' }) }
+function openOrder(order: SalesOrder): void { commerce.selectedOrderId = order.id; uni.navigateTo({ url: '/pages/commerce/commerce?view=order-detail&id=' + encodeURIComponent(order.id) }) }
+function money(value: number | null): string { return formatMoney(value) }
+function orderStatus(value: string): string { return orderStatusLabel(value) }
+</script>
+<style>
+.page { flex: 1; background-color: #fffdf9; }
+.content { padding: 22px; padding-bottom: 36px; }
+.heading-row { flex-direction: row; align-items: center; justify-content: space-between; }
+.heading { font-size: 28px; font-weight: bold; color: #21252b; }
+.new-order { color: #e56335; font-size: 14px; padding: 8px; }
+.intro { font-size: 12px; color: #85868b; line-height: 20px; margin-top: 8px; margin-bottom: 22px; }
+.search { flex-direction: row; background-color: #f3f2ee; border-radius: 10px; padding: 6px; align-items: center; }
+.search-input { flex: 1; font-size: 14px; height: 40px; padding-left: 8px; color: #21252b; }
+.search-button { color: #ffffff; background-color: #e56335; font-size: 13px; margin: 0; width: 62px; height: 38px; line-height: 38px; border-radius: 7px; }
+.filters { width: 100%; height: 53px; margin-top: 17px; }
+.filter-options { flex-direction: row; }
+.filter-chip { background-color: #f0eee8; border-radius: 8px; padding: 9px 13px; margin-right: 8px; }
+.active-chip { background-color: #fbebdf; }
+.filter-text { font-size: 13px; color: #777a80; }
+.active-text { color: #c95c32; font-weight: bold; }
+.filter-row { flex-direction: row; justify-content: space-between; margin-top: 24px; padding-bottom: 14px; border-bottom-width: 1px; border-bottom-color: #ecebe7; }
+.filter-label { color: #e56335; font-size: 14px; font-weight: bold; }
+.filter-caption { color: #989a9e; font-size: 11px; }
+.order-row { padding-top: 22px; padding-bottom: 22px; border-bottom-width: 1px; border-bottom-color: #ecebe7; }
+.row { flex-direction: row; align-items: center; justify-content: space-between; }
+.customer-name { flex: 1; color: #21252b; font-size: 16px; line-height: 23px; font-weight: bold; margin-right: 12px; }
+.tag { color: #a95532; background-color: #f9eee5; font-size: 11px; padding: 5px 7px; border-radius: 5px; }
+.order-number { color: #929498; font-size: 11px; margin-top: 9px; }
+.order-summary { flex-direction: row; align-items: center; margin-top: 19px; margin-bottom: 20px; }
+.summary-icon { color: #a69a8c; font-size: 24px; margin-right: 9px; }
+.summary-copy { color: #777b81; font-size: 12px; flex: 1; }
+.chevron { color: #a0a1a4; font-size: 24px; }
+.time { color: #929498; font-size: 11px; }
+.amount { color: #21252b; font-size: 20px; font-weight: bold; }
+.empty { align-items: center; padding-top: 50px; padding-bottom: 38px; }
+.empty-icon { color: #cebea8; font-size: 42px; margin-bottom: 16px; }
+.empty-title { font-size: 18px; color: #34373d; font-weight: bold; margin-bottom: 10px; }
+.empty-copy { font-size: 13px; line-height: 22px; text-align: center; color: #85868b; }
+.primary { background-color: #e56335; color: #ffffff; border-radius: 9px; font-size: 15px; margin-top: 25px; width: 100%; }
+.secondary { background-color: #fffdf9; color: #e56335; border-radius: 9px; font-size: 13px; margin-top: 14px; }
+.notice { margin-top: 20px; background-color: #fff0e8; border-radius: 10px; padding: 16px; }
+.notice-title { color: #9b461f; font-size: 14px; font-weight: bold; }
+.notice-copy { color: #9b725d; font-size: 12px; line-height: 20px; margin-top: 7px; }
+.load-more { margin-top: 18px; color: #e56335; background-color: #f7f1e9; font-size: 13px; border-radius: 9px; }
+</style>

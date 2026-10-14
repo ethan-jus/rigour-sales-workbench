@@ -2,16 +2,106 @@
   "pages": [
     {
       "path": "pages/home/home",
-      "style": { "navigationBarTitleText": "销售工作台" }
+      "style": {
+        "navigationBarTitleText": "销售工作台"
+      }
+    },
+    {
+      "path": "pages/customers/customers",
+      "style": {
+        "navigationBarTitleText": "客户"
+      }
+    },
+    {
+      "path": "pages/visits/visits",
+      "style": {
+        "navigationBarTitleText": "拜访"
+      }
+    },
+    {
+      "path": "pages/orders/orders",
+      "style": {
+        "navigationBarTitleText": "订单"
+      }
+    },
+    {
+      "path": "pages/profile/profile",
+      "style": {
+        "navigationBarTitleText": "我的"
+      }
+    },
+    {
+      "path": "pages/login/login",
+      "style": {
+        "navigationBarTitleText": "公司账号登录"
+      }
+    },
+    {
+      "path": "pages/commerce/commerce",
+      "style": {
+        "navigationBarTitleText": "业务详情"
+      }
+    },
+    {
+      "path": "pages/visit/visit",
+      "style": {
+        "navigationBarTitleText": "拜访"
+      }
+    },
+    {
+      "path": "pages/work/work",
+      "style": {
+        "navigationBarTitleText": "工作与设置"
+      }
     },
     {
       "path": "pages/device-check/device-check",
-      "style": { "navigationBarTitleText": "设备检查" }
+      "style": {
+        "navigationBarTitleText": "定位与录音检查"
+      }
     }
   ],
   "globalStyle": {
     "navigationBarTextStyle": "black",
     "navigationBarBackgroundColor": "#ffffff",
-    "backgroundColor": "#f3f5f9"
+    "backgroundColor": "#ffffff"
+  },
+  "tabBar": {
+    "color": "#8b8d8e",
+    "selectedColor": "#d35a2e",
+    "backgroundColor": "#ffffff",
+    "borderStyle": "white",
+    "list": [
+      {
+        "pagePath": "pages/home/home",
+        "text": "工作台",
+        "iconPath": "static/tabs/home.png",
+        "selectedIconPath": "static/tabs/home-active.png"
+      },
+      {
+        "pagePath": "pages/customers/customers",
+        "text": "客户",
+        "iconPath": "static/tabs/customer.png",
+        "selectedIconPath": "static/tabs/customer-active.png"
+      },
+      {
+        "pagePath": "pages/visits/visits",
+        "text": "拜访",
+        "iconPath": "static/tabs/visit.png",
+        "selectedIconPath": "static/tabs/visit-active.png"
+      },
+      {
+        "pagePath": "pages/orders/orders",
+        "text": "订单",
+        "iconPath": "static/tabs/order.png",
+        "selectedIconPath": "static/tabs/order-active.png"
+      },
+      {
+        "pagePath": "pages/profile/profile",
+        "text": "我的",
+        "iconPath": "static/tabs/profile.png",
+        "selectedIconPath": "static/tabs/profile-active.png"
+      }
+    ]
   }
 }

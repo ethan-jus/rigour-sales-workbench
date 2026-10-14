@@ -1,0 +1,121 @@
+<template>
+  <scroll-view class="page" direction="vertical">
+    <view class="content">
+      <view class="heading-row"><view><text class="eyebrow">每一次拜访，都有进展</text><text class="heading">我的拜访</text></view><button class="add-button" @click="open('select')">＋</button></view>
+      <view class="stats"><view class="stat"><text class="number">{{ session.authenticated && loaded ? total.toString() : '—' }}</text><text class="muted">当前日期记录</text></view><view class="stat"><text class="number">{{ localDraftCount }}</text><text class="muted">本机草稿</text></view></view>
+      <view v-if="recordingActive" class="resume" @click="resume"><text class="resume-text">{{ visitState.capture.phase == 'recording' ? '正在录音' : '录音待处理' }} · {{ formatClock(visitState.capture.activeDurationEstimateMs) }}</text><text class="resume-text">返回拜访 →</text></view>
+      <view class="tabs"><text :class="tab == 'records' ? 'tab selected' : 'tab'" @click="tab = 'records'">已提交</text><text :class="tab == 'drafts' ? 'tab selected' : 'tab'" @click="tab = 'drafts'">本机草稿 {{ localDraftCount }}</text></view>
+      <view v-if="tab == 'records'">
+        <view class="filter-row"><input class="date-input" v-model="date" placeholder="YYYY-MM-DD" maxlength="10" /><button class="filter-button" :disabled="loading" @click="loadRecords(true)">查询</button><button class="filter-button" @click="showToday">今天</button></view>
+        <text class="help">按北京时间查询某一天的拜访，可清空日期查看全部。</text>
+        <view v-if="!session.authenticated" class="empty"><text class="empty-title">登录后查看自己的拜访</text><text class="help">沿用供应链系统账号与权限。</text><button class="primary" @click="login">去登录</button></view>
+        <view v-else-if="error.length > 0" class="notice"><text class="notice-text">{{ error }}</text><button class="secondary" @click="loadRecords(true)">重新加载</button></view>
+        <text v-if="loading" class="loading">正在加载拜访记录…</text>
+        <view v-for="item in records" :key="item.id" class="record" @click="detail(item.id)"><view class="record-icon"><text class="record-icon-text">访</text></view><view class="record-body"><text class="muted">{{ item.time }}</text><text class="store-name">{{ item.storeName }}</text><text class="record-note">{{ item.note.length > 0 ? item.note : '尚未填写沟通记录' }}</text><text class="record-status">{{ statusLabel(item.status) }} · {{ reviewLabel(item.review) }}</text></view><text class="chevron">›</text></view>
+        <view v-if="loaded && !loading && records.length == 0 && error.length == 0" class="empty"><text class="empty-title">这个日期还没有拜访记录</text><text class="help">可选择其他日期，或先记录一次新的拜访。</text></view>
+        <button v-if="records.length < total && !loading" class="secondary" @click="loadRecords(false)">加载更多</button>
+      </view>
+      <view v-else>
+        <text class="help draft-help">草稿和材料只保存在当前手机，尚未提交，不计入有效拜访。</text>
+        <view v-for="draft in visitState.drafts" :key="draft.id" class="record" @click="openDraft(draft.id)"><image v-if="draft.photos.length > 0" class="draft-photo" :src="photoSource(draft.photos[0])" mode="aspectFill" /><view v-else class="record-icon"><text class="record-icon-text">访</text></view><view class="record-body"><text class="muted">{{ formatTime(draft.updatedAt) }}</text><text class="store-name">{{ draft.storeName }}</text><text class="record-note">{{ draft.note.length > 0 ? draft.note : '继续填写沟通情况' }}</text><text class="draft-status">草稿 · {{ draft.photos.length }} 张照片 · {{ draft.clips.length > 0 ? '有录音' : '未附录音' }}</text></view><text class="chevron">›</text></view>
+        <view v-if="localDraftCount == 0" class="empty"><text class="empty-title">暂无本机草稿</text><text class="help">选择门店后，可以保存沟通内容和现场材料。</text></view>
+      </view>
+      <view class="links"><view class="link-row" @click="open('plan')"><text class="link-label">我的拜访计划</text><text class="chevron">›</text></view><view class="link-row" @click="open('uploads')"><text class="link-label">本机材料与上传</text><text class="chevron">›</text></view></view>
+    </view>
+  </scroll-view>
+</template>
+<script setup lang="uts">
+import { session } from '../../services/session.uts'
+import { VisitPhoto, visitState, loadLocalVisits, visitDraftCount, hasActiveVisitRecording, resumeVisitPath, visitClock, visitTime, visitToday, visitPhotoPath, getVisitData, parseVisitItem, VisitItem, visitStatus, visitReview } from '../../services/visits.uts'
+const localDraftCount = computed((): number => visitDraftCount())
+
+const recordingActive = computed((): boolean => hasActiveVisitRecording())
+
+const tab = ref('records')
+const date = ref(visitToday())
+const records = ref([] as VisitItem[])
+const total = ref(0)
+const page = ref(1)
+const loading = ref(false)
+const loaded = ref(false)
+const error = ref('')
+let owner = ''
+
+
+function formatClock(ms: number): string { return visitClock(ms) }
+function formatTime(ms: number): string { return visitTime(ms) }
+function photoSource(photo: VisitPhoto): string { return visitPhotoPath(photo) }
+function statusLabel(status: string): string { return visitStatus(status) }
+function reviewLabel(status: string): string { return visitReview(status) }
+function open(view: string): void { uni.navigateTo({ url: '/pages/visit/visit?view=' + view }) }
+function login(): void { uni.navigateTo({ url: '/pages/login/login' }) }
+function detail(id: string): void { uni.navigateTo({ url: '/pages/visit/visit?view=detail&id=' + encodeURIComponent(id) }) }
+function openDraft(id: string): void { uni.navigateTo({ url: '/pages/visit/visit?view=active&id=' + encodeURIComponent(id) }) }
+function resume(): void { uni.navigateTo({ url: resumeVisitPath() }) }
+function loadRecords(reset: boolean): void {
+  if (loading.value) return
+  if (date.value.length > 0 && !/^\d{4}-\d{2}-\d{2}$/.test(date.value)) { error.value = '日期请填写为 YYYY-MM-DD，例如 ' + visitToday(); return }
+  if (reset) { page.value = 1; records.value = []; total.value = 0; loaded.value = false }
+  if (!session.authenticated) { error.value = ''; return }
+  loading.value = true; error.value = ''
+  const expectedOwner = session.tenantId + ':' + session.userId
+  const path = '/sales/me/visits?page=' + page.value.toString() + '&pageSize=20' + (date.value.length > 0 ? '&date=' + encodeURIComponent(date.value) : '')
+  getVisitData(path, 'sales:visit:own:read', (data) => {
+    loading.value = false
+    if (expectedOwner != session.tenantId + ':' + session.userId || !session.authenticated) return
+    const items = data['items'] as UTSJSONObject[] | null
+    if (items == null) { error.value = '拜访数据格式异常，请稍后重试。'; return }
+    items.forEach((item: UTSJSONObject): void => { records.value.push(parseVisitItem(item)) })
+    total.value = data.getNumber('total') ?? records.value.length; page.value += 1; loaded.value = true
+  }, (message) => { loading.value = false; error.value = message })
+}
+function showToday(): void { date.value = visitToday(); loadRecords(true) }
+onShow(() => {
+  loadLocalVisits()
+  const currentOwner = session.authenticated ? session.tenantId + ':' + session.userId : ''
+  if (owner != currentOwner) { owner = currentOwner; records.value = []; loaded.value = false; total.value = 0 }
+  loadRecords(true)
+})
+</script>
+<style>
+.page { flex: 1; background-color: #faf9f6; }
+.content { padding: 22px; padding-bottom: 36px; }
+.heading-row { flex-direction: row; align-items: center; justify-content: space-between; margin-bottom: 22px; }
+.eyebrow { font-size: 12px; color: #858078; margin-bottom: 7px; }
+.heading { font-size: 27px; font-weight: bold; color: #21252b; }
+.add-button { width: 43px; height: 43px; border-radius: 13px; background-color: #e56335; color: #ffffff; font-size: 28px; line-height: 43px; padding: 0; margin: 0; }
+.stats { flex-direction: row; background-color: #ffffff; border-radius: 15px; padding: 20px; margin-bottom: 20px; }
+.stat { flex: 1; }
+.number { font-size: 29px; color: #21252b; font-weight: bold; margin-bottom: 7px; }
+.muted { color: #827e77; font-size: 12px; }
+.resume { background-color: #fff0e8; padding: 14px; border-radius: 12px; flex-direction: row; justify-content: space-between; margin-bottom: 16px; }
+.resume-text { color: #b85431; font-size: 13px; }
+.tabs { flex-direction: row; border-bottom-width: 1px; border-bottom-color: #e9e5df; margin-bottom: 18px; }
+.tab { flex: 1; color: #8b867e; text-align: center; padding-bottom: 14px; font-size: 16px; }
+.selected { color: #e56335; font-weight: bold; border-bottom-width: 3px; border-bottom-color: #e56335; }
+.filter-row { flex-direction: row; align-items: center; margin-bottom: 8px; }
+.date-input { flex: 1; height: 42px; border-width: 1px; border-color: #e6e2dc; border-radius: 8px; padding: 10px; font-size: 14px; background-color: #ffffff; }
+.filter-button { padding: 0 10px; margin: 0 0 0 7px; font-size: 13px; line-height: 42px; background-color: #f0ede7; color: #544e45; border-radius: 8px; }
+.help { color: #89837a; font-size: 12px; line-height: 19px; margin-bottom: 12px; }
+.record { flex-direction: row; align-items: center; padding: 19px 0; border-bottom-width: 1px; border-bottom-color: #e9e5df; }
+.record-icon { width: 56px; height: 64px; border-radius: 10px; background-color: #f0ede7; align-items: center; justify-content: center; margin-right: 13px; }
+.record-icon-text { color: #b1a699; font-size: 23px; }
+.draft-photo { width: 64px; height: 76px; border-radius: 9px; margin-right: 13px; }
+.record-body { flex: 1; }
+.store-name { color: #25282c; font-weight: bold; font-size: 16px; margin-top: 6px; margin-bottom: 6px; }
+.record-note { color: #7c7871; font-size: 13px; line-height: 20px; }
+.record-status { color: #458574; font-size: 12px; margin-top: 7px; }
+.draft-status { color: #b57536; font-size: 12px; margin-top: 7px; }
+.chevron { color: #b8b0a5; font-size: 24px; margin-left: 12px; }
+.empty { padding: 35px 12px; align-items: center; }
+.empty-title { color: #45413b; font-size: 17px; font-weight: bold; margin-bottom: 11px; }
+.primary { align-self: stretch; background-color: #e56335; color: #ffffff; font-size: 15px; line-height: 48px; border-radius: 10px; margin-top: 12px; }
+.secondary { background-color: #f0ede7; color: #645645; border-radius: 10px; margin-top: 12px; font-size: 14px; }
+.notice { background-color: #fff0e8; padding: 16px; border-radius: 10px; }
+.notice-text { font-size: 13px; color: #a15b34; line-height: 21px; }
+.loading { color: #8b8275; font-size: 13px; margin-top: 20px; margin-bottom: 10px; }
+.links { margin-top: 25px; }
+.link-row { flex-direction: row; align-items: center; justify-content: space-between; padding: 17px 0; border-bottom-width: 1px; border-bottom-color: #e9e5df; }
+.link-label { font-size: 14px; color: #4c4943; }
+.draft-help { margin-top: 5px; }
+</style>

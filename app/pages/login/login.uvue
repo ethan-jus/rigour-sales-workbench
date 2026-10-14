@@ -1,0 +1,41 @@
+<template>
+  <scroll-view class="page" direction="vertical"><view class="content login-content">
+    <image class="login-logo" src="/static/sales/logo.png" mode="aspectFit"/>
+    <text class="eyebrow">RIGOUR WORKSPACE</text><text class="login-heading">欢迎回到
+销售工作台</text>
+    <text class="login-copy">让每一次拜访，都有新的进展。</text>
+    <view class="sign-in-panel"><text class="h2">使用公司账号登录</text><text class="body panel-copy">与供应链系统使用同一个账号，功能和数据权限由公司统一管理。</text>
+      <button class="primary" :disabled="busy" @click="signIn">{{ busy ? '等待公司登录…' : '前往公司登录' }}</button>
+      <text v-if="busy" class="link login-note" @click="cancelLogin">取消本次登录</text>
+      <view v-if="message.length > 0" class="error"><text class="error-text">{{ message }}</text></view>
+      <text class="fine login-note">将在公司登录页完成身份验证，App 不保存账号密码。</text>
+    </view>
+    <button class="secondary" @click="home">先看看工作台</button>
+    <view class="login-footer"><text class="fine">瑞盖销售工作台 · 内部试用版</text></view>
+  </view></scroll-view>
+</template>
+<script setup lang="uts">
+import { beginCompanyLogin, logoutCompany } from '../../services/auth.uts'
+import { session } from '../../services/session.uts'
+const busy = ref(false)
+const message = ref('')
+function home(): void { uni.switchTab({ url: '/pages/home/home' }) }
+function signIn(): void {
+  if (busy.value) return
+  busy.value = true; message.value = ''
+  beginCompanyLogin(() => { busy.value = false; home() }, (error) => { busy.value = false; message.value = error })
+}
+function cancelLogin(): void { logoutCompany(); busy.value = false; message.value = '' }
+onShow(() => { if (session.authenticated) { busy.value = false; home() } })
+</script>
+<style>
+.login-content { padding-top: 38px; }
+.login-logo { width: 54px; height: 54px; margin-bottom: 25px; }
+.eyebrow { color: #b24f2d; font-size: 11px; letter-spacing: 2px; margin-bottom: 14px; }
+.login-heading { color: #21252b; font-size: 34px; line-height: 47px; font-weight: bold; }
+.login-copy { color: #777d84; font-size: 14px; line-height: 23px; margin-top: 15px; }
+.sign-in-panel { background-color: #f8f7f4; padding: 22px; border-radius: 8px; margin-top: 42px; }
+.panel-copy { margin-top: 12px; margin-bottom: 8px; }
+.login-note { margin-top: 17px; }
+.login-footer { align-items: center; margin-top: 42px; }
+</style>

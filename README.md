@@ -2,7 +2,7 @@
 
 瑞盖优选供应链 · 销售工作台 App / H5
 
-> **三端迁移开发（2026-10-13）**：Android、iOS 和纯 HarmonyOS 的 uni-app x 基础工程位于 [`app/`](app/README.md)，用 HBuilderX 打开。它当前处于 G0 原生能力验证阶段，尚未替代下文的旧 Vue/Capacitor 实现，也没有部署或停用临时打卡系统。
+> **原生 App 页面实施（2026-10-14）**：Android、iOS 和纯 HarmonyOS 的 uni-app x 工程位于 [`app/`](app/README.md)，用 HBuilderX 打开。已按确认设计实施五个主导航、业务页面和本机草稿；业务接入与验收边界见 [`docs/app-v1-native-ui.md`](docs/app-v1-native-ui.md)，移动登录见 [`docs/app-v1-auth-integration.md`](docs/app-v1-auth-integration.md)。下文的 Vue/Capacitor 是保留的旧实现，不代表当前原生 App 已完成全部业务。未部署或停用临时打卡系统。
 
 本应用是销售人员唯一移动执行端：自研签到/签退、工作期间定位、CRM客户门店选择、现场拜访、录音和本人申诉。Portal中的“销售管理/销售管控台”负责后台管理，不在PC端复制现场作业。
 

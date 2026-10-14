@@ -1,0 +1,176 @@
+import { reactive, watch } from 'vue'
+import { session, hasPermission } from './session.uts'
+import { requestApi } from './api.uts'
+import { createCaptureSession, loadSavedClips, savedClipPath, CaptureSession, CaptureState, SavedClip } from './capture.uts'
+import { requestDeviceLocation, DeviceLocation } from './location.uts'
+
+export type VisitTarget = { projectionId: string, storeId: string, customerId: string, storeName: string, customerName: string, address: string }
+export type VisitPhoto = { fileName: string, capturedAt: number }
+export type VisitDraft = { id: string, storeId: string, customerId: string, storeName: string, address: string, contact: string, note: string, createdAt: number, updatedAt: number, photos: VisitPhoto[], clips: SavedClip[], location: DeviceLocation | null }
+export type VisitItem = { id: string, storeName: string, address: string, time: string, status: string, review: string, note: string, contact: string }
+type VisitState = { storageHealthy: boolean, drafts: VisitDraft[], activeId: string, capture: CaptureState, locating: boolean, locationText: string, notice: string, loadedOwner: string, recordingDraftId: string, recordingOwner: string }
+export const visitState = reactive({ storageHealthy: true, drafts: [] as VisitDraft[], activeId: '', capture: { phase: 'idle', message: '未开始录音', activeDurationEstimateMs: 0, temporaryPath: '', savedPath: '' } as CaptureState, locating: false, locationText: '进入选店页自动获取当前位置', notice: '', loadedOwner: '', recordingDraftId: '', recordingOwner: '' } as VisitState)
+let captureSession: CaptureSession | null = null
+let captureTicker = 0
+let latestLocation: DeviceLocation | null = null
+
+function ownerKey(): string { return session.authenticated && session.tenantId.length > 0 && session.userId.length > 0 ? session.tenantId + ':' + session.userId : '' }
+function storageKeyFor(owner: string): string { return 'rigour.visit.drafts.v1.' + encodeURIComponent(owner) }
+function storageKey(): string { return storageKeyFor(ownerKey()) }
+function ownsDrafts(): boolean { return ownerKey().length > 0 && visitState.loadedOwner == ownerKey() }
+export function visitClock(ms: number): string { const s = Math.floor(ms / 1000); return Math.floor(s / 60).toString().padStart(2, '0') + ':' + (s % 60).toString().padStart(2, '0') }
+export function visitTime(ms: number): string { const d = new Date(ms + 8 * 60 * 60 * 1000); return d.getUTCFullYear().toString() + '-' + (d.getUTCMonth() + 1).toString().padStart(2, '0') + '-' + d.getUTCDate().toString().padStart(2, '0') + ' ' + d.getUTCHours().toString().padStart(2, '0') + ':' + d.getUTCMinutes().toString().padStart(2, '0') }
+export function visitToday(): string { return visitTime(Date.now()).substring(0, 10) }
+export function apiVisitTime(value: string): string { const ms = Date.parse(value); return Number.isFinite(ms) ? visitTime(ms) : '时间未提供' }
+export function activeVisitDraft(): VisitDraft | null { if (!ownsDrafts()) return null; return visitState.drafts.find((d: VisitDraft): boolean => d.id == visitState.activeId) ?? null }
+export function visitDraftCount(): number { return ownsDrafts() ? visitState.drafts.length : 0 }
+export function hasActiveVisitRecording(): boolean { return visitState.recordingOwner == ownerKey() && ['starting', 'recording', 'paused', 'interrupted', 'stopping', 'saving', 'save-error'].includes(visitState.capture.phase) }
+export function resumeVisitPath(): string { return '/pages/visit/visit?view=active&id=' + encodeURIComponent(visitState.recordingDraftId.length > 0 && hasActiveVisitRecording() ? visitState.recordingDraftId : visitState.activeId) }
+export function saveLocalVisits(): boolean {
+  if (!ownsDrafts()) return false
+  try { uni.setStorageSync(storageKey(), JSON.stringify(visitState.drafts)); visitState.storageHealthy = true; return true }
+  catch (error) { visitState.storageHealthy = false; visitState.notice = '本机草稿保存失败，请保留当前页面和原始文件。'; return false }
+}
+export function loadLocalVisits(): void {
+  const owner = ownerKey()
+  if (visitState.loadedOwner == owner && owner.length > 0) return
+  visitState.drafts = []; visitState.activeId = ''; visitState.loadedOwner = owner; latestLocation = null; visitState.notice = ''; visitState.storageHealthy = true
+  if (owner.length == 0) return
+  try {
+    const raw = uni.getStorageSync(storageKey())
+    if (raw != null && (raw as string).length > 0) visitState.drafts = JSON.parse<VisitDraft[]>(raw as string) ?? [] as VisitDraft[]
+    if (visitState.drafts.length > 0) visitState.activeId = visitState.drafts[0].id
+  } catch (error) { visitState.storageHealthy = false; visitState.notice = '本机草稿暂时无法读取，原始文件未删除。' }
+}
+export function selectVisitDraft(id: string): void { loadLocalVisits(); if (visitState.drafts.some((d: VisitDraft): boolean => d.id == id)) visitState.activeId = id }
+export function createVisitDraft(target: VisitTarget): string {
+  loadLocalVisits()
+  if (!session.authenticated || !hasPermission('sales:visit:own:write')) { visitState.notice = '请登录有拜访权限的平台账号。'; return '' }
+  if (ownerKey().length == 0) { visitState.notice = '账号身份未就绪，请重新登录后再记录拜访。'; return '' }
+  if (hasActiveVisitRecording()) { visitState.notice = '请先完成当前录音，再创建下一次拜访。'; return '' }
+  const now = Date.now()
+  const draft: VisitDraft = { id: 'local-' + now.toString(), storeId: target.storeId, customerId: target.customerId, storeName: target.storeName, address: target.address, contact: '', note: '', createdAt: now, updatedAt: now, photos: [] as VisitPhoto[], clips: [] as SavedClip[], location: latestLocation }
+  visitState.drafts.unshift(draft); visitState.activeId = draft.id
+  if (!saveLocalVisits()) visitState.notice = '新建草稿尚未保存到本机，请保留当前页面并重试保存。当前填写内容仍在内存中。'
+  return draft.id
+}
+export function updateVisitText(contact: string, note: string): void { const d = activeVisitDraft(); if (d == null) return; d.contact = contact; d.note = note; d.updatedAt = Date.now(); saveLocalVisits() }
+export function locateForVisit(attachToDraft: boolean = true): void {
+  if (visitState.locating) return
+  visitState.locating = true; visitState.locationText = '正在获取当前位置…'
+  const draftId = attachToDraft ? visitState.activeId : ''
+  const expectedOwner = ownerKey()
+  requestDeviceLocation((location) => {
+    visitState.locating = false
+    if (ownerKey() != expectedOwner) return
+    latestLocation = location
+    visitState.locationText = '已获取设备位置 · 地址待解析'
+    const draft = visitState.drafts.find((d: VisitDraft): boolean => d.id == draftId)
+    if (draft != null) { draft.location = location; draft.updatedAt = Date.now(); saveLocalVisits() }
+  }, (message) => { visitState.locating = false; latestLocation = null; visitState.locationText = message })
+}
+export function getVisitData(path: string, permission: string, success: (data: UTSJSONObject) => void, fail: (message: string) => void): void {
+  if (!session.authenticated) { fail('请先使用供应链系统账号登录。'); return }
+  if (!hasPermission(permission)) { fail('当前账号没有此功能的权限。'); return }
+  requestApi(path, 'GET', null, (response) => {
+    const payload = response['data'] as UTSJSONObject | null
+    if (payload == null) { fail('接口未返回有效数据，请稍后重试。'); return }
+    success(payload)
+  }, fail)
+}
+export function parseVisitTarget(value: UTSJSONObject): VisitTarget { return { projectionId: value.getString('projectionId') ?? '', storeId: value.getString('storeId') ?? '', customerId: value.getString('customerId') ?? '', storeName: value.getString('storeName') ?? '门店名称未提供', customerName: value.getString('customerName') ?? '', address: value.getString('storeAddress') ?? '门店地址未提供' } as VisitTarget }
+export function parseVisitItem(value: UTSJSONObject): VisitItem {
+  const target = value['targetSnapshot'] as UTSJSONObject | null
+  return { id: value.getString('id') ?? '', storeName: target?.getString('storeName') ?? '门店名称未提供', address: target?.getString('storeAddress') ?? '门店地址未提供', time: apiVisitTime(value.getString('checkedInAt') ?? value.getString('createdAt') ?? ''), status: value.getString('status') ?? '', review: value.getString('reviewStatus') ?? '', note: value.getString('resultNote') ?? '', contact: value.getString('kpName') ?? '' } as VisitItem
+}
+export function visitStatus(status: string): string { if (status == 'CHECKED_IN') return '已到店'; if (status == 'CHECKED_OUT') return '已离店'; return '状态待确认' }
+export function visitReview(status: string): string { if (status == 'EFFECTIVE') return '有效拜访'; if (status == 'INEFFECTIVE') return '无效拜访'; if (status == 'PENDING_REVIEW') return '待复核'; if (status == 'IN_PROGRESS') return '进行中'; return '复核状态未提供' }
+
+export function visitPhotoPath(photo: VisitPhoto): string {
+  // #ifdef APP
+  return uni.env.USER_DATA_PATH + '/rigour-visit-photos/' + photo.fileName
+  // #endif
+  // #ifndef APP
+  return ''
+  // #endif
+}
+export function addVisitPhotos(camera: boolean): void {
+  const draft = activeVisitDraft()
+  if (draft == null) return
+  if (draft.photos.length >= 9) { visitState.notice = '一次拜访最多添加 9 张照片。'; return }
+  const draftId = draft.id
+  const expectedOwner = ownerKey()
+  // #ifdef APP
+  uni.chooseImage({ count: 9 - draft.photos.length, sizeType: ['compressed'], sourceType: camera ? ['camera'] : ['album'], success: (result) => {
+    const fs = uni.getFileSystemManager()
+    const directory = uni.env.USER_DATA_PATH + '/rigour-visit-photos'
+    const saveFiles = (): void => {
+      result.tempFilePaths.forEach((path: string, index: number) => {
+        const name = Date.now().toString() + '-' + index.toString() + '-' + Math.floor(Math.random() * 100000).toString() + (path.endsWith('.png') ? '.png' : '.jpg')
+        fs.copyFile({ srcPath: path, destPath: directory + '/' + name, success: () => {
+          if (ownerKey() != expectedOwner) { visitState.notice = '账号已变化，照片未写入新账号草稿。'; return }
+          const target = visitState.drafts.find((d: VisitDraft): boolean => d.id == draftId)
+          if (target == null) return
+          if (target.photos.length >= 9) { visitState.notice = '一次拜访最多保留 9 张照片。'; return }
+          target.photos.push({ fileName: name, capturedAt: Date.now() } as VisitPhoto); target.updatedAt = Date.now()
+          if (saveLocalVisits()) visitState.notice = '照片已保存在本机草稿。'
+        }, fail: (error) => { visitState.notice = '照片保存失败，请保留手机原图：' + error.errMsg } })
+      })
+    }
+    fs.access({ path: directory, success: (_) => saveFiles(), fail: () => fs.mkdir({ dirPath: directory, recursive: true, success: (_) => saveFiles(), fail: (error) => { visitState.notice = '无法建立照片目录：' + error.errMsg } }) })
+  }, fail: (error) => { if (!error.errMsg.toLowerCase().includes('cancel')) visitState.notice = '无法添加照片：' + error.errMsg } })
+  // #endif
+  // #ifndef APP
+  visitState.notice = '请在手机 App 中拍照或选择相册照片。'
+  // #endif
+}
+export function removeVisitPhoto(index: number): void { const d = activeVisitDraft(); if (d == null) return; d.photos.splice(index, 1); d.updatedAt = Date.now(); saveLocalVisits() }
+
+function ensureVisitCapture(): CaptureSession {
+  if (captureSession != null) return captureSession!
+  captureSession = createCaptureSession((state) => {
+    visitState.capture = state
+    if (state.phase == 'saved') {
+      clearInterval(captureTicker); captureTicker = 0
+      const savedOwner = visitState.recordingOwner
+      const draftId = visitState.recordingDraftId
+      loadSavedClips((clips) => {
+        const clip = clips.find((c: SavedClip): boolean => savedClipPath(c) == state.savedPath)
+        let ownerDrafts = visitState.drafts
+        if (visitState.loadedOwner != savedOwner) {
+          try { const raw = uni.getStorageSync(storageKeyFor(savedOwner)); ownerDrafts = raw == null ? [] as VisitDraft[] : JSON.parse<VisitDraft[]>(raw as string) ?? [] as VisitDraft[] }
+          catch (error) { visitState.notice = '录音已保存，但原账号草稿暂时无法读取。请保留本机文件。'; return }
+        }
+        const draft = ownerDrafts.find((d: VisitDraft): boolean => d.id == draftId)
+        if (clip == null || draft == null) { visitState.notice = '录音已保存，但关联草稿失败。请在设备检查中保留并回放文件。'; return }
+        if (!draft.clips.some((c: SavedClip): boolean => c.id == clip.id)) draft.clips.push(clip)
+        draft.updatedAt = Date.now()
+        try { uni.setStorageSync(storageKeyFor(savedOwner), JSON.stringify(ownerDrafts)); if (ownerKey() == savedOwner) { visitState.storageHealthy = true; visitState.notice = '录音已保存到本机并关联本次草稿。' } }
+        catch (error) { if (ownerKey() == savedOwner) visitState.storageHealthy = false; visitState.notice = '录音文件已保存，但草稿关联保存失败，请保留本机文件。' }
+      }, (message) => { visitState.notice = message })
+    }
+  })
+  return captureSession!
+}
+export function startVisitRecording(): void {
+  const d = activeVisitDraft()
+  if (d == null) return
+  if (hasActiveVisitRecording() && visitState.recordingDraftId != d.id) { visitState.notice = '另一份拜访正在录音，请先停止并保存。'; return }
+  if (visitState.recordingOwner.length > 0 && visitState.recordingOwner != ownerKey() && ['starting', 'recording', 'paused', 'interrupted', 'stopping', 'saving', 'save-error'].includes(visitState.capture.phase)) { visitState.notice = '上一账号的录音尚未保存，请先返回原账号处理。'; return }
+  visitState.recordingDraftId = d.id; visitState.recordingOwner = ownerKey()
+  ensureVisitCapture().start()
+  if (captureTicker == 0 && ['starting', 'recording', 'paused', 'interrupted'].includes(visitState.capture.phase)) captureTicker = setInterval(() => { if (captureSession != null) visitState.capture = captureSession!.snapshot() }, 1000)
+}
+export function pauseVisitRecording(): void { if (visitState.recordingOwner == ownerKey()) captureSession?.pause() }
+export function resumeVisitRecording(): void { if (visitState.recordingOwner == ownerKey()) captureSession?.resume() }
+export function stopVisitRecording(): void { if (visitState.recordingOwner == ownerKey()) captureSession?.stop() }
+export function retryVisitRecordingSave(): void { if (visitState.recordingOwner == ownerKey()) captureSession?.retrySave() }
+
+// Expiry or an account change ends the old recording and keeps its file bound
+// to the owner that started it. Ordinary page navigation does not stop capture.
+watch((): string => ownerKey(), (next: string, previous: string) => {
+  if (previous.length > 0 && next != previous && visitState.recordingOwner == previous) {
+    if (['starting', 'recording', 'paused', 'interrupted', 'error'].includes(visitState.capture.phase)) captureSession?.stop()
+  }
+  loadLocalVisits()
+})

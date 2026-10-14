@@ -11,6 +11,7 @@
     "app:g0:check:ios": "node scripts/app-g0.mjs app-ios",
     "app:g0:check:harmony": "node scripts/app-g0.mjs app-harmony",
     "app:g0:test": "node scripts/test-app-g0-native.cjs",
+    "app:v1:test": "node --test scripts/test-app-g0-native.cjs scripts/test-app-v1-auth.cjs scripts/test-app-v1-commerce.cjs scripts/test-app-v1-visits.cjs",
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",

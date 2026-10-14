@@ -1,0 +1,109 @@
+<template>
+  <scroll-view class="page" direction="vertical"><view class="content">
+    <template v-if="view == 'account'">
+      <text class="h1">账号与设置</text><text class="muted intro">账号和权限由公司统一管理</text>
+      <view class="card"><text class="fine">当前账号</text><text class="h2 account-name">{{ session.authenticated ? session.displayName : '尚未登录' }}</text><text class="body">{{ session.username }}</text></view>
+      <view class="entry" @click="deviceCheck"><view class="grow"><text class="h3">定位与录音检查</text><text class="muted">检查权限、保存和回放</text></view><text class="chevron">›</text></view>
+      <view class="entry" @click="uploads"><view class="grow"><text class="h3">本机草稿与附件</text><text class="muted">查看还未提交的记录</text></view><text class="chevron">›</text></view>
+      <view class="entry"><view class="grow"><text class="h3">App 版本</text><text class="muted">0.2.0 · 内部试用版</text></view></view>
+      <view class="section"><text class="fine">退出登录会清除当前会话。本机草稿按账号分别保存，重新登录原账号后可继续查看。</text></view>
+      <button v-if="session.authenticated" class="secondary" @click="logout">退出登录</button><button v-else class="primary" @click="login">登录公司账号</button>
+    </template>
+    <template v-else-if="view == 'performance'">
+      <view class="row-between"><text class="h1">目标与业绩</text><text class="badge">本人拜访</text></view>
+      <view class="period-row"><text :class="monthOffset == 0 ? 'period selected' : 'period'" @click="setPeriod(0)">本月</text><text :class="monthOffset == -1 ? 'period selected' : 'period'" @click="setPeriod(-1)">上月</text></view>
+      <text class="fine">{{ dateLabel }}</text>
+      <view class="performance-card"><text class="muted">订单目标完成</text><text class="big-number">—</text><text class="fine">个人订单与目标统计接入后展示</text></view>
+      <view class="metric-row"><view class="metric"><text class="muted">已记录拜访</text><text class="metric-value">{{ total }}</text></view><view class="metric"><text class="muted">有效拜访</text><text class="metric-value">{{ effective }}</text></view></view>
+      <view v-if="message.length > 0" class="error"><text class="error-text">{{ message }}</text><text v-if="session.authenticated" class="link" @click="loadPerformance">重新加载</text></view>
+      <text class="section-label">业务明细</text><view class="entry" @click="orders"><text class="h3 grow">订单记录</text><text class="chevron">›</text></view><view class="entry" @click="visits"><text class="h3 grow">本人拜访</text><text class="chevron">›</text></view><view class="entry" @click="commission"><text class="h3 grow">提成进度</text><text class="chevron">›</text></view>
+      <text class="fine intro">已记录拜访包含进行中的拜访，有效拜访以最终复核结果为准。</text>
+    </template>
+    <template v-else-if="view == 'messages'">
+      <text class="h1">消息与待办</text><text class="muted intro">集中处理尚未完成的工作</text>
+      <view class="entry" @click="uploads"><image class="entry-icon" src="/static/tabs/upload.png"/><view class="grow"><text class="h3">拜访草稿</text><text class="muted">{{ localVisitCount }} 份本机记录，尚未提交</text></view><text class="chevron">›</text></view>
+      <view class="entry" @click="cartDrafts"><image class="entry-icon" src="/static/tabs/order.png"/><view class="grow"><text class="h3">购物草稿</text><text class="muted">{{ localCartCount }} 份草稿，继续完善商品与地址</text></view><text class="chevron">›</text></view>
+      <view class="empty"><text class="empty-title">公司消息待开通</text><text class="empty-copy">审批、订单和公司通知将在消息服务接入后汇集到这里。</text></view>
+    </template>
+    <template v-else-if="view == 'commission'">
+      <text class="h1">我的提成</text><text class="muted intro">预计、已确认和已发放分别展示</text>
+      <view class="performance-card"><text class="muted">已确认待发放</text><text class="big-number">—</text><text class="fine">以公司核算结果为准</text></view>
+      <view class="empty"><text class="empty-title">个人提成尚未开通</text><text class="empty-copy">接入公司的提成核算结果后，可查看每笔计算依据和发放进度。</text></view>
+    </template>
+    <template v-else>
+      <text class="h1">到账明细</text><text class="muted intro">按财务确认的实际到账日期查看</text>
+      <view class="empty"><text class="empty-title">到账明细尚未开通</text><text class="empty-copy">销售提报和财务确认将分别显示，未确认的凭证不计入已到账。</text></view>
+      <button class="secondary" @click="orders">查看订单记录</button>
+    </template>
+    <button v-if="!session.authenticated && view != 'account'" class="primary" @click="login">登录公司账号</button>
+  </view></scroll-view>
+</template>
+<script setup lang="uts">
+import { session, hasPermission } from '../../services/session.uts'
+import { logoutCompany } from '../../services/auth.uts'
+import { requestApi } from '../../services/api.uts'
+import { loadDrafts, commerce, CartDraft } from '../../services/commerce.uts'
+import { loadLocalVisits, visitDraftCount, hasActiveVisitRecording, visitToday } from '../../services/visits.uts'
+const view = ref('account')
+const monthOffset = ref(0)
+const dateLabel = ref('')
+const total = ref('—')
+const effective = ref('—')
+const message = ref('')
+let requestNumber = 0
+const localVisitCount = computed((): number => visitDraftCount())
+const localCartCount = computed((): number => session.authenticated ? commerce.drafts.filter((draft: CartDraft): boolean => draft.lines.length > 0).length : 0)
+function login(): void { uni.navigateTo({ url: '/pages/login/login' }) }
+function deviceCheck(): void { uni.navigateTo({ url: '/pages/device-check/device-check' }) }
+function uploads(): void { uni.navigateTo({ url: '/pages/visit/visit?view=uploads' }) }
+function cartDrafts(): void { uni.switchTab({ url: '/pages/customers/customers' }) }
+function orders(): void { uni.switchTab({ url: '/pages/orders/orders' }) }
+function visits(): void { uni.switchTab({ url: '/pages/visits/visits' }) }
+function commission(): void { uni.navigateTo({ url: '/pages/work/work?view=commission' }) }
+function logout(): void {
+  if (hasActiveVisitRecording()) { uni.showToast({ title: '请先停止并保存当前录音再退出登录', icon: 'none' }); return }
+  logoutCompany(); loadDrafts(); loadLocalVisits(); uni.switchTab({ url: '/pages/home/home' })
+}
+function loadPerformance(): void {
+  const revision = ++requestNumber
+  const today = visitToday()
+  const year = parseInt(today.substring(0, 4)); const month = parseInt(today.substring(5, 7))
+  let targetYear = year; let targetMonth = month + monthOffset.value
+  if (targetMonth < 1) { targetMonth = 12; targetYear -= 1 }
+  const prefix = targetYear.toString() + '-' + targetMonth.toString().padStart(2, '0')
+  const lastDay = new Date(targetYear, targetMonth, 0).getDate()
+  const from = prefix + '-01'; const to = monthOffset.value == 0 ? today : prefix + '-' + lastDay.toString().padStart(2, '0')
+  dateLabel.value = from + ' 至 ' + to; total.value = '—'; effective.value = '—'; message.value = ''
+  if (!session.authenticated) return
+  if (!hasPermission('sales:visit:own:read')) { message.value = '当前账号没有拜访统计权限'; return }
+  requestApi('/sales/me/activity-summary?from=' + from + '&to=' + to, 'GET', null, (response) => {
+    if (revision != requestNumber) return
+    const data = response.getJSON('data')
+    total.value = data?.getNumber('totalVisitCount')?.toString() ?? '—'
+    effective.value = data?.getNumber('effectiveVisitCount')?.toString() ?? '—'
+  }, (error) => { if (revision == requestNumber) message.value = error })
+}
+function setPeriod(value: number): void { monthOffset.value = value; loadPerformance() }
+onLoad((options) => {
+  view.value = options['view'] ?? 'account'
+  const titles: UTSJSONObject = { account: '账号与设置', performance: '目标与业绩', commission: '我的提成', messages: '消息与待办', cashflow: '到账明细' }
+  uni.setNavigationBarTitle({ title: titles.getString(view.value) ?? '工作台' })
+})
+onShow(() => { loadDrafts(); loadLocalVisits(); if (view.value == 'performance') loadPerformance() })
+</script>
+<style>
+.intro { margin-top: 12px; margin-bottom: 23px; }
+.account-name { margin-top: 8px; }
+.entry { flex-direction: row; align-items: center; padding: 22px 0; border-bottom-width: 1px; border-bottom-color: #ededea; }
+.entry-icon { width: 25px; height: 25px; margin-right: 12px; }
+.chevron { color: #a5a6a5; font-size: 23px; margin-left: 8px; }
+.period-row { flex-direction: row; background-color: #f4f3ef; border-radius: 5px; margin-top: 24px; margin-bottom: 16px; padding: 4px; }
+.period { flex: 1; color: #72777c; text-align: center; padding: 11px; border-radius: 4px; font-size: 14px; }
+.selected { background-color: #ffffff; color: #b74f2b; }
+.performance-card { background-color: #f9f0e6; padding: 22px; border-radius: 8px; margin-top: 19px; }
+.big-number { color: #9c492a; font-size: 43px; font-weight: bold; line-height: 69px; }
+.metric-row { flex-direction: row; margin-top: 17px; }
+.metric { flex: 1; padding: 18px; background-color: #f8f7f4; border-radius: 6px; margin-right: 8px; }
+.metric-value { color: #21252b; font-size: 25px; font-weight: bold; margin-top: 9px; }
+.section-label { font-size: 18px; color: #21252b; margin-top: 26px; font-weight: bold; }
+</style>

@@ -1,98 +1,97 @@
 <template>
   <scroll-view class="page" direction="vertical">
     <view class="content">
-      <view class="brand-row">
-        <view class="brand"><text class="brand-letter">R</text></view>
-        <view class="brand-copy">
-          <text class="brand-name">RIGOUR</text>
-          <text class="brand-detail">瑞盖销售工作台</text>
-        </view>
-        <text class="version">内部开发版</text>
+      <view class="row-between brand-row">
+        <view class="row"><image class="brand-logo" src="/static/sales/logo.png" mode="aspectFit"/><text class="brand-name">瑞盖 · 销售工作台</text></view>
+        <text class="avatar" @click="profile">{{ initial }}</text>
       </view>
-
-      <text class="heading">开始今天的拜访</text>
-      <text class="intro">找到门店，记录沟通，完成现场打卡。</text>
-
-      <view class="visit-card">
-        <text class="card-label">拜访打卡</text>
-        <text class="card-heading">每一次到店，都有记录</text>
-        <text class="card-description">门店位置、现场照片与沟通录音，汇集到同一条拜访记录。</text>
-        <view class="flow">
-          <text class="flow-text">01 选择门店</text>
-          <text class="flow-arrow">→</text>
-          <text class="flow-text">02 记录沟通</text>
-          <text class="flow-arrow">→</text>
-          <text class="flow-text">03 拍照打卡</text>
-        </view>
-        <view class="pending-action"><text class="pending-action-text">平台登录接入后开放拜访</text></view>
+      <text class="fine">{{ today }}</text>
+      <view class="row-between title-row"><text class="h1">我的业务</text><text class="period">本月</text></view>
+      <view class="metrics">
+        <view class="metric" @click="openWork('performance')"><text class="muted">本月订单金额</text><text class="amount">—</text><text class="fine">{{ session.authenticated ? '统计服务待接入' : '登录后查看业务' }}</text></view>
+        <view class="metric" @click="openWork('cashflow')"><text class="muted">本月已确认到账</text><text class="amount">—</text><text class="fine">以财务确认结果为准</text></view>
       </view>
-
-      <view class="notice">
-        <view class="notice-dot"></view>
-        <text class="notice-text">当前为基础工程验证版，尚未连接业务账号，不会生成正式打卡。</text>
+      <view class="actions">
+        <view class="action" @click="startVisit"><image class="action-icon" src="/static/tabs/visit-active.png"/><text class="action-label">{{ recording ? '继续拜访' : '开始拜访' }}</text><text class="arrow">›</text></view>
+        <view class="action action-last" @click="products"><image class="action-icon" src="/static/tabs/product-active.png"/><text class="action-label">查商品</text><text class="arrow">›</text></view>
       </view>
-
-      <view class="section-heading">
-        <text class="section-title">设备准备</text>
-        <text class="section-caption">首轮内部验证</text>
+      <view v-if="!session.authenticated" class="login-card">
+        <text class="badge">公司统一账号</text><text class="login-title">把今天的工作，放在一起</text><text class="body">客户、订单与拜访，使用供应链系统账号登录。</text>
+        <button class="primary" @click="login">登录工作台</button>
       </view>
-      <view class="device-card">
-        <text class="device-title">先检查定位和录音</text>
-        <text class="device-description">在手机上检查定位、录音保存和回放。测试录音只保存在当前设备。</text>
-        <button class="primary" @click="openDeviceCheck">打开设备检查</button>
+      <view v-if="session.authenticated && draftCount > 0" class="login-card">
+        <text class="badge">未完成订单</text><text class="login-title">{{ draftName }}</text><text class="body">{{ draftCount }} 份本机购物草稿，尚未提交</text><button class="primary" @click="openDraft">继续完善订单</button>
       </view>
-      <text class="footer">{{ runtimeLabel }}</text>
+      <view class="section">
+        <view class="row-between"><text class="h2">需要你跟进</text><text class="link" @click="openWork('messages')">查看全部 ›</text></view>
+        <view class="task-row" @click="uploads"><image class="task-icon" src="/static/tabs/upload.png"/><view class="grow"><text class="h3">拜访草稿</text><text class="muted">{{ visitCount > 0 ? visitCount.toString() + ' 份保存在本机，尚未提交' : '继续完善现场记录与附件' }}</text></view><text class="arrow">›</text></view>
+        <view class="task-row" @click="openPlan"><image class="task-icon" src="/static/tabs/calendar.png"/><view class="grow"><text class="h3">拜访计划</text><text class="muted">查看公司分配的拜访安排</text></view><text class="arrow">›</text></view>
+      </view>
+      <view class="summary" @click="visits"><text class="muted">本月拜访</text><text class="summary-count">{{ visitsTotal }}</text><text class="fine">{{ summaryHint }}</text></view>
+      <view class="task-row" @click="openWork('performance')"><image class="task-icon" src="/static/tabs/chart.png"/><view class="grow"><text class="h3">我的业绩与提成</text><text class="muted">查看工作成果与结算进度</text></view><text class="arrow">›</text></view>
     </view>
   </scroll-view>
 </template>
-
 <script setup lang="uts">
-const runtimeLabel = ref('浏览器预览 · 原生定位与录音需安装测试包验证')
-// #ifdef APP-ANDROID
-runtimeLabel.value = 'Android · 原生能力验证版'
-// #endif
-// #ifdef APP-IOS
-runtimeLabel.value = 'iOS · 原生能力验证版'
-// #endif
-// #ifdef APP-HARMONY
-runtimeLabel.value = 'HarmonyOS · 原生能力验证版'
-// #endif
-
-function openDeviceCheck(): void {
-  uni.navigateTo({ url: '/pages/device-check/device-check' })
+import { session, hasPermission } from '../../services/session.uts'
+import { requestApi } from '../../services/api.uts'
+import { commerce, loadDrafts, CartDraft } from '../../services/commerce.uts'
+import { loadLocalVisits, visitDraftCount, hasActiveVisitRecording, resumeVisitPath, visitToday } from '../../services/visits.uts'
+const today = ref(visitToday())
+const visitsTotal = ref('—')
+const summaryHint = ref('登录后查看本人拜访记录')
+const initial = computed((): string => session.displayName.length > 0 ? session.displayName.substring(0, 1) : '我')
+const drafts = computed((): CartDraft[] => session.authenticated ? commerce.drafts.filter((draft: CartDraft): boolean => draft.lines.length > 0) : [] as CartDraft[])
+const draftCount = computed((): number => drafts.value.length)
+const draftName = computed((): string => drafts.value.length > 0 ? drafts.value[0].customerName : '')
+const visitCount = computed((): number => visitDraftCount())
+const recording = computed((): boolean => hasActiveVisitRecording())
+function login(): void { uni.navigateTo({ url: '/pages/login/login' }) }
+function profile(): void { uni.switchTab({ url: '/pages/profile/profile' }) }
+function openDraft(): void {
+  if (drafts.value.length == 0) return
+  commerce.selectedCustomerId = drafts.value[0].customerId
+  uni.navigateTo({ url: '/pages/commerce/commerce?view=cart' })
 }
+function visits(): void { uni.switchTab({ url: '/pages/visits/visits' }) }
+function products(): void { uni.navigateTo({ url: '/pages/commerce/commerce?view=products' }) }
+function uploads(): void { uni.navigateTo({ url: '/pages/visit/visit?view=uploads' }) }
+function openPlan(): void { uni.navigateTo({ url: '/pages/visit/visit?view=plan' }) }
+function openWork(view: string): void { uni.navigateTo({ url: '/pages/work/work?view=' + view }) }
+function startVisit(): void { uni.navigateTo({ url: recording.value ? resumeVisitPath() : '/pages/visit/visit?view=select' }) }
+onShow(() => {
+  loadDrafts(); loadLocalVisits(); visitsTotal.value = '—'; today.value = visitToday()
+  summaryHint.value = session.authenticated ? '当前账号暂无拜访统计权限' : '登录后查看本人拜访记录'
+  if (!hasPermission('sales:visit:own:read')) return
+  summaryHint.value = '正在加载…'
+  requestApi('/sales/me/activity-summary?from=' + today.value.substring(0, 7) + '-01&to=' + today.value, 'GET', null, (response) => {
+    const data = response.getJSON('data')
+    const count = data?.getNumber('totalVisitCount')
+    visitsTotal.value = count == null ? '—' : count.toString()
+    summaryHint.value = count == null ? '统计暂不可用' : '按北京时间统计 · 点击查看明细'
+  }, (message) => { summaryHint.value = message })
+})
 </script>
-
 <style>
-.page { flex: 1; background-color: #f3f5f9; }
-.content { padding: 24px; padding-bottom: 36px; }
-.brand-row { flex-direction: row; align-items: center; margin-bottom: 36px; }
-.brand { width: 42px; height: 42px; border-radius: 12px; background-color: #174bea; align-items: center; justify-content: center; }
-.brand-letter { color: #ffffff; font-size: 26px; font-weight: bold; }
-.brand-copy { margin-left: 12px; flex: 1; }
-.brand-name { color: #192c4d; font-size: 14px; font-weight: bold; }
-.brand-detail { color: #71809b; font-size: 11px; margin-top: 3px; }
-.version { color: #556885; font-size: 11px; background-color: #e7edf6; padding: 6px 9px; border-radius: 6px; }
-.heading { color: #17233a; font-size: 27px; font-weight: bold; margin-bottom: 9px; }
-.intro { color: #6f7c90; font-size: 14px; margin-bottom: 26px; }
-.visit-card { background-color: #174bea; border-radius: 18px; padding: 22px; }
-.card-label { color: #c2d1ff; font-size: 12px; margin-bottom: 18px; }
-.card-heading { color: #ffffff; font-size: 21px; font-weight: bold; margin-bottom: 12px; }
-.card-description { color: #d9e3ff; font-size: 13px; line-height: 22px; }
-.flow { flex-direction: row; align-items: center; justify-content: space-between; margin-top: 26px; margin-bottom: 24px; }
-.flow-text { color: #ffffff; font-size: 11px; }
-.flow-arrow { color: #adc3ff; font-size: 12px; }
-.pending-action { background-color: #e0e9ff; padding: 15px 10px; border-radius: 10px; align-items: center; }
-.pending-action-text { color: #2b4b9f; font-size: 13px; }
-.notice { flex-direction: row; padding: 16px 0; margin-bottom: 20px; }
-.notice-dot { width: 6px; height: 6px; border-radius: 3px; background-color: #d59e47; margin-top: 7px; margin-right: 8px; }
-.notice-text { flex: 1; color: #7b715f; font-size: 12px; line-height: 20px; }
-.section-heading { flex-direction: row; align-items: center; justify-content: space-between; margin-bottom: 14px; }
-.section-title { color: #17233a; font-size: 18px; font-weight: bold; }
-.section-caption { color: #7c889c; font-size: 12px; }
-.device-card { background-color: #ffffff; padding: 21px; border-radius: 16px; }
-.device-title { color: #25374f; font-size: 17px; font-weight: bold; margin-bottom: 10px; }
-.device-description { color: #738199; font-size: 13px; line-height: 22px; }
-.primary { background-color: #edf2ff; color: #174bea; border-radius: 10px; font-size: 15px; margin-top: 18px; }
-.footer { color: #8490a4; font-size: 11px; line-height: 18px; margin-top: 24px; text-align: center; }
+.brand-row { margin-bottom: 28px; }
+.brand-logo { width: 30px; height: 30px; margin-right: 9px; }
+.brand-name { font-size: 15px; color: #21252b; font-weight: bold; }
+.avatar { width: 34px; height: 34px; border-radius: 17px; background-color: #f0eee9; color: #71675f; text-align: center; line-height: 34px; font-size: 14px; }
+.title-row { margin-top: 6px; }
+.period { font-size: 12px; color: #72777c; padding: 7px 12px; background-color: #f6f5f2; border-radius: 4px; }
+.metrics { flex-direction: row; padding-top: 23px; padding-bottom: 26px; }
+.metric { flex: 1; }
+.amount { color: #21252b; font-size: 29px; font-weight: bold; line-height: 46px; }
+.actions { flex-direction: row; margin-bottom: 23px; }
+.action { flex: 1; background-color: #fff1e8; border-radius: 6px; padding: 17px 12px; flex-direction: row; align-items: center; }
+.action-last { margin-left: 12px; background-color: #f5f4f0; }
+.action-icon { width: 24px; height: 24px; margin-right: 9px; }
+.action-label { font-size: 15px; color: #373330; font-weight: bold; flex: 1; }
+.arrow { color: #a5a6a5; font-size: 23px; margin-left: 6px; }
+.login-card { border-radius: 8px; padding: 20px; background-color: #f8f7f4; align-items: stretch; }
+.login-title { color: #21252b; font-weight: bold; font-size: 20px; line-height: 30px; margin-top: 16px; margin-bottom: 9px; }
+.task-row { flex-direction: row; align-items: center; padding: 20px 0; border-bottom-width: 1px; border-bottom-color: #ededea; }
+.task-icon { width: 24px; height: 24px; margin-right: 13px; }
+.summary { background-color: #f8f7f4; padding: 18px; border-radius: 6px; margin-top: 20px; }
+.summary-count { font-size: 25px; line-height: 40px; color: #21252b; font-weight: bold; }
 </style>

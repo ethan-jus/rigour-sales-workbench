@@ -1,6 +1,6 @@
-# 三端销售 App · G0
+# 瑞盖销售工作台 · uni-app x
 
-这是 `rigour-sales-workbench` 的 uni-app x 迁移工程，面向 Android、iOS 和纯 HarmonyOS。当前交付为基础工程与原生能力检查入口，不能用于正式打卡。旧 `src/` 和临时打卡服务保持现状；真机验收通过后再替换旧移动端实现。
+这是 `rigour-sales-workbench` 的 uni-app x 迁移工程，面向 Android、iOS 和纯 HarmonyOS。当前实施了五个主导航与业务页面，真实接口客户端、本机购物与拜访草稿已落地；公司登录配置及写入接口仍需完成，不能用于正式下单或打卡。旧 `src/` 和临时打卡服务保持现状；真机验收通过后再替换旧移动端实现。
 
 ## 打开和查看效果
 
@@ -26,14 +26,18 @@ pnpm app:g0:web           # Web 开发预览，不发布
 pnpm app:g0:check:android # Android 仅编译，不上传/打包/安装
 pnpm app:g0:check:ios     # iOS 仅编译
 pnpm app:g0:check:harmony # HarmonyOS 本地编译并制作 HAP，不安装
-pnpm app:g0:test          # 本地 API 模拟状态测试，不是硬件验收
+pnpm app:g0:test          # 原生采集 API 模拟状态测试
+pnpm app:v1:test          # 登录、API、购物和拜访状态测试；不是硬件验收
 ```
 
 macOS 默认 CLI 路径为 `/Applications/HBuilderX.app/Contents/MacOS/cli`。其他安装位置通过 `HBUILDERX_CLI` 指定。首次运行会下载编译器插件；HBuilderX 部分发行功能要求先登录，命令退出码为 0 也不一定表示编译成功，必须检查控制台与生成物。
 
 ## 本轮实现
 
-- App 首页与设备检查页；首页没有伪造销售身份、统计或提交成功状态。
+- 暖白/橙色页面：工作台、客户、拜访、订单、我的五个 Tab，以及登录、商品、购物草稿、订单详情、拜访材料、业绩与设置等子页面。未知统计显示未提供，没有伪造身份或提交成功。
+- CRM/ERP/Order/Sales 只读接口按平台权限读取。报价、正式下单、收款提报、提成与打卡写入缺口见 [接口审查](../docs/app-v1-api-readiness.md)。
+- Android 系统浏览器 OAuth Code + PKCE 接入骨架；配置默认空。其他端安全登录仍待接入；Token 仅内存，未写普通本机存储。
+- 草稿按账号隔离：购物按客户分别保存，拜访照片复制到沙盒并可预览/移除；保存失败不回报提交成功。
 - 原生系统 WGS84 定位。回调接收时间与硬件采样时间明确区分；未知精度不是 0。
 - 原生录音启动、暂停、继续、停止；页面切入后台仅记录生命周期，不主动结束录音。
 - 停止后复制录音到 `USER_DATA_PATH/rigour-capture`，再写每段小型 JSON 索引。两步都成功才显示保存成功；不把整段音频读成 Base64。
@@ -45,7 +49,7 @@ macOS 默认 CLI 路径为 `/Applications/HBuilderX.app/Contents/MacOS/cli`。�
 - 两小时只是本轮录音测试参数，不代表已经连续录满两小时，也不是正式产品上限。
 - 当前停止后才持久保存，尚未实现录制中断电/杀进程恢复、持久分段日志、断点续传或服务器回执。不能因此宣称长录音已经可靠。
 - 浏览器预览、API 模拟测试、模拟器录音都不能替代三种手机的后台/锁屏/来电真机实验。
-- 平台登录、三端安全 Token 存储、地图/地址、200 米服务端规则、拍照、正式打卡及上传尚未接入。本轮没有访问生产 API。
+- 真实平台登录联调、三端安全 Token 存储、地图/地址、200 米服务端规则、正式打卡及上传尚未完成。本轮没有访问生产 API。
 - 后台管理继续属于平台 Sales 模块，App 不自行维护权限和业务状态机。
 
 精确平台合同见 [app-g0-platform-contract.md](../docs/app-g0-platform-contract.md)。G0 验证记录见 [app-g0-validation.md](../docs/app-g0-validation.md)。

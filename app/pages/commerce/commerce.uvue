@@ -1,0 +1,213 @@
+<template>
+  <scroll-view class="page" direction="vertical"><view class="content">
+    <view v-if="!session.authenticated" class="empty"><text class="empty-icon">R</text><text class="title">登录后继续工作</text><text class="muted centered">使用供应链系统账号查看业务数据。</text><button class="primary" @click="login">使用平台账号登录</button></view>
+    <view v-else-if="loading" class="empty"><text class="muted">正在加载…</text></view>
+    <view v-else-if="error.length > 0" class="empty"><text class="title">暂时无法加载</text><text class="muted centered">{{ error }}</text><button class="secondary" @click="reload">重新加载</button></view>
+
+    <view v-else-if="view == 'customer'">
+      <view class="customer-hero"><view class="hero-avatar"><text class="hero-letter">客</text></view><text class="tiny-tag">{{ customer.status == 'ACTIVE' ? '启用客户' : customer.status == 'INACTIVE' ? '已停用' : '客户档案' }}</text><text class="hero-name">{{ customer.name }}</text><text class="muted centered">{{ customer.address.length > 0 ? customer.address : '地址待完善' }}</text></view>
+      <button class="primary" :disabled="customer.id.length == 0 || customer.status == 'INACTIVE'" @click="startOrder">为客户下单</button>
+      <view class="section"><text class="section-title">联系信息</text><view class="info-row"><text class="label">联系人</text><text class="value">{{ customer.contact.length > 0 ? customer.contact : '未填写' }}</text></view><view class="info-row" @click="callCustomer"><text class="label">联系电话</text><text class="link">{{ customer.phone.length > 0 ? customer.phone : '未填写' }}</text></view><view class="info-row"><text class="label">客户地址</text><text class="value address-value">{{ customer.address.length > 0 ? customer.address : '未填写' }}</text></view></view>
+      <view class="section"><text class="section-title">业务跟进</text><view class="action-row" @click="customerOrders"><view><text class="row-title">客户订单</text><text class="muted">查看平台中的历史订单</text></view><text class="chevron">›</text></view><view class="action-row" @click="goVisits"><view><text class="row-title">拜访打卡</text><text class="muted">前往拜访，选择现场门店</text></view><text class="chevron">›</text></view></view>
+    </view>
+
+    <view v-else-if="view == 'products'">
+      <view class="heading-row"><text class="title">商品</text><text class="link" @click="open('cart')">购物草稿 {{ cartCount > 0 ? '(' + cartCount.toString() + ')' : '' }}</text></view>
+      <view class="customer-context" @click="chooseCustomer"><text class="context-caption">下单客户</text><view class="row"><text class="context-name">{{ draft.customerId.length > 0 ? draft.customerName : '先选择客户' }}</text><text class="link">选择 ›</text></view></view>
+      <view class="search"><input class="search-input" v-model="query" placeholder="搜索商品名称" confirm-type="search" @confirm="searchProducts"/><button class="search-button" @click="searchProducts">搜索</button></view>
+      <text class="list-caption">商品参考价 · 下单价格待平台确认</text><text v-if="commerce.productsLoading" class="muted">正在加载商品…</text>
+      <view v-if="commerce.productsError.length > 0" class="notice"><text class="notice-copy">{{ commerce.productsError }}</text><button class="secondary" @click="searchProducts">重试</button></view>
+      <view v-for="item in commerce.products" :key="item.id" class="product-row"><view class="product-image-box" @click="openProduct(item)"><image v-if="item.imageUrl.length > 0" class="product-image" :src="item.imageUrl" mode="aspectFit" @error="hideBrokenImage(item)"/><text v-else class="no-image">暂无图片</text></view><view class="product-copy"><text class="product-name" @click="openProduct(item)">{{ item.name }}</text><text class="muted">{{ item.spec.length > 0 ? item.spec : item.sku }}</text><view class="product-bottom"><view><text class="price">{{ money(item.price) }}</text><text class="reference">参考价{{ item.unit.length > 0 ? ' / ' + item.unit : '' }}</text></view><button class="add" @click="add(item)">＋</button></view></view></view>
+      <view v-if="!commerce.productsLoading && commerce.productsError.length == 0 && commerce.products.length == 0" class="empty"><text class="empty-icon">▢</text><text class="row-title">暂无匹配商品</text><text class="muted centered">调整名称搜索，或检查平台商品权限。</text></view>
+      <button v-if="commerce.products.length < commerce.productsTotal" class="secondary" :disabled="commerce.productsLoading" @click="moreProducts">{{ commerce.productsLoading ? '加载中…' : '加载更多商品' }}</button>
+      <button v-if="cartCount > 0" class="primary" @click="open('cart')">查看购物草稿 · {{ cartCount }} 件</button>
+    </view>
+
+    <view v-else-if="view == 'product'">
+      <view class="product-hero"><image v-if="product.imageUrl.length > 0" class="product-hero-image" :src="product.imageUrl" mode="aspectFit" @error="hideBrokenImage(product)"/><text v-else class="no-image">暂无商品图片</text></view>
+      <text class="hero-product-name">{{ product.name.length > 0 ? product.name : '请从商品列表选择商品' }}</text><text class="price large-price">{{ money(product.price) }}</text><text class="reference">参考销售价，最终价格由平台确认</text>
+      <view class="section"><text class="section-title">商品信息</text><view class="info-row"><text class="label">商品编号</text><text class="value">{{ product.sku }}</text></view><view class="info-row"><text class="label">规格</text><text class="value">{{ product.spec.length > 0 ? product.spec : '未填写' }}</text></view><view class="info-row"><text class="label">单位</text><text class="value">{{ product.unit.length > 0 ? product.unit : '未填写' }}</text></view></view>
+      <view class="quantity-row"><text class="row-title">数量</text><view class="quantity"><button class="quantity-button" :disabled="quantity <= 1" @click="quantity = Math.max(1, quantity - 1)">−</button><text class="quantity-value">{{ quantity }}</text><button class="quantity-button" @click="quantity = Math.min(9999, quantity + 1)">＋</button></view></view>
+      <button class="primary" :disabled="product.id.length == 0" @click="addDetail">加入购物草稿</button><button class="secondary" @click="open('cart')">查看购物草稿</button>
+    </view>
+
+    <view v-else-if="view == 'cart' || view == 'checkout'">
+      <text class="title">{{ view == 'cart' ? '购物草稿' : '确认订单信息' }}</text>
+      <view class="customer-context"><text class="context-caption">下单客户</text><view class="row"><text class="context-name">{{ draft.customerId.length > 0 ? draft.customerName : '尚未选择客户' }}</text><text class="link" @click="chooseCustomer">切换 ›</text></view></view>
+      <view v-if="draft.lines.length == 0" class="empty"><text class="empty-icon">▢</text><text class="row-title">还没有添加商品</text><text class="muted centered">每个客户的购物草稿独立保存。</text><button class="primary" @click="open('products')">去选商品</button></view>
+      <view v-for="line in draft.lines" :key="line.productId" class="cart-row"><view class="cart-line-head"><text class="product-name">{{ line.name }}</text><text v-if="view == 'cart'" class="remove" @click="remove(line)">移除</text></view><text class="muted">{{ line.spec }}{{ line.unit.length > 0 ? ' · ' + line.unit : '' }}</text><view class="product-bottom"><view><text class="price">{{ money(line.referencePrice) }}</text><text class="reference">参考单价</text></view><view v-if="view == 'cart'" class="quantity"><button class="quantity-button" :disabled="line.quantity <= 1" @click="changeQuantity(line.productId, -1)">−</button><text class="quantity-value">{{ line.quantity }}</text><button class="quantity-button" @click="changeQuantity(line.productId, 1)">＋</button></view><text v-else class="row-title">× {{ line.quantity }}</text></view></view>
+      <view v-if="draft.lines.length > 0">
+        <view v-if="view == 'checkout'" class="section"><text class="section-title">收货信息</text><text class="form-label">收货地址</text><textarea class="textarea" v-model="address" placeholder="填写完整收货地址与联系人" maxlength="500"/><text class="form-label">订单备注</text><textarea class="textarea" v-model="note" placeholder="选填，填写交付要求" maxlength="500"/></view>
+        <view class="info-row total-row"><text class="label">订单应付金额</text><text class="value">待正式报价</text></view>
+        <view class="notice"><text class="notice-copy">购物草稿仅保存在当前手机。正式报价与订单提交尚未开放，商品参考价不代表客户成交价。</text></view>
+        <button v-if="view == 'cart'" class="primary" @click="open('checkout')">下一步 · 完善收货信息</button>
+        <button v-else class="primary" @click="saveCurrentCheckout">保存本机草稿</button>
+        <button class="secondary" @click="open('products')">继续选购</button>
+      </view>
+    </view>
+
+    <view v-else-if="view == 'order-detail'">
+      <view class="order-status"><text class="tiny-tag">{{ orderStatus(order.status) }}</text><text class="title order-title">{{ order.customerName }}</text><text class="muted">{{ order.number }}</text></view>
+      <view class="section"><text class="section-title">订单信息</text><view class="info-row"><text class="label">下单时间（北京时间）</text><text class="value">{{ order.time }}</text></view><view class="info-row"><text class="label">出库状态</text><text class="value">{{ outboundStatus(order.outboundStatus) }}</text></view><view class="info-row"><text class="label">收款状态</text><text class="value">{{ paymentStatus(order.paymentStatus) }}</text></view></view>
+      <view class="section"><text class="section-title">商品明细 · {{ order.lines.length }} 项</text><view v-for="line in order.lines" :key="line.id" class="order-line"><view class="line-copy"><text class="row-title">{{ line.name }}</text><text class="muted">{{ line.spec }} × {{ line.quantity }} {{ line.unit }}</text></view><text class="line-amount">{{ money(line.amount) }}</text></view><view class="info-row"><text class="label">订单应付金额</text><text class="order-total">{{ money(order.total) }}</text></view></view>
+      <view class="section"><text class="section-title">订单回款</text><view class="info-row"><text class="label">已收款金额</text><text class="value">{{ money(order.paidAmount) }}</text></view><view class="info-row"><text class="label">未收款金额</text><text class="value">{{ money(order.unpaidAmount) }}</text></view><text class="reference">金额按平台订单回款口径展示。</text></view>
+      <view class="two-actions"><button class="secondary half" @click="open('returns')">退货售后</button><button class="primary half" @click="open('payment')">回款登记</button></view>
+    </view>
+
+    <view v-else-if="view == 'payment' || view == 'returns'">
+      <text class="title">{{ view == 'payment' ? '回款登记' : '退货售后' }}</text>
+      <view class="customer-context"><text class="context-caption">关联订单</text><text class="context-name">{{ order.customerName }}</text><text class="muted">{{ order.number }}</text></view>
+      <view class="info-row"><text class="label">订单应付金额</text><text class="value">{{ money(order.total) }}</text></view>
+      <view class="notice"><text class="notice-heading">{{ view == 'payment' ? '手机端回款登记尚未开放' : '手机端退货申请尚未开放' }}</text><text class="notice-copy">{{ view == 'payment' ? '请继续在供应链平台登记回款。提交凭证与财务确认到账会分开处理，当前不会修改订单已收金额。' : '请继续在供应链平台办理退货售后。当前不会创建退货单或扣减订单金额。' }}</text></view><button class="secondary" @click="open('order-detail')">返回订单详情</button>
+    </view>
+
+    <view v-else-if="view == 'result'" class="empty"><text class="saved-icon">✓</text><text class="title">购物草稿已保存</text><text class="muted centered">{{ draft.customerName }}的收货信息与商品已保存到本机，尚未生成正式订单。</text><button class="primary" @click="open('cart')">查看购物草稿</button><button class="secondary" @click="chooseCustomer">返回客户</button></view>
+  </view></scroll-view>
+</template>
+
+<script setup lang="uts">
+import { session, requireSession } from '../../services/session.uts'
+import { commerce, loadDrafts, loadProducts, loadCustomerDetail, loadOrderDetail, findCustomer, findProduct, findOrder, currentDraft, selectOrderCustomer, addToCart, cartQuantity, changeCartQuantity, removeCartLine, saveCheckout, formatMoney, orderStatusLabel, paymentStatusLabel, outboundStatusLabel } from '../../services/commerce.uts'
+import type { Customer, Product, SalesOrder, CartDraft, CartLine, OrderLine } from '../../services/commerce.uts'
+const view = ref('products')
+const id = ref('')
+const loading = ref(false)
+const error = ref('')
+const query = ref('')
+const quantity = ref(1)
+const address = ref('')
+const note = ref('')
+const customer = computed((): Customer => findCustomer(id.value) ?? { id: '', name: '', contact: '', phone: '', address: '', status: '' } as Customer)
+const product = computed((): Product => findProduct(id.value) ?? { id: '', name: '', sku: '', spec: '', unit: '', imageUrl: '', price: null, stock: null } as Product)
+const draft = computed((): CartDraft => currentDraft() ?? { customerId: '', customerName: '', address: '', note: '', lines: [] as CartLine[], updatedAt: 0 } as CartDraft)
+const order = computed((): SalesOrder => findOrder(id.value.length > 0 ? id.value : commerce.selectedOrderId) ?? { id: '', number: '', customerId: '', customerName: '', status: '', time: '', total: null, address: '', note: '', lines: [] as OrderLine[], paymentStatus: '', outboundStatus: '', paidAmount: null, unpaidAmount: null } as SalesOrder)
+const cartCount = computed((): number => cartQuantity())
+function setTitle(): void {
+  let title = '商品'
+  if (view.value == 'customer') title = '客户详情'
+  if (view.value == 'product') title = '商品详情'
+  if (view.value == 'cart') title = '购物草稿'
+  if (view.value == 'checkout') title = '确认订单信息'
+  if (view.value == 'order-detail') title = '订单详情'
+  if (view.value == 'payment') title = '回款登记'
+  if (view.value == 'returns') title = '退货售后'
+  if (view.value == 'result') title = '保存结果'
+  uni.setNavigationBarTitle({ title: title })
+}
+function login(): void { requireSession() }
+function reload(): void {
+  loadDrafts()
+  if (!session.authenticated) return
+  error.value = ''
+  if (view.value == 'products') loadProducts(query.value)
+  if (view.value == 'customer') { loading.value = true; loadCustomerDetail(id.value, (_customer: Customer) => { loading.value = false }, (message: string) => { loading.value = false; error.value = message }) }
+  if (view.value == 'order-detail') { loading.value = true; loadOrderDetail(id.value.length > 0 ? id.value : commerce.selectedOrderId, (_order: SalesOrder) => { loading.value = false }, (message: string) => { loading.value = false; error.value = message }) }
+  if (view.value == 'checkout') { address.value = draft.value.address; note.value = draft.value.note }
+}
+function open(destination: string, targetId: string = ''): void {
+  const orderPage = destination == 'order-detail' || destination == 'payment' || destination == 'returns'
+  const wantedId = targetId.length > 0 ? targetId : orderPage ? order.value.id : ''
+  const pages = getCurrentPages()
+  for (let index = pages.length - 2; index >= 0; index--) {
+    const page = pages[index]
+    if (page.route == 'pages/commerce/commerce' && page.options.getString('view') == destination && (wantedId.length == 0 || page.options.getString('id') == wantedId)) {
+      uni.navigateBack({ delta: pages.length - 1 - index })
+      return
+    }
+  }
+  const routeId = wantedId.length > 0 ? '&id=' + encodeURIComponent(wantedId) : ''
+  uni.navigateTo({ url: '/pages/commerce/commerce?view=' + destination + routeId })
+}
+
+function chooseCustomer(): void { uni.switchTab({ url: '/pages/customers/customers' }) }
+function startOrder(): void { if (customer.value.id.length == 0) return; if (selectOrderCustomer(customer.value)) open('products') }
+function callCustomer(): void { if (customer.value.phone.length > 0) uni.makePhoneCall({ phoneNumber: customer.value.phone }) }
+function customerOrders(): void { commerce.orderQuery = customer.value.name; uni.switchTab({ url: '/pages/orders/orders' }) }
+function goVisits(): void { uni.switchTab({ url: '/pages/visits/visits' }) }
+function hideBrokenImage(item: Product): void { item.imageUrl = '' }
+function searchProducts(): void { loadProducts(query.value.trim()) }
+function moreProducts(): void { loadProducts(query.value.trim(), true) }
+function openProduct(item: Product): void { open('product', item.id) }
+function add(item: Product): void { if (draft.value.customerId.length == 0) { chooseCustomer(); return }; addToCart(item, 1) }
+function addDetail(): void { if (draft.value.customerId.length == 0) { chooseCustomer(); return }; addToCart(product.value, quantity.value) }
+function remove(line: CartLine): void { uni.showModal({ title: '移除商品', content: '从该客户的购物草稿中移除“' + line.name + '”？', success: (result) => { if (result.confirm) removeCartLine(line.productId) } }) }
+function saveCurrentCheckout(): void { if (saveCheckout(address.value, note.value)) open('result') }
+function money(value: number | null): string { return formatMoney(value) }
+function changeQuantity(productId: string, delta: number): void { changeCartQuantity(productId, delta) }
+function orderStatus(value: string): string { return orderStatusLabel(value) }
+function paymentStatus(value: string): string { return paymentStatusLabel(value) }
+function outboundStatus(value: string): string { return outboundStatusLabel(value) }
+onLoad((options) => { view.value = options['view'] ?? 'products'; id.value = options['id'] ?? ''; if (view.value == 'order-detail' && id.value.length > 0) commerce.selectedOrderId = id.value; setTitle() })
+onShow(() => { reload() })
+</script>
+<style>
+.page { flex: 1; background-color: #fffdf9; }
+.content { padding: 22px; padding-bottom: 38px; }
+.title { color: #21252b; font-size: 26px; line-height: 34px; font-weight: bold; margin-bottom: 8px; }
+.heading-row { flex-direction: row; align-items: center; justify-content: space-between; }
+.row { flex-direction: row; align-items: center; justify-content: space-between; }
+.muted { color: #85868b; font-size: 12px; line-height: 20px; margin-top: 5px; }
+.centered { text-align: center; }
+.link { color: #e56335; font-size: 13px; line-height: 22px; }
+.primary { background-color: #e56335; color: #ffffff; border-radius: 9px; font-size: 15px; margin: 18px 0 0 0; width: 100%; }
+.secondary { background-color: #f1eee8; color: #5c5c5c; border-radius: 9px; font-size: 14px; margin: 14px 0 0 0; width: 100%; }
+.empty { align-items: center; padding-top: 52px; padding-bottom: 40px; }
+.empty-icon { color: #cebea8; font-size: 42px; margin-bottom: 22px; }
+.saved-icon { color: #39795e; font-size: 46px; margin-bottom: 22px; }
+.customer-hero { align-items: center; padding-top: 14px; margin-bottom: 28px; }
+.hero-avatar { width: 68px; height: 68px; border-radius: 18px; background-color: #f2eae0; align-items: center; justify-content: center; margin-bottom: 18px; }
+.hero-letter { color: #8b7661; font-size: 25px; }
+.tiny-tag { color: #ae663a; background-color: #f8eddf; padding: 5px 9px; border-radius: 5px; font-size: 11px; align-self: flex-start; }
+.hero-name { font-size: 24px; color: #21252b; font-weight: bold; line-height: 34px; text-align: center; margin-top: 12px; margin-bottom: 5px; }
+.section { padding-top: 24px; padding-bottom: 8px; margin-top: 18px; border-top-width: 1px; border-top-color: #ecebe7; }
+.section-title { font-size: 17px; font-weight: bold; color: #21252b; margin-bottom: 16px; }
+.info-row { flex-direction: row; align-items: center; justify-content: space-between; padding-top: 13px; padding-bottom: 13px; }
+.label { color: #85868b; font-size: 13px; margin-right: 15px; }
+.value { color: #34373d; font-size: 13px; line-height: 21px; text-align: right; }
+.address-value { flex: 1; }
+.action-row { flex-direction: row; justify-content: space-between; align-items: center; padding-top: 15px; padding-bottom: 15px; }
+.row-title { color: #34373d; font-size: 15px; line-height: 23px; font-weight: bold; }
+.chevron { color: #a0a1a4; font-size: 24px; margin-left: 12px; }
+.customer-context { padding: 16px; background-color: #f4f0e8; border-radius: 10px; margin-top: 16px; margin-bottom: 22px; }
+.context-caption { color: #999188; font-size: 11px; margin-bottom: 7px; }
+.context-name { flex: 1; font-size: 15px; line-height: 23px; color: #34373d; font-weight: bold; margin-right: 10px; }
+.search { flex-direction: row; background-color: #f3f2ee; border-radius: 10px; padding: 6px; align-items: center; }
+.search-input { flex: 1; font-size: 14px; height: 40px; padding-left: 8px; color: #21252b; }
+.search-button { color: #ffffff; background-color: #e56335; font-size: 13px; margin: 0; width: 62px; height: 38px; line-height: 38px; border-radius: 7px; }
+.list-caption { color: #9a9894; font-size: 11px; margin-top: 19px; margin-bottom: 6px; }
+.product-row { flex-direction: row; padding-top: 21px; padding-bottom: 21px; border-bottom-width: 1px; border-bottom-color: #ecebe7; }
+.product-image-box { width: 88px; height: 92px; background-color: #f2f0ec; border-radius: 10px; align-items: center; justify-content: center; margin-right: 15px; }
+.product-image { width: 88px; height: 92px; border-radius: 10px; }
+.no-image { color: #aaa6a0; font-size: 11px; }
+.product-copy { flex: 1; }
+.product-name { color: #34373d; font-size: 15px; line-height: 23px; font-weight: bold; flex: 1; }
+.product-bottom { flex-direction: row; align-items: center; justify-content: space-between; margin-top: 14px; }
+.price { color: #d56336; font-size: 18px; font-weight: bold; }
+.reference { color: #9b9891; font-size: 10px; line-height: 17px; margin-top: 4px; }
+.add { background-color: #e56335; color: #ffffff; font-size: 22px; width: 33px; height: 33px; line-height: 30px; margin: 0; border-radius: 8px; padding: 0; }
+.product-hero { height: 255px; background-color: #f3f1ec; border-radius: 12px; align-items: center; justify-content: center; margin-bottom: 24px; }
+.product-hero-image { width: 100%; height: 255px; }
+.hero-product-name { color: #21252b; font-size: 24px; font-weight: bold; line-height: 34px; margin-bottom: 17px; }
+.large-price { font-size: 27px; }
+.quantity-row { flex-direction: row; align-items: center; justify-content: space-between; padding-top: 24px; padding-bottom: 12px; }
+.quantity { flex-direction: row; align-items: center; border-radius: 7px; background-color: #f0eee9; }
+.quantity-button { font-size: 20px; color: #5b5d60; background-color: #f0eee9; width: 34px; height: 34px; line-height: 30px; margin: 0; padding: 0; border-radius: 7px; }
+.quantity-value { color: #21252b; font-size: 14px; min-width: 38px; text-align: center; }
+.cart-row { padding-top: 20px; padding-bottom: 20px; border-bottom-width: 1px; border-bottom-color: #ecebe7; }
+.cart-line-head { flex-direction: row; align-items: center; }
+.remove { color: #97918a; font-size: 12px; margin-left: 12px; padding: 6px; }
+.form-label { color: #595b60; font-size: 13px; margin-bottom: 11px; margin-top: 13px; }
+.textarea { width: 100%; height: 92px; background-color: #f5f2ee; border-radius: 8px; font-size: 13px; color: #34373d; padding: 13px; }
+.total-row { margin-top: 18px; }
+.notice { background-color: #faf0e3; padding: 15px; border-radius: 9px; margin-top: 16px; }
+.notice-heading { color: #8f6135; font-size: 15px; font-weight: bold; margin-bottom: 10px; }
+.notice-copy { color: #967654; font-size: 12px; line-height: 21px; }
+.order-status { padding-top: 6px; margin-bottom: 24px; }
+.order-title { margin-top: 16px; font-size: 23px; }
+.order-line { flex-direction: row; align-items: center; justify-content: space-between; padding-top: 15px; padding-bottom: 15px; border-bottom-width: 1px; border-bottom-color: #efede8; }
+.line-copy { flex: 1; margin-right: 12px; }
+.line-amount { color: #34373d; font-size: 14px; font-weight: bold; }
+.order-total { color: #21252b; font-size: 22px; font-weight: bold; }
+.two-actions { flex-direction: row; }
+.half { flex: 1; margin-left: 5px; margin-right: 5px; }
+</style>

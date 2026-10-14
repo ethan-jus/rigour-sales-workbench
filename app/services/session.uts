@@ -1,0 +1,43 @@
+import { reactive } from 'vue'
+
+export type SessionState = {
+  authenticated: boolean,
+  displayName: string,
+  username: string,
+  userId: string,
+  tenantId: string,
+  permissions: string[],
+  accessToken: string,
+  expiresAt: number,
+  revision: number
+}
+
+// Access tokens remain in memory until platform secure storage is verified.
+// Never copy a production session into ordinary uni storage or diagnostics.
+export const session = reactive({
+  authenticated: false, displayName: '', username: '', userId: '', tenantId: '',
+  permissions: [] as string[], accessToken: '', expiresAt: 0, revision: 0
+} as SessionState)
+
+export function clearSession(): void {
+  session.revision += 1
+  session.authenticated = false
+  session.displayName = ''
+  session.username = ''
+  session.userId = ''
+  session.tenantId = ''
+  session.permissions = [] as string[]
+  session.accessToken = ''
+  session.expiresAt = 0
+}
+
+export function hasPermission(permission: string): boolean {
+  return session.authenticated && session.permissions.includes(permission)
+}
+
+export function requireSession(): boolean {
+  if (session.authenticated && session.expiresAt > Date.now()) return true
+  if (session.authenticated) clearSession()
+  uni.navigateTo({ url: '/pages/login/login' })
+  return false
+}

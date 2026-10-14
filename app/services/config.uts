@@ -1,0 +1,19 @@
+export type AppEnvironment = {
+  gatewayOrigin: string,
+  issuer: string,
+  clientId: string,
+  redirectUri: string
+}
+
+// Fill with a registered PUBLIC App client and reviewed environment before trial.
+// No passwords, client secrets or developer/administrator bearer tokens belong here.
+export const appEnvironment: AppEnvironment = {
+  gatewayOrigin: '',
+  issuer: '',
+  clientId: '',
+  redirectUri: 'com.rigour.workbench://auth/callback'
+}
+
+export function environmentReady(): boolean {
+  return appEnvironment.gatewayOrigin.startsWith('https://') && appEnvironment.issuer.startsWith('https://') && appEnvironment.clientId.length > 0
+}

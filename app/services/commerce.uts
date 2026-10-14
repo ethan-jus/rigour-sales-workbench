@@ -1,0 +1,303 @@
+import { reactive } from 'vue'
+import { session, hasPermission, requireSession, clearSession } from './session.uts'
+import { requestApi } from './api.uts'
+
+export type Customer = { id: string, name: string, contact: string, phone: string, address: string, status: string }
+export type Product = { id: string, name: string, sku: string, spec: string, unit: string, imageUrl: string, price: number | null, stock: number | null }
+export type OrderLine = { id: string, name: string, spec: string, unit: string, quantity: number, price: number | null, amount: number | null }
+export type SalesOrder = { paymentStatus: string, outboundStatus: string, paidAmount: number | null, unpaidAmount: number | null, id: string, number: string, customerId: string, customerName: string, status: string, time: string, total: number | null, address: string, note: string, lines: OrderLine[] }
+export type CartLine = { productId: string, name: string, spec: string, unit: string, quantity: number, imageUrl: string, referencePrice: number | null }
+export type CartDraft = { customerId: string, customerName: string, address: string, note: string, lines: CartLine[], updatedAt: number }
+
+export type CommerceState = {
+  customers: Customer[], products: Product[], orders: SalesOrder[],
+  customersLoading: boolean, productsLoading: boolean, ordersLoading: boolean,
+  customersError: string, productsError: string, ordersError: string,
+  customersTotal: number, productsTotal: number, ordersTotal: number,
+  customerQuery: string, productQuery: string, orderQuery: string,
+  drafts: CartDraft[], selectedCustomerId: string, selectedProductId: string, selectedOrderId: string, draftOwner: string
+}
+
+export const commerce = reactive({
+  customers: [] as Customer[], products: [] as Product[], orders: [] as SalesOrder[],
+  customersLoading: false, productsLoading: false, ordersLoading: false,
+  customersError: '', productsError: '', ordersError: '',
+  customersTotal: 0, productsTotal: 0, ordersTotal: 0,
+  customerQuery: '', productQuery: '', orderQuery: '',
+  drafts: [] as CartDraft[], selectedCustomerId: '', selectedProductId: '', selectedOrderId: '', draftOwner: ''
+} as CommerceState)
+
+export function formatMoney(value: number | null): string {
+  return value == null ? '待确认' : '¥' + value.toFixed(2)
+}
+export function displayTime(value: string): string {
+  if (value.length == 0) return ''
+  const hasZone = value.endsWith('Z') || value.lastIndexOf('+') > 9 || value.lastIndexOf('-') > 9
+  const timestamp = Date.parse(value)
+  if (!hasZone || !Number.isFinite(timestamp)) return value
+  const date = new Date(timestamp + 8 * 60 * 60 * 1000)
+  return date.getUTCFullYear().toString() + '-' + (date.getUTCMonth() + 1).toString().padStart(2, '0') + '-' + date.getUTCDate().toString().padStart(2, '0') + ' ' + date.getUTCHours().toString().padStart(2, '0') + ':' + date.getUTCMinutes().toString().padStart(2, '0') + ':' + date.getUTCSeconds().toString().padStart(2, '0')
+}
+export function findCustomer(id: string): Customer | null {
+  return commerce.customers.find((row: Customer): boolean => row.id == id) ?? null
+}
+export function findProduct(id: string): Product | null {
+  return commerce.products.find((row: Product): boolean => row.id == id) ?? null
+}
+export function findOrder(id: string): SalesOrder | null {
+  return commerce.orders.find((row: SalesOrder): boolean => row.id == id) ?? null
+}
+function ownerKey(): string { return session.tenantId + ':' + session.userId }
+function draftStorageKey(): string { return 'rigour-sales-cart:' + ownerKey() }
+export function loadDrafts(): void {
+  if (session.authenticated && session.expiresAt <= Date.now()) clearSession()
+  const owner = ownerKey()
+  if (commerce.draftOwner == owner) return
+  commerce.drafts = [] as CartDraft[]
+  commerce.customers = [] as Customer[]
+  commerce.products = [] as Product[]
+  commerce.orders = [] as SalesOrder[]
+  commerce.customersTotal = 0; commerce.productsTotal = 0; commerce.ordersTotal = 0
+  commerce.customerQuery = ''; commerce.productQuery = ''; commerce.orderQuery = ''
+  commerce.customersError = ''; commerce.productsError = ''; commerce.ordersError = ''
+  commerce.customersLoading = false; commerce.productsLoading = false; commerce.ordersLoading = false
+  commerce.selectedProductId = ''; commerce.selectedOrderId = ''
+  commerce.selectedCustomerId = ''
+  commerce.draftOwner = owner
+  if (!session.authenticated) return
+  const saved = uni.getStorageSync(draftStorageKey())
+  if (typeof saved != 'string' || saved.length == 0) return
+  try { commerce.drafts = JSON.parse<CartDraft[]>(saved) ?? [] as CartDraft[] } catch (error) { commerce.drafts = [] as CartDraft[] }
+}
+export function saveDrafts(): boolean {
+  if (!session.authenticated || session.expiresAt <= Date.now()) return false
+  try { uni.setStorageSync(draftStorageKey(), JSON.stringify(commerce.drafts)); return true }
+  catch (error) { uni.showToast({ title: '本机草稿保存失败，请检查存储空间', icon: 'none' }); return false }
+}
+export function selectOrderCustomer(customer: Customer): boolean {
+  if (!requireSession() || customer.id.length == 0 || customer.status == 'INACTIVE') return false
+  loadDrafts()
+  const previousId = commerce.selectedCustomerId
+  commerce.selectedCustomerId = customer.id
+  const draft = currentDraft()
+  if (draft != null) return true
+  commerce.drafts.push({ customerId: customer.id, customerName: customer.name, address: customer.address, note: '', lines: [] as CartLine[], updatedAt: Date.now() } as CartDraft)
+  if (saveDrafts()) return true
+  commerce.drafts.pop()
+  commerce.selectedCustomerId = previousId
+  return false
+}
+export function currentDraft(): CartDraft | null {
+  return commerce.drafts.find((draft: CartDraft): boolean => draft.customerId == commerce.selectedCustomerId) ?? null
+}
+export function addToCart(product: Product, quantity: number): boolean {
+  if (!requireSession()) return false
+  if (product.id.length == 0 || !Number.isFinite(quantity) || quantity < 1 || Math.floor(quantity) != quantity) return false
+  const draft = currentDraft()
+  if (draft == null) { uni.showToast({ title: '请先选择下单客户', icon: 'none' }); return false }
+  const line = draft.lines.find((row: CartLine): boolean => row.productId == product.id)
+  const previousQuantity = line?.quantity ?? 0
+  if (previousQuantity + quantity > 9999) { uni.showToast({ title: '单项商品数量最多为 9999', icon: 'none' }); return false }
+  const previousUpdate = draft.updatedAt
+  if (line == null) {
+    draft.lines.push({ productId: product.id, name: product.name, spec: product.spec, unit: product.unit, quantity: quantity, imageUrl: product.imageUrl, referencePrice: product.price } as CartLine)
+  } else { line.quantity += quantity }
+  draft.updatedAt = Date.now()
+  if (!saveDrafts()) {
+    if (line == null) draft.lines.pop()
+    else line.quantity = previousQuantity
+    draft.updatedAt = previousUpdate
+    return false
+  }
+  uni.showToast({ title: '已加入该客户的购物草稿', icon: 'none' })
+  return true
+}
+export function changeCartQuantity(productId: string, delta: number): void {
+  if (!requireSession() || !Number.isFinite(delta) || Math.floor(delta) != delta) return
+  const draft = currentDraft()
+  if (draft == null) return
+  const line = draft.lines.find((row: CartLine): boolean => row.productId == productId)
+  if (line == null) return
+  const previousQuantity = line.quantity
+  const previousUpdate = draft.updatedAt
+  line.quantity = Math.max(1, Math.min(9999, line.quantity + delta))
+  draft.updatedAt = Date.now()
+  if (!saveDrafts()) { line.quantity = previousQuantity; draft.updatedAt = previousUpdate }
+}
+export function removeCartLine(productId: string): void {
+  if (!requireSession()) return
+  const draft = currentDraft()
+  if (draft == null) return
+  const previousLines = draft.lines
+  const previousUpdate = draft.updatedAt
+  draft.lines = draft.lines.filter((row: CartLine): boolean => row.productId != productId)
+  draft.updatedAt = Date.now()
+  if (!saveDrafts()) { draft.lines = previousLines; draft.updatedAt = previousUpdate }
+}
+
+export function cartQuantity(): number {
+  const draft = currentDraft()
+  if (draft == null) return 0
+  let count = 0
+  draft.lines.forEach((row: CartLine) => { count += row.quantity })
+  return count
+}
+export function saveCheckout(address: string, note: string): boolean {
+  if (!requireSession()) return false
+  const draft = currentDraft()
+  if (draft == null) return false
+  const previousAddress = draft.address
+  const previousNote = draft.note
+  const previousUpdate = draft.updatedAt
+  draft.address = address.trim()
+  draft.note = note.trim()
+  draft.updatedAt = Date.now()
+  if (saveDrafts()) return true
+  draft.address = previousAddress
+  draft.note = previousNote
+  draft.updatedAt = previousUpdate
+  return false
+}
+
+// The platform read contracts are implemented below; no local totals are treated as a server quote.
+function textField(value: UTSJSONObject, key: string): string {
+  return value.getString(key) ?? value.getNumber(key)?.toString() ?? ''
+}
+function identifier(value: UTSJSONObject, key: string): string {
+  const text = value.getString(key)
+  if (text != null) return text
+  const number = value.getNumber(key)
+  if (number == null || !Number.isFinite(number) || number <= 0 || Math.floor(number) != number || number > 9007199254740991) return ''
+  return number.toString()
+}
+function parseCustomer(row: UTSJSONObject): Customer {
+  return { id: identifier(row, 'id'), name: textField(row, 'customerName'), contact: textField(row, 'contactName'), phone: textField(row, 'contactPhone'), address: textField(row, 'address').length > 0 ? textField(row, 'address') : textField(row, 'cityName') + textField(row, 'regionName'), status: textField(row, 'statusCode') } as Customer
+}
+function parseProduct(row: UTSJSONObject): Product {
+  return { id: identifier(row, 'id'), name: textField(row, 'productName'), sku: textField(row, 'productCode'), spec: textField(row, 'productSpecification'), unit: textField(row, 'unitCode'), imageUrl: textField(row, 'mainImageUrl'), price: row.getNumber('defaultSalePrice'), stock: null } as Product
+}
+function parseOrder(row: UTSJSONObject): SalesOrder {
+  const lines = [] as OrderLine[]
+  const rows = row.getArray<UTSJSONObject>('lines') ?? [] as UTSJSONObject[]
+  rows.forEach((line: UTSJSONObject) => {
+    lines.push({ id: identifier(line, 'id'), name: textField(line, 'productNameSnapshot'), spec: textField(line, 'specificationSnapshot'), unit: textField(line, 'unitCode'), quantity: line.getNumber('quantity') ?? 0, price: line.getNumber('unitPrice'), amount: line.getNumber('lineAmount') } as OrderLine)
+  })
+  return { paymentStatus: textField(row, 'paymentStatusCode'), outboundStatus: textField(row, 'outboundStatusCode'), paidAmount: row.getNumber('paidAmount'), unpaidAmount: row.getNumber('unpaidAmount'), id: identifier(row, 'id'), number: textField(row, 'orderNo'), customerId: identifier(row, 'customerId'), customerName: textField(row, 'customerNameSnapshot'), status: textField(row, 'orderStatusCode'), time: displayTime(textField(row, 'orderDate')), total: row.getNumber('payableAmount'), address: '', note: '', lines: lines } as SalesOrder
+}
+let customerRequest = 0
+let productRequest = 0
+let orderRequest = 0
+export function loadCustomers(query: string = '', append: boolean = false): void {
+  loadDrafts()
+  if (!session.authenticated) return
+  if (!hasPermission('crm:customer:read')) { commerce.customersError = '当前账号没有客户查看权限'; return }
+  const owner = ownerKey()
+  const revision = ++customerRequest
+  const begin = append ? commerce.customers.length : 0
+  commerce.customerQuery = query
+  commerce.customersLoading = true
+  commerce.customersError = ''
+  requestApi('/crm/internal-customers?begin=' + begin.toString() + '&step=20&customerName=' + encodeURIComponent(query), 'GET', null, (response: UTSJSONObject) => {
+    if (revision != customerRequest || owner != ownerKey() || !session.authenticated) return
+    const data = response.getJSON('data')
+    if (data == null) { commerce.customersLoading = false; commerce.customersError = '客户数据格式不正确，请稍后重试'; return }
+    const rows = data.getArray<UTSJSONObject>('items') ?? [] as UTSJSONObject[]
+    const items = rows.map((row: UTSJSONObject): Customer => parseCustomer(row))
+    if (items.some((item: Customer): boolean => item.id.length == 0)) { commerce.customersLoading = false; commerce.customersError = '记录编号无效或超出安全范围，请联系管理员'; return }
+    commerce.customers = append ? commerce.customers.concat(items) : items
+    commerce.customersTotal = data.getNumber('total') ?? items.length
+    commerce.customersLoading = false
+  }, (message: string) => { if (revision == customerRequest && owner == ownerKey() && session.authenticated) { commerce.customersLoading = false; commerce.customersError = message } })
+}
+export function loadProducts(query: string = '', append: boolean = false): void {
+  loadDrafts()
+  if (!session.authenticated) return
+  if (!hasPermission('erp:product:read')) { commerce.productsError = '当前账号没有商品查看权限'; return }
+  const owner = ownerKey()
+  const revision = ++productRequest
+  const begin = append ? commerce.products.length : 0
+  commerce.productQuery = query
+  commerce.productsLoading = true
+  commerce.productsError = ''
+  requestApi('/erp/product-management/products?begin=' + begin.toString() + '&step=20&withVariants=false&productName=' + encodeURIComponent(query), 'GET', null, (response: UTSJSONObject) => {
+    if (revision != productRequest || owner != ownerKey() || !session.authenticated) return
+    const data = response.getJSON('data')
+    if (data == null) { commerce.productsLoading = false; commerce.productsError = '商品数据格式不正确，请稍后重试'; return }
+    const rows = data.getArray<UTSJSONObject>('items') ?? [] as UTSJSONObject[]
+    const items = rows.map((row: UTSJSONObject): Product => parseProduct(row))
+    if (items.some((item: Product): boolean => item.id.length == 0)) { commerce.productsLoading = false; commerce.productsError = '记录编号无效或超出安全范围，请联系管理员'; return }
+    commerce.products = append ? commerce.products.concat(items) : items
+    commerce.productsTotal = data.getNumber('total') ?? items.length
+    commerce.productsLoading = false
+  }, (message: string) => { if (revision == productRequest && owner == ownerKey() && session.authenticated) { commerce.productsLoading = false; commerce.productsError = message } })
+}
+export function loadOrders(query: string = '', status: string = '', append: boolean = false): void {
+  loadDrafts()
+  if (!session.authenticated) return
+  if (!hasPermission('order:read')) { commerce.ordersError = '当前账号没有订单查看权限'; return }
+  const owner = ownerKey()
+  const revision = ++orderRequest
+  const begin = append ? commerce.orders.length : 0
+  commerce.orderQuery = query
+  commerce.ordersLoading = true
+  commerce.ordersError = ''
+  requestApi('/orders/sales?begin=' + begin.toString() + '&step=20&customerName=' + encodeURIComponent(query) + '&orderStatusCode=' + encodeURIComponent(status), 'GET', null, (response: UTSJSONObject) => {
+    if (revision != orderRequest || owner != ownerKey() || !session.authenticated) return
+    const data = response.getJSON('data')
+    if (data == null) { commerce.ordersLoading = false; commerce.ordersError = '订单数据格式不正确，请稍后重试'; return }
+    const rows = data.getArray<UTSJSONObject>('items') ?? [] as UTSJSONObject[]
+    const items = rows.map((row: UTSJSONObject): SalesOrder => parseOrder(row))
+    if (items.some((item: SalesOrder): boolean => item.id.length == 0)) { commerce.ordersLoading = false; commerce.ordersError = '记录编号无效或超出安全范围，请联系管理员'; return }
+    commerce.orders = append ? commerce.orders.concat(items) : items
+    commerce.ordersTotal = data.getNumber('total') ?? items.length
+    commerce.ordersLoading = false
+  }, (message: string) => { if (revision == orderRequest && owner == ownerKey() && session.authenticated) { commerce.ordersLoading = false; commerce.ordersError = message } })
+}
+export function loadOrderDetail(id: string, success: (order: SalesOrder) => void, fail: (message: string) => void): void {
+  const owner = ownerKey()
+  requestApi('/orders/sales/' + encodeURIComponent(id), 'GET', null, (response: UTSJSONObject) => {
+    if (owner != ownerKey() || !session.authenticated) { fail('登录状态已变化，请重新进入页面'); return }
+    const data = response.getJSON('data')
+    if (data == null) { fail('订单详情暂时不可用'); return }
+    const order = parseOrder(data)
+    if (order.id.length == 0) { fail('订单编号无效，无法打开详情'); return }
+    const index = commerce.orders.findIndex((item: SalesOrder): boolean => item.id == id)
+    if (index >= 0) commerce.orders[index] = order
+    else commerce.orders.push(order)
+    success(order)
+  }, fail)
+}
+export function loadCustomerDetail(id: string, success: (customer: Customer) => void, fail: (message: string) => void): void {
+  const owner = ownerKey()
+  requestApi('/crm/internal-customers/' + encodeURIComponent(id), 'GET', null, (response: UTSJSONObject) => {
+    if (owner != ownerKey() || !session.authenticated) { fail('登录状态已变化，请重新进入页面'); return }
+    const data = response.getJSON('data')
+    if (data == null) { fail('客户详情暂时不可用'); return }
+    const customer = parseCustomer(data)
+    if (customer.id.length == 0) { fail('客户编号无效，无法建立购物草稿'); return }
+    const index = commerce.customers.findIndex((item: Customer): boolean => item.id == id)
+    if (index >= 0) commerce.customers[index] = customer
+    else commerce.customers.push(customer)
+    success(customer)
+  }, fail)
+}
+export function orderStatusLabel(status: string): string {
+  if (status == 'DRAFT') return '草稿'
+  if (status == 'SUBMITTED') return '已提交'
+  if (status == 'COMPLETED') return '已完成'
+  if (status == 'CANCELLED') return '已取消'
+  return status.length == 0 ? '状态待更新' : status
+}
+export function paymentStatusLabel(status: string): string {
+  if (status == 'UNPAID') return '未收款'
+  if (status == 'PARTIAL_PAID') return '部分收款'
+  if (status == 'PAID') return '已收款'
+  if (status == 'CANCELLED') return '已取消'
+  return status.length == 0 ? '状态待更新' : status
+}
+export function outboundStatusLabel(status: string): string {
+  if (status == 'PENDING') return '待出库'
+  if (status == 'PARTIAL_OUT') return '部分出库'
+  if (status == 'OUT_CONFIRMED') return '已出库'
+  return status.length == 0 ? '状态待更新' : status
+}

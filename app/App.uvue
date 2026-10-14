@@ -1,10 +1,22 @@
 <script setup lang="uts">
-onLaunch(() => {
-  // G0 makes no production requests or automatic location/recording requests.
+// #ifdef APP
+import { handleAuthCallback } from './services/auth.uts'
+onLaunch((options) => {
+  if (options.appScheme != null) handleAuthCallback(options.appScheme!)
+  if (options.appLink != null) handleAuthCallback(options.appLink!)
 })
+onShow((options) => {
+  if (options.appScheme != null) handleAuthCallback(options.appScheme!)
+  if (options.appLink != null) handleAuthCallback(options.appLink!)
+})
+// #endif
+// #ifdef WEB
+onLaunch(() => {})
+// #endif
 </script>
 
 <style>
+@import "./styles/theme.css";
 /* #ifdef WEB */
 uni-page-body { min-height: 100%; }
 /* #endif */
