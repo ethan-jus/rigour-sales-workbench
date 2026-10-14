@@ -1,6 +1,6 @@
 # G0 鸿蒙工具链准备记录
 
-核查日期：2026-10-13。范围：官方来源核对、安装包下载校验、本机安装验证、HBuilderX 工具路径配置及编译入口检查；未接受许可、未完成 IDE 首次设置、未执行云打包。
+核查日期：2026-10-14（安装于 2026-10-13）。范围：官方来源核对、安装包下载校验、本机安装验证、HBuilderX 工具路径配置及编译入口检查；未代为接受许可、未执行云打包。
 
 ## 当前状态
 
@@ -31,7 +31,7 @@
 ## 后续安装与配置
 
 1. 下载、SHA-256 核验、安装和应用签名核验已完成。如后续出现许可、新授权或验证码，停在对应交互交由用户处理。
-2. 按[华为安装文档](https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/ide-software-install)处理首次启动、许可和 SDK 设置。安装完成后主任务尝试 HBuilderX 命令行编译，launcher 启动了 `devecostudio --version`，但尚无版本或编译回执；Mac 锁屏使 UI 状态无法核验，不能推断具体弹窗内容或宣称初始化完成。
+2. 按[华为安装文档](https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/ide-software-install)处理首次启动、许可和 SDK 设置。2026-10-14 用户解锁后，实际看到首次语言选择页，继续后到达《HUAWEI DevEco Studio 用户协议》与《HarmonyOS SDK 许可协议》的确认页；已请用户自行阅读并决定是否接受，尚未点击“同意”。可选统计共享不是必选项。
 3. 已从本机 HBuilderX `launcher/out/main.js` 确认配置键 `harmony.devTools.path`，通过 CLI 写入 `/Applications/DevEco-Studio.app` 并读回一致；无需猜测配置键。后续仍需检查实际构建、配套 SDK 和模拟器，不能仅凭路径配置宣称工具链就绪。
 4. 建立模拟器并运行本项目。真机调试另需华为账号对应的调试签名；发布包需要发布签名。模拟器成功不能替代真机定位和后台长录音验收。
 
@@ -52,8 +52,12 @@ DCloud 配套依据：[鸿蒙运行与发行](https://uniapp.dcloud.net.cn/tutor
 
 HBuilderX 当前 VDOM 模式选用 `launcher-harmony/base/project-x.zip`，其中最低兼容版本为 `5.0.1(13)`、模型版本为 `5.0.0`，未指定目标或编译 SDK。最低兼容 API 13 不表示必须另装 API 13 SDK；DevEco 所带 Hvigor / OHOS 插件为 6.26.8，launcher 依赖的 13 项工具路径均存在，实际构建兼容性仍待验证。
 
+### 首次启动导致的版本检查误报
+
+上次编译入口在 `devecostudio --version` 等待 300 秒后，输出“需要 DevEco Studio 升级到 5.1.0.849+”，并未生成鸿蒙构建。只读检查本机 launcher 发现：版本读取只接受 stdout 中以 `DevEco Studio ` 开头的行，无输出时保留 `unknown`；子进程无输出超时后，版本函数未检查失败状态，把 `unknown` 交给版本比较，结果小于最低版本。因此该提示不能证明实际安装版本过低。安装的 `Resources/product-info.json` 为 `26.0.0.851`，该字符串比较可通过。先完成首次启动，再检查真实 `--version` 输出并重试编译；没有修改或伪造版本，也未替换 IDE。
+
 ## 验收边界
 
 - 已完成：官方当前稳定版本与入口确认、本机条件核查、ARM64 安装包下载和官方 SHA-256 核验、安装到 Applications、架构与开发者签名及公证核验。
-- HBuilderX 的 DevEco 路径已配置并读回确认。未完成：首次启动许可确认、SDK/模拟器验证、鸿蒙编译、签名、真机运行。当前 Mac 锁屏，已请用户解锁后继续首次启动交互。
+- HBuilderX 的 DevEco 路径已配置并读回确认。未完成：首次启动许可确认、SDK/模拟器验证、鸿蒙编译、签名、真机运行。Mac 已解锁，目前等待用户处理实际协议页。
 - 临时打卡系统和平台后端未访问、未修改。本文件是本子任务唯一仓库改动。
