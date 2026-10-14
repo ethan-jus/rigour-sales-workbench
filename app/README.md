@@ -16,6 +16,8 @@
 
 本机 Xcode 27 使用 Device Hub；HBuilderX 5.26 普通模拟器入口仍使用旧名称，且标准基座架构与本机 iOS 26.5 不匹配。目前已用现有 iOS 17 模拟器显示原生首页，具体兼容路径及验收范围见 [验证记录](../docs/app-g0-validation.md#xcode-27-模拟器兼容性)。这不影响浏览器预览和目标编译，不需要重复处理 Xcode 许可。
 
+本机鸿蒙工具链已完成安装：DevEco Studio 26.0.0.851、API 26、HarmonyOS 7.0.0 手机模拟器 `RigourG0`。未签名 HAP 已在模拟器安装并实际显示原生首页，运行命令见 [鸿蒙工具链记录](../docs/app-g0-harmony-setup.md)。该产物用于本机验证，真机安装仍需签名及设备配置。
+
 在仓库根目录也可运行：
 
 ```bash
@@ -23,7 +25,7 @@ pnpm app:g0:open          # 打开 HBuilderX 并导入 app/
 pnpm app:g0:web           # Web 开发预览，不发布
 pnpm app:g0:check:android # Android 仅编译，不上传/打包/安装
 pnpm app:g0:check:ios     # iOS 仅编译
-pnpm app:g0:check:harmony # HarmonyOS 仅编译
+pnpm app:g0:check:harmony # HarmonyOS 本地编译并制作 HAP，不安装
 pnpm app:g0:test          # 本地 API 模拟状态测试，不是硬件验收
 ```
 

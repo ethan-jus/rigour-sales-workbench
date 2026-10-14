@@ -1,6 +1,8 @@
 # G0 鸿蒙工具链准备记录
 
-核查日期：2026-10-14（安装于 2026-10-13）。范围：官方来源核对、安装包下载校验、本机安装验证、HBuilderX 工具路径配置及编译入口检查；未代为接受许可、未执行云打包。
+核查日期：2026-10-14（安装于 2026-10-13）。范围：官方安装包下载校验、本机安装与配置、模拟器镜像安装、鸿蒙编译及模拟器安装启动。首次 IDE 许可由用户自行完成；模拟器《软件许可及服务协议》和 SDK 许可经用户明确授权后交互确认。未执行云打包或真机签名。
+
+**当前结果：HBuilderX 5.26 已用 DevEco Studio 26.0.0.851 编译生成 HAP，安装到 HarmonyOS 7.0.0 模拟器并启动，原生首页和设备检查页已截图核验。定位、录音交互和真机运行尚未验收。**
 
 ## 当前状态
 
@@ -23,21 +25,21 @@
 | 架构 | macOS ARM 或 X86 对应安装包 | `arm64`，应选 ARM64 |
 | macOS ARM 系统 | 12 / 13 / 14 / 15 / 26 | macOS 26.6.2 |
 | 内存 | 8 GB 及以上 | 16 GiB |
-| 硬盘 | 100 GB 及以上 | 数据卷剩余约 157 GiB；仅表示当前容量余量 |
+| 硬盘 | 100 GB 及以上 | 安装前数据卷剩余约 157 GiB；这是安装前快照，不是当前余量 |
 | 显示分辨率 | 1280 × 800 及以上 | 未读取，不声称已核验 |
 
 要求来源：[华为官网“系统要求”](https://developer.huawei.com/consumer/cn/deveco-studio/)。命令：`uname -m`、`sw_vers`、`sysctl -n hw.memsize`、`df -h /Users/ethan/.cache`。没有修改系统设置。
 
-## 后续安装与配置
+## 已完成的配置与运行
 
-1. 下载、SHA-256 核验、安装和应用签名核验已完成。如后续出现许可、新授权或验证码，停在对应交互交由用户处理。
-2. 按[华为安装文档](https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/ide-software-install)处理首次启动、许可和 SDK 设置。2026-10-14 用户解锁后，实际看到首次语言选择页，继续后到达《HUAWEI DevEco Studio 用户协议》与《HarmonyOS SDK 许可协议》的确认页；已请用户自行阅读并决定是否接受，尚未点击“同意”。可选统计共享不是必选项。
-3. 已从本机 HBuilderX `launcher/out/main.js` 确认配置键 `harmony.devTools.path`，通过 CLI 写入 `/Applications/DevEco-Studio.app` 并读回一致；无需猜测配置键。后续仍需检查实际构建、配套 SDK 和模拟器，不能仅凭路径配置宣称工具链就绪。
-4. 建立模拟器并运行本项目。真机调试另需华为账号对应的调试签名；发布包需要发布签名。模拟器成功不能替代真机定位和后台长录音验收。
+1. 按[华为安装文档](https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/ide-software-install)完成首次启动；用户自行完成 IDE 许可，随后明确授权并交互确认模拟器《软件许可及服务协议》和 SDK 许可。实际 `devecostudio --version` 输出 `DevEco Studio 26.0.0.851`，退出码为 0。
+2. 已从本机 HBuilderX `launcher/out/main.js` 确认配置键 `harmony.devTools.path`，通过 CLI 写入 `/Applications/DevEco-Studio.app` 并读回一致。正常重启此前仍误报版本的 HBuilderX 实例后，预检查通过，构建日志识别到 `26.0.0.851`。
+3. `Emulator -imageList` 实测当前最新 Release 镜像为 `HarmonyOS7.0.0(26.0.0)`，软件版本 `7.0.0.107`，下载包为 **2,313,181,590 字节**，已完成下载和安装。创建 `RigourG0` 手机模拟器，ARM64、4 GB 内存、6 GB 数据存储；实例配置确认 API `26.0.0`，hdc 实际目标为 `127.0.0.1:5555`。
+4. 通过项目编译脚本生成 HAP，再通过 HBuilderX 官方 `launch app-harmony` 安装和启动到上述模拟器。原生首页和设备检查页已实际显示。一次设备页预览后观察到系统桌面，日志显示页面返回和正常退后台、进程持续存活；未修改代码再次运行即成功显示设备页，没有将该现象认定为应用崩溃。
 
-DCloud 配套依据：[鸿蒙运行与发行](https://uniapp.dcloud.net.cn/tutorial/harmony/runbuild)。文档要求 HBuilderX 4.81 起 DevEco Studio 至少 5.1.0.849；本机 HBuilderX 为 5.26.2026091802。最新版 DevEco 与本项目 HBuilderX 的完整编译兼容性尚未实测，需以真实构建结果判定，不能只比较版本大小。
+DCloud 配套依据：[鸿蒙运行与发行](https://uniapp.dcloud.net.cn/tutorial/harmony/runbuild)。本机 HBuilderX 为 `5.26.2026091802`。这次真实构建验证了当前 G0 项目与所装 DevEco、SDK 的编译组合；不代表其他原生模块、真机签名或发布包已经验证。
 
-安装包自带的可核验路径（尚未运行这些工具）：
+安装与构建使用的工具路径：
 
 | 工具 | 实际路径 |
 | --- | --- |
@@ -48,16 +50,48 @@ DCloud 配套依据：[鸿蒙运行与发行](https://uniapp.dcloud.net.cn/tutor
 | 模拟器工具 | `/Applications/DevEco-Studio.app/Contents/tools/emulator` |
 | hdc | `/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/toolchains/hdc` |
 
-`Contents/sdk/default/sdk-pkg.json` 标记 `apiVersion: 26`、`platformVersion: 26.0.0`、`version: 26.0.0.105`、`releaseType: Release`。工具存在不等于 HBuilderX 与 SDK 已配置成功，也不等于已有模拟器镜像或真机签名。
+`Contents/sdk/default/sdk-pkg.json` 标记 `apiVersion: 26`、`platformVersion: 26.0.0`、`version: 26.0.0.105`、`releaseType: Release`。模拟器镜像与编译 SDK 分开存放：镜像位于 `/Users/ethan/Library/Huawei/Sdk/system-image/HarmonyOS-7.0.0/phone_all_arm/`，实例配置为 `/Users/ethan/.Huawei/Emulator/deployed/RigourG0/config.ini`。
 
-HBuilderX 当前 VDOM 模式选用 `launcher-harmony/base/project-x.zip`，其中最低兼容版本为 `5.0.1(13)`、模型版本为 `5.0.0`，未指定目标或编译 SDK。最低兼容 API 13 不表示必须另装 API 13 SDK；DevEco 所带 Hvigor / OHOS 插件为 6.26.8，launcher 依赖的 13 项工具路径均存在，实际构建兼容性仍待验证。
+HBuilderX 当前 VDOM 模式选用 `launcher-harmony/base/project-x.zip`，其中最低兼容版本为 `5.0.1(13)`、模型版本为 `5.0.0`，模板未指定目标或编译 SDK。最低兼容 API 13 不表示必须另装 API 13 SDK；DevEco 所带 Hvigor / OHOS 插件为 6.26.8，本次已用自带 SDK 完成实际构建。
 
 ### 首次启动导致的版本检查误报
 
-上次编译入口在 `devecostudio --version` 等待 300 秒后，输出“需要 DevEco Studio 升级到 5.1.0.849+”，并未生成鸿蒙构建。只读检查本机 launcher 发现：版本读取只接受 stdout 中以 `DevEco Studio ` 开头的行，无输出时保留 `unknown`；子进程无输出超时后，版本函数未检查失败状态，把 `unknown` 交给版本比较，结果小于最低版本。因此该提示不能证明实际安装版本过低。安装的 `Resources/product-info.json` 为 `26.0.0.851`，该字符串比较可通过。先完成首次启动，再检查真实 `--version` 输出并重试编译；没有修改或伪造版本，也未替换 IDE。
+首次编译在 `devecostudio --version` 等待 300 秒后，误报“需要 DevEco Studio 升级到 5.1.0.849+”。本机 launcher 在未读到版本时保留 `unknown`，未检查子进程失败状态便比较版本，导致该提示。完成首次启动后，独立 `--version` 已正常；旧 HBuilderX 实例仍误报，正常重启后预检查与编译均通过。没有修改或伪造版本，没有替换 IDE 或补丁修改工具源码。
+
+## 可复现命令与证据
+
+以下命令针对已经安装镜像、已经创建 `RigourG0` 的本机环境，按需逐条执行。已有模拟器运行时跳过启动命令，不重复创建实例。
+
+```sh
+# 查看模拟器和连接目标；需要时启动已有实例。
+/Applications/DevEco-Studio.app/Contents/tools/emulator/Emulator -list -details
+/Applications/DevEco-Studio.app/Contents/tools/emulator/Emulator -start RigourG0
+/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/toolchains/hdc list targets
+
+cd /Users/ethan/.codex/worktrees/rigour-sales-workbench-app-g0
+
+# 仅编译并生成运行包：脚本使用 --compile true，不负责安装启动。
+node scripts/app-g0.mjs app-harmony
+
+# 安装并启动到本次已验证的模拟器目标。
+/Applications/HBuilderX.app/Contents/MacOS/cli launch app-harmony --project /Users/ethan/.codex/worktrees/rigour-sales-workbench-app-g0/app --deviceId 127.0.0.1:5555
+```
+
+目标编号以 `hdc list targets` 的实际输出为准。运行包产物位于：
+
+```text
+app/unpackage/dist/dev/app-harmony/entry/build/default/outputs/default/entry-default-unsigned.hap
+```
+
+- `outputs/app-g0/harmony-after-restart-20261014.log`：页面编译成功、识别 DevEco `26.0.0.851`、工程依赖安装成功、运行包制作成功。首次构建产物为 **15,399,047 字节**；后续重编会覆盖该文件，大小是首次构建快照。
+- `outputs/app-g0/harmony-run-20261014.log`：记录 `.hap` 安装成功及运行成功。日志同时存在未配置签名证书提示、性能提示以及模拟器系统告警，不能表述为“零错误”或“全部功能通过”。
+- `outputs/app-g0/harmony-native-home.png`：实际运行后的原生首页截图，已查看核验。
+- `outputs/app-g0/harmony-device-check-retry-20261014.log` / `harmony-native-device-check.png`：在上述启动命令末尾增加 `--pagePath pages/device-check/device-check`，设备检查页实际渲染。截图中的定位和录音均未开始，不代表能力已通过。
+
+日常 UI 与业务开发在 HBuilderX 中修改仓库的 `app/` 源码；`app/unpackage/dist/dev/app-harmony/` 是自动生成的鸿蒙工程，可用于查看构建或调试信息，**不得当作业务源码目录直接修改**，否则下次编译会覆盖。
 
 ## 验收边界
 
-- 已完成：官方当前稳定版本与入口确认、本机条件核查、ARM64 安装包下载和官方 SHA-256 核验、安装到 Applications、架构与开发者签名及公证核验。
-- HBuilderX 的 DevEco 路径已配置并读回确认。未完成：首次启动许可确认、SDK/模拟器验证、鸿蒙编译、签名、真机运行。Mac 已解锁，目前等待用户处理实际协议页。
-- 临时打卡系统和平台后端未访问、未修改。本文件是本子任务唯一仓库改动。
+- 已完成：官方稳定版本下载、SHA-256 与应用签名公证核验、安装与工具路径配置、经授权完成许可交互、镜像安装与模拟器创建、页面及 HAP 编译、模拟器安装启动、原生首页及设备检查页显示核验。
+- 未完成：设备检查页交互验收、原生定位、录音及后台长录音、真机签名与真机运行。模拟器上的 unsigned HAP 是开发运行产物，不能作为员工内部试用安装包；模拟器成功不能替代三端真机能力验收。
+- 临时打卡系统和平台后端未访问、未修改。

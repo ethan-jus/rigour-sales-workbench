@@ -10,7 +10,7 @@ if (!targets.includes(target)) {
   process.exit(1);
 }
 
-async function run(args, requireCompileReceipt = false) {
+async function run(args, requireCompileReceipt = false, requirePackageReceipt = false) {
   await new Promise((resolve, reject) => {
     const child = spawn(cli, args, { stdio: ['inherit', 'pipe', 'pipe'] });
     let output = '';
@@ -27,6 +27,9 @@ async function run(args, requireCompileReceipt = false) {
       if (requireCompileReceipt && !/编译成功|compiled successfully/i.test(output)) {
         return reject(new Error('未收到编译成功回执，请检查上方工具链或代码错误。'));
       }
+      if (requirePackageReceipt && !/运行包制作成功/.test(output)) {
+        return reject(new Error('未收到鸿蒙运行包制作成功回执，请检查上方 .hap 构建错误。'));
+      }
       resolve();
     });
   });
@@ -41,7 +44,7 @@ try {
     if (target === 'web') args.push('--browser', 'Chrome');
     else args.push('--compile', 'true');
     if (target === 'app-ios') args.push('--iosTarget', 'simulator');
-    await run(args, target !== 'web');
+    await run(args, target !== 'web', target === 'app-harmony');
   }
 } catch (error) {
   console.error(error.message);
