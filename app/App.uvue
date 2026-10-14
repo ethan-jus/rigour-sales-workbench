@@ -1,16 +1,7 @@
 <script setup lang="uts">
 // #ifdef APP
-import { handleAuthCallback } from './services/auth.uts'
-onLaunch((options) => {
-  if (options == null) return
-  if (options.appScheme != null) handleAuthCallback(options.appScheme!)
-  if (options.appLink != null) handleAuthCallback(options.appLink!)
-})
-onAppShow((options) => {
-  if (options == null) return
-  if (options.appScheme != null) handleAuthCallback(options.appScheme!)
-  if (options.appLink != null) handleAuthCallback(options.appLink!)
-})
+import { restoreCompanySession } from './services/auth.uts'
+onLaunch(() => { restoreCompanySession() })
 // #endif
 // #ifdef WEB
 onLaunch(() => {})

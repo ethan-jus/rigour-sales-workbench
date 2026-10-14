@@ -46,6 +46,7 @@ const draftCount = computed((): number => drafts.value.length)
 const draftName = computed((): string => drafts.value.length > 0 ? drafts.value[0].customerName : '')
 const visitCount = computed((): number => visitDraftCount())
 const recording = computed((): boolean => hasActiveVisitRecording())
+let visible = false
 function login(): void { uni.navigateTo({ url: '/pages/login/login' }) }
 function profile(): void { uni.switchTab({ url: '/pages/profile/profile' }) }
 function openDraft(): void {
@@ -59,7 +60,7 @@ function uploads(): void { uni.navigateTo({ url: '/pages/visit/visit?view=upload
 function openPlan(): void { uni.navigateTo({ url: '/pages/visit/visit?view=plan' }) }
 function openWork(view: string): void { uni.navigateTo({ url: '/pages/work/work?view=' + view }) }
 function startVisit(): void { uni.navigateTo({ url: recording.value ? resumeVisitPath() : '/pages/visit/visit?view=select' }) }
-onShow(() => {
+function loadHome(): void {
   loadDrafts(); loadLocalVisits(); visitsTotal.value = '—'; today.value = visitToday()
   summaryHint.value = session.authenticated ? '当前账号暂无拜访统计权限' : '登录后查看本人拜访记录'
   if (!hasPermission('sales:visit:own:read')) return
@@ -70,7 +71,10 @@ onShow(() => {
     visitsTotal.value = count == null ? '—' : count.toString()
     summaryHint.value = count == null ? '统计暂不可用' : '按北京时间统计 · 点击查看明细'
   }, (message) => { summaryHint.value = message })
-})
+}
+onShow(() => { visible = true; loadHome() })
+onHide(() => { visible = false })
+watch((): boolean => session.authenticated, (_: boolean) => { if (visible) loadHome() })
 </script>
 <style>
 .brand-row { margin-bottom: 28px; }

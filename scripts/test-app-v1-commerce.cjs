@@ -27,7 +27,7 @@ function harness() {
   let failStorage = false
   const session = { authenticated: true, tenantId: 'company', userId: 'u1', username: 'sales-one', permissions: ['crm:customer:read', 'erp:product:read', 'order:read'], expiresAt: Date.now() + 3600000 }
   const clearSession = () => Object.assign(session, { authenticated: false, tenantId: '', userId: '', username: '', permissions: [], expiresAt: 0 })
-  const requireSession = () => { if (session.authenticated && session.expiresAt > Date.now()) return true; clearSession(); return false }
+  const requireSession = () => session.authenticated
   const imports = name => {
     if (name === 'vue') return { reactive: value => value }
     if (name === './session.uts') return { session, clearSession, requireSession, hasPermission: value => session.authenticated && session.permissions.includes(value) }
@@ -116,15 +116,25 @@ test('storage failure rolls back all cart edits and never reports saved', () => 
   assert.ok(h.messages.every(message => message.includes('保存失败')))
 })
 
-test('expired sessions cannot edit or persist business drafts', () => {
+test('access-token expiry preserves local drafts while the identity awaits central renewal', () => {
+  const h = harness(), s = h.service
+  s.selectOrderCustomer(customer())
+  h.session.expiresAt = Date.now() - 1
+  assert.equal(s.addToCart(product(), 1), true)
+  assert.equal(s.saveCheckout('地址', '说明'), true)
+  s.loadDrafts()
+  assert.equal(h.session.authenticated, true)
+  assert.equal(s.cartQuantity(), 1)
+})
+
+test('a revoked or logged-out identity cannot edit or persist drafts', () => {
   const h = harness(), s = h.service
   s.selectOrderCustomer(customer())
   const previousStorage = [...h.files.values()][0]
-  h.session.expiresAt = Date.now() - 1
+  Object.assign(h.session, { authenticated: false, tenantId: '', userId: '', expiresAt: 0 })
   assert.equal(s.addToCart(product(), 1), false)
   assert.equal(s.saveCheckout('地址', '说明'), false)
   s.loadDrafts()
-  assert.equal(h.session.authenticated, false)
   assert.equal(s.commerce.drafts.length, 0)
   assert.equal([...h.files.values()][0], previousStorage)
 })

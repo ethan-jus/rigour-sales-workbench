@@ -1,5 +1,5 @@
 import { reactive } from 'vue'
-import { session, hasPermission, requireSession, clearSession } from './session.uts'
+import { session, hasPermission, requireSession } from './session.uts'
 import { requestApi } from './api.uts'
 
 export type Customer = { id: string, name: string, contact: string, phone: string, address: string, status: string }
@@ -58,7 +58,6 @@ export function findOrder(id: string): SalesOrder | null {
 function ownerKey(): string { return session.tenantId + ':' + session.userId }
 function draftStorageKey(): string { return 'rigour-sales-cart:' + ownerKey() }
 export function loadDrafts(): void {
-  if (session.authenticated && session.expiresAt <= Date.now()) clearSession()
   const owner = ownerKey()
   if (commerce.draftOwner == owner) return
   commerce.drafts = [] as CartDraft[]
@@ -80,7 +79,7 @@ export function loadDrafts(): void {
   try { commerce.drafts = JSON.parse<CartDraft[]>(saved) ?? [] as CartDraft[] } catch (error) { commerce.drafts = [] as CartDraft[] }
 }
 export function saveDrafts(): boolean {
-  if (!session.authenticated || session.expiresAt <= Date.now()) return false
+  if (!session.authenticated) return false
   try { uni.setStorageSync(draftStorageKey(), JSON.stringify(commerce.drafts)); return true }
   catch (error) { uni.showToast({ title: '本机草稿保存失败，请检查存储空间', icon: 'none' }); return false }
 }

@@ -7,7 +7,8 @@
       <view class="entry" @click="uploads"><view class="grow"><text class="h3">本机草稿与附件</text><text class="muted">查看还未提交的记录</text></view><text class="chevron">›</text></view>
       <view class="entry"><view class="grow"><text class="h3">App 版本</text><text class="muted">0.2.0 · 内部试用版</text></view></view>
       <view class="section"><text class="fine">退出登录会清除当前会话。本机草稿按账号分别保存，重新登录原账号后可继续查看。</text></view>
-      <button v-if="session.authenticated" class="secondary" @click="logout">退出登录</button><button v-else class="primary" @click="login">登录公司账号</button>
+      <view v-if="session.logoutError.length > 0" class="error"><text class="error-text">{{ session.logoutError }}</text></view>
+      <button v-if="session.authenticated || session.logoutState == 'clearing' || session.logoutState == 'failed'" class="secondary" :disabled="session.logoutState == 'clearing'" @click="logout">{{ session.logoutState == 'clearing' ? '正在清除登录凭据…' : (session.logoutState == 'failed' ? '重试退出' : '退出登录') }}</button><button v-else class="primary" @click="login">登录公司账号</button>
     </template>
     <template v-else-if="view == 'performance'">
       <view class="row-between"><text class="h1">目标与业绩</text><text class="badge">本人拜访</text></view>
@@ -62,7 +63,7 @@ function visits(): void { uni.switchTab({ url: '/pages/visits/visits' }) }
 function commission(): void { uni.navigateTo({ url: '/pages/work/work?view=commission' }) }
 function logout(): void {
   if (hasActiveVisitRecording()) { uni.showToast({ title: '请先停止并保存当前录音再退出登录', icon: 'none' }); return }
-  logoutCompany(); loadDrafts(); loadLocalVisits(); uni.switchTab({ url: '/pages/home/home' })
+  logoutCompany(); loadDrafts(); loadLocalVisits()
 }
 function loadPerformance(): void {
   const revision = ++requestNumber

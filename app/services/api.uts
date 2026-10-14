@@ -1,4 +1,5 @@
-import { session, clearSession } from './session.uts'
+import { session } from './session.uts'
+import { ensureAccessToken, invalidateCompanySession } from './auth.uts'
 import { appEnvironment, environmentReady } from './config.uts'
 import { parseApiJson } from './json.uts'
 
@@ -24,13 +25,15 @@ export function requestApi(path: string, method: string, body: UTSJSONObject | n
     return
   }
   if (!path.startsWith('/') || path.startsWith('//')) { fail('请求路径无效。'); return }
-  if (!session.authenticated || session.accessToken.length == 0 || session.expiresAt <= Date.now()) {
-    clearSession()
-    fail('登录已失效，请重新登录公司账号。')
-    return
-  }
   const revision = session.revision
-  const headers: UTSJSONObject = { 'Authorization': 'Bearer ' + session.accessToken, 'Accept-Language': 'zh-CN', 'Content-Type': 'application/json' }
+  sendAuthenticatedRequest(path, method, body, revision, false, false, success, fail)
+}
+
+function sendAuthenticatedRequest(path: string, method: string, body: UTSJSONObject | null, revision: number, retried: boolean, forceRefresh: boolean, success: (data: UTSJSONObject) => void, fail: (message: string) => void): void {
+  ensureAccessToken(forceRefresh, (token) => {
+  if (session.revision != revision) { fail('账号已变更，请重新加载。'); return }
+  const tokenVersion = session.tokenVersion
+  const headers: UTSJSONObject = { 'Authorization': 'Bearer ' + token, 'Accept-Language': 'zh-CN', 'Content-Type': 'application/json' }
   uni.request<string>({
     url: appEnvironment.gatewayOrigin + '/api/v1' + path,
     method: method as RequestMethod,
@@ -40,7 +43,16 @@ export function requestApi(path: string, method: string, body: UTSJSONObject | n
     timeout: 20000,
     success: (response) => {
       if (session.revision != revision) { fail('账号已变更，请重新加载。'); return }
-      if (response.statusCode == 401) { clearSession(); fail(apiErrorMessage('', 401)); return }
+      if (response.statusCode == 401) {
+        if (retried) {
+          if (session.tokenVersion == tokenVersion) invalidateCompanySession(apiErrorMessage('', 401))
+          fail(apiErrorMessage('', 401))
+          return
+        }
+        // An older in-flight request may return 401 after another request renewed the token.
+        sendAuthenticatedRequest(path, method, body, revision, true, session.tokenVersion == tokenVersion, success, fail)
+        return
+      }
       const responseText = response.data
       const result = responseText == null ? null : parseApiJson(responseText)
       const code = result?.getString('code') ?? ''
@@ -57,4 +69,5 @@ export function requestApi(path: string, method: string, body: UTSJSONObject | n
       fail('无法连接公司服务，请检查网络后重试。')
     }
   })
+  }, fail)
 }

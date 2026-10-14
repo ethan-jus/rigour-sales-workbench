@@ -26,20 +26,33 @@ function moduleFixture(name, globals = {}) {
   return context.exports
 }
 function apiFixture() {
-  const requests = [], errors = [], successes = []
-  const session = { authenticated: true, accessToken: 'test-access', expiresAt: 200000, revision: 1 }
+  const requests = [], errors = [], successes = [], tokenCalls = [], pendingTokens = []
+  let holdTokens = false
+  const session = { authenticated: true, accessToken: 'test-access', expiresAt: 200000, revision: 1, tokenVersion: 1 }
   const config = moduleFixture('config.uts')
   // Simulate UTSJSONObject's accessors, while executing the actual text parser.
   const json = moduleFixture('json.uts', { JSON: { parse: text => new Obj(JSON.parse(text)) } })
-  const clearSession = () => { session.authenticated = false; session.accessToken = ''; session.revision++ }
-  const modules = { './session.uts': { session, clearSession }, './config.uts': config, './json.uts': json }
+  const invalidateCompanySession = () => { session.authenticated = false; session.accessToken = ''; session.revision++; session.tokenVersion++ }
+  const ensureAccessToken = (force, success, fail) => {
+    tokenCalls.push(force)
+    if (!session.authenticated) { fail('请先登录公司账号。'); return }
+    if (force || holdTokens || session.expiresAt <= 130000) pendingTokens.push({ success, fail })
+    else success(session.accessToken)
+  }
+  const modules = { './session.uts': { session }, './auth.uts': { ensureAccessToken, invalidateCompanySession }, './config.uts': config, './json.uts': json }
   const api = moduleFixture('api.uts', {
     require: name => modules[name],
     Date: { now: () => 100000 },
     uni: { request: request => requests.push(request) },
   })
   return {
-    api, session, config, requests, errors, successes,
+    api, session, config, requests, errors, successes, tokenCalls, pendingTokens,
+    holdTokens: value => { holdTokens = value },
+    rotate: (token = 'renewed-access') => {
+      session.accessToken = token; session.expiresAt = 300000; session.tokenVersion++
+      const queued = pendingTokens.splice(0)
+      queued.forEach(item => item.success(token))
+    },
     request: (route = '/orders/sales') => api.requestApi(route, 'GET', null, data => successes.push(data), message => errors.push(message)),
   }
 }
@@ -165,12 +178,67 @@ test('bare authenticated profile objects remain supported', () => {
   assert.equal(f.errors.length, 0)
 })
 
-test('API 401 clears expired authentication and never returns data', () => {
+test('API 401 refreshes then retries once; a second current-token 401 invalidates the session', () => {
   const f = apiFixture(); f.request()
   f.requests[0].success({ statusCode: 401, data: '<html>unauthorized</html>' })
+  assert.equal(f.session.authenticated, true)
+  assert.equal(f.pendingTokens.length, 1)
+  assert.equal(f.requests.length, 1)
+  f.rotate()
+  assert.equal(f.requests.length, 2)
+  assert.equal(f.requests[1].header.Authorization, 'Bearer renewed-access')
+  f.requests[1].success({ statusCode: 401, data: '{}' })
   assert.equal(f.session.authenticated, false)
   assert.equal(f.successes.length, 0)
   assert.equal(f.errors.length, 1)
+  assert.equal(f.requests.length, 2)
+})
+
+test('a successful 401 retry returns data once and preserves the account revision', () => {
+  const f = apiFixture(); f.request()
+  f.requests[0].success({ statusCode: 401, data: '{}' })
+  f.rotate()
+  f.requests[1].success({ statusCode: 200, data: '{"code":"OK","data":{"total":4}}' })
+  assert.equal(f.successes.length, 1)
+  assert.equal(f.successes[0].getJSON('data').getNumber('total'), 4)
+  assert.equal(f.session.revision, 1)
+  assert.equal(f.errors.length, 0)
+})
+
+test('expired access token waits for renewal and never sends the old token', () => {
+  const f = apiFixture(); f.session.expiresAt = 99999; f.request()
+  assert.equal(f.requests.length, 0)
+  assert.equal(f.session.authenticated, true)
+  f.rotate()
+  assert.equal(f.requests[0].header.Authorization, 'Bearer renewed-access')
+})
+
+test('a late old-token 401 reuses an already renewed token without another forced refresh', () => {
+  const f = apiFixture(); f.request(); f.rotate()
+  f.requests[0].success({ statusCode: 401, data: '{}' })
+  assert.deepEqual(f.tokenCalls, [false, false])
+  assert.equal(f.pendingTokens.length, 0)
+  assert.equal(f.requests[1].header.Authorization, 'Bearer renewed-access')
+})
+
+test('even a retry 401 cannot invalidate a subsequently renewed token', () => {
+  const f = apiFixture(); f.request()
+  f.requests[0].success({ statusCode: 401, data: '{}' })
+  f.rotate('access-two')
+  f.rotate('access-three')
+  f.requests[1].success({ statusCode: 401, data: '{}' })
+  assert.equal(f.session.authenticated, true)
+  assert.equal(f.session.accessToken, 'access-three')
+  assert.equal(f.requests.length, 2)
+  assert.equal(f.errors.length, 1)
+})
+
+test('a request waiting for renewal cannot be sent under a switched account', () => {
+  const f = apiFixture(); f.holdTokens(true); f.request()
+  f.session.revision++
+  f.rotate('another-account-access')
+  assert.equal(f.requests.length, 0)
+  assert.match(f.errors[0], /账号已变更/)
 })
 
 test('API 403 preserves session and explicitly reports permission denial', () => {
@@ -246,8 +314,10 @@ test('API HTTP 503 retains the status even when an upstream returns HTML', () =>
   assert.doesNotMatch(f.errors[0], /stack trace/)
 })
 
-test('API expired in-memory token is never sent', () => {
+test('failed renewal never sends a business request with an expired token', () => {
   const f = apiFixture(); f.session.expiresAt = 99999; f.request()
+  f.pendingTokens[0].fail('登录续期失败，请重新登录。')
   assert.equal(f.requests.length, 0)
-  assert.equal(f.session.authenticated, false)
+  assert.equal(f.errors.length, 1)
+  assert.match(f.errors[0], /续期失败/)
 })

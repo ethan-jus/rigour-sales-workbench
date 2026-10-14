@@ -9,18 +9,26 @@ export type SessionState = {
   permissions: string[],
   accessToken: string,
   expiresAt: number,
-  revision: number
+  revision: number,
+  tokenVersion: number,
+  restoring: boolean,
+  refreshing: boolean,
+  loginError: string,
+  logoutState: string,
+  logoutError: string
 }
 
-// Access tokens remain in memory until platform secure storage is verified.
-// Never copy a production session into ordinary uni storage or diagnostics.
+// Access tokens stay in memory. Only refresh credentials use native secure storage.
 export const session = reactive({
   authenticated: false, displayName: '', username: '', userId: '', tenantId: '',
-  permissions: [] as string[], accessToken: '', expiresAt: 0, revision: 0
+  permissions: [] as string[], accessToken: '', expiresAt: 0, revision: 0,
+  tokenVersion: 0, restoring: false, refreshing: false, loginError: '',
+  logoutState: 'idle', logoutError: ''
 } as SessionState)
 
 export function clearSession(): void {
   session.revision += 1
+  session.tokenVersion += 1
   session.authenticated = false
   session.displayName = ''
   session.username = ''
@@ -29,6 +37,11 @@ export function clearSession(): void {
   session.permissions = [] as string[]
   session.accessToken = ''
   session.expiresAt = 0
+  session.restoring = false
+  session.refreshing = false
+  session.loginError = ''
+  session.logoutState = 'idle'
+  session.logoutError = ''
 }
 
 export function hasPermission(permission: string): boolean {
@@ -36,8 +49,7 @@ export function hasPermission(permission: string): boolean {
 }
 
 export function requireSession(): boolean {
-  if (session.authenticated && session.expiresAt > Date.now()) return true
-  if (session.authenticated) clearSession()
+  if (session.authenticated) return true
   uni.navigateTo({ url: '/pages/login/login' })
   return false
 }

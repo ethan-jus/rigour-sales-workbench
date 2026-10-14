@@ -1,225 +1,334 @@
-import { appEnvironment, environmentReady, serviceOrigin } from './config.uts'
+import { appEnvironment, environmentReady } from './config.uts'
 import { session, clearSession } from './session.uts'
+import { parseApiJson } from './json.uts'
+import { secureSessionSupported, readSecureSession, writeSecureSession, clearSecureSession, StoredSession } from './secure-session.uts'
 
 // #ifdef APP-ANDROID
 import SecureRandom from 'java.security.SecureRandom'
 import MessageDigest from 'java.security.MessageDigest'
 import Base64 from 'android.util.Base64'
-import Intent from 'android.content.Intent'
-import Uri from 'android.net.Uri'
 import Charsets from 'kotlin.text.Charsets'
 // #endif
 
-type LoginAttempt = {
-  state: string,
-  verifier: string,
-  tokenEndpoint: string,
-  expiresAt: number,
-  exchanging: boolean,
-  generation: number
-}
-
-let attempt: LoginAttempt | null = null
+type TokenPair = { accessToken: string, refreshToken: string, expiresAt: number }
+type TokenWaiter = { success: (token: string) => void, fail: (message: string) => void }
+type ProofKey = { verifier: string, challenge: string, state: string }
 let generation = 0
-let loadingDiscovery = false
-let loginSuccess: (() => void) | null = null
-let loginFailure: ((message: string) => void) | null = null
-let expirationTimer: number | null = null
+let loginInFlight = false
+let refreshInFlight = false
+let restoreStarted = false
+let refreshToken = ''
+let waiters: TokenWaiter[] = []
 
-function clearAttempt(): void {
-  attempt = null
-  loadingDiscovery = false
-  if (expirationTimer != null) clearTimeout(expirationTimer!)
-  expirationTimer = null
+function logoutMarkerKey(): string {
+  return 'rigour-sales-logout:' + appEnvironment.environment + ':' + encodeURIComponent(appEnvironment.issuer)
+    + ':' + encodeURIComponent(appEnvironment.clientId)
 }
 
-function failLogin(message: string): void {
-  const callback = loginFailure
+// Non-sensitive intent only. A failed credential erase must not restore the old login.
+function logoutMarkerState(): string {
+  const value = uni.getStorageSync(logoutMarkerKey())
+  return value == null ? '' : (typeof value == 'string' ? value : 'pending')
+}
+
+function markLogout(state: string): void {
+  uni.setStorageSync(logoutMarkerKey(), state)
+  if (uni.getStorageSync(logoutMarkerKey()) != state) throw new Error('logout marker unavailable')
+}
+
+function issuerPath(path: string): string {
+  return (appEnvironment.issuer.endsWith('/') ? appEnvironment.issuer.slice(0, -1) : appEnvironment.issuer) + path
+}
+
+function finishWaiters(message: string): void {
+  const pending = waiters
+  waiters = [] as TokenWaiter[]
+  pending.forEach((item: TokenWaiter) => {
+    if (message.length == 0) item.success(session.accessToken)
+    else item.fail(message)
+  })
+}
+
+function resetCompanySession(message: string): number {
   generation += 1
-  clearAttempt()
-  loginSuccess = null
-  loginFailure = null
-  if (callback != null) callback(message)
-  else uni.showToast({ title: message, icon: 'none' })
+  const current = generation
+  loginInFlight = false
+  refreshInFlight = false
+  refreshToken = ''
+  clearSession()
+  session.loginError = message
+  finishWaiters(message.length > 0 ? message : '请重新登录公司账号。')
+  return current
 }
 
-// The native verifier and state never use Math.random or ordinary uni storage.
-function prepareAndroidLogin(tokenEndpoint: string): LoginAttempt | null {
+export function invalidateCompanySession(message: string): void {
+  const current = resetCompanySession(message)
+  // Native storage operations are serialized: an older write cannot run after this clear.
+  clearSecureSession(() => {}, (_) => {
+    if (generation == current) {
+      session.loginError = '无法清除本机登录凭据，请在账号与设置中重试退出。'
+      session.logoutState = 'failed'
+      session.logoutError = session.loginError
+    }
+  })
+}
+
+function tokenPair(body: UTSJSONObject | null): TokenPair | null {
+  if (body == null) return null
+  const accessToken = body.getString('access_token') ?? ''
+  const nextRefresh = body.getString('refresh_token') ?? ''
+  const expiresIn = body.getNumber('expires_in') ?? 0
+  if (accessToken.length == 0 || nextRefresh.length == 0
+    || body.getString('token_type')?.toLowerCase() != 'bearer'
+    || !Number.isFinite(expiresIn) || expiresIn <= 30) return null
+  return { accessToken, refreshToken: nextRefresh, expiresAt: Date.now() + expiresIn * 1000 }
+}
+
+function loginMessage(status: number): string {
+  if (status == 401) return '账号或密码不正确，或账号暂不可用，请核对后重试。'
+  if (status == 403) return '当前账号暂不可登录，请联系管理员检查账号状态。'
+  if (status == 429) return '登录尝试较频繁，请稍后重试。'
+  if (status == 400) return '登录请求未通过校验，请联系管理员检查 App 配置。'
+  return '公司登录服务暂时不可用，请稍后重试。'
+}
+
+function proofKey(): ProofKey | null {
   // #ifdef APP-ANDROID
   const random = new SecureRandom()
   const flags = Base64.URL_SAFE | Base64.NO_WRAP | Base64.NO_PADDING
   const verifier = Base64.encodeToString(random.generateSeed(32), flags)
   const state = Base64.encodeToString(random.generateSeed(32), flags)
-  return { state, verifier, tokenEndpoint, expiresAt: Date.now() + 300000, exchanging: false, generation }
+  const digest = MessageDigest.getInstance('SHA-256').digest(verifier.toByteArray(Charsets.US_ASCII))
+  return { verifier, state, challenge: Base64.encodeToString(digest, flags) }
   // #endif
   // #ifndef APP-ANDROID
   return null
   // #endif
 }
 
-function launchAuthorization(authorizationEndpoint: string, current: LoginAttempt): void {
-  // #ifdef APP-ANDROID
-  try {
-    const digest = MessageDigest.getInstance('SHA-256').digest(current.verifier.toByteArray(Charsets.US_ASCII))
-    const challenge = Base64.encodeToString(digest, Base64.URL_SAFE | Base64.NO_WRAP | Base64.NO_PADDING)
-    const url = authorizationEndpoint + '?response_type=code&client_id=' + encodeURIComponent(appEnvironment.clientId)
-      + '&redirect_uri=' + encodeURIComponent(appEnvironment.redirectUri)
-      + '&scope=profile&state=' + encodeURIComponent(current.state)
-      + '&code_challenge_method=S256&code_challenge=' + encodeURIComponent(challenge)
-    const activity = UTSAndroid.getUniActivity()
-    if (activity == null) { failLogin('当前无法打开公司登录，请返回页面重试。'); return }
-    activity.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-  } catch (_) {
-    failLogin('无法打开系统浏览器，请确认手机已安装浏览器后重试。')
-  }
-  // #endif
-}
-
-export function beginCompanyLogin(success: () => void, fail: (message: string) => void): void {
-  if (!environmentReady()) { fail('公司登录服务尚未配置，暂不能登录。'); return }
-  // #ifndef APP-ANDROID
-  fail('此系统的公司登录仍在接入中，请先使用 Android 内部测试版。')
-  return
-  // #endif
-  if (loadingDiscovery || attempt != null) { fail('正在等待公司登录，请完成浏览器中的登录或稍后重试。'); return }
-  generation += 1
-  const thisGeneration = generation
-  loginSuccess = success
-  loginFailure = fail
-  loadingDiscovery = true
-  expirationTimer = setTimeout(() => {
-    if (generation == thisGeneration) failLogin('登录已超时，请重新登录。')
-  }, 300000)
-  const issuer = appEnvironment.issuer.endsWith('/') ? appEnvironment.issuer.slice(0, -1) : appEnvironment.issuer
-  uni.request<UTSJSONObject>({
-    url: issuer + '/.well-known/openid-configuration', method: 'GET', timeout: 20000,
+function verifyAndPublish(tokens: TokenPair, expected: StoredSession | null, current: number, success: () => void, fail: (message: string) => void): void {
+  uni.request<string>({
+    url: appEnvironment.gatewayOrigin + '/api/v1/me', method: 'GET', timeout: 20000, dataType: 'text',
+    header: { 'Authorization': 'Bearer ' + tokens.accessToken, 'Accept-Language': 'zh-CN' },
     success: (response) => {
-      if (generation != thisGeneration) return
-      const metadata = response.data
-      if (response.statusCode != 200 || metadata == null) { failLogin('无法读取公司登录配置，请稍后重试。'); return }
-      const metadataIssuer = metadata.getString('issuer') ?? ''
-      const authorizationEndpoint = metadata.getString('authorization_endpoint') ?? ''
-      const tokenEndpoint = metadata.getString('token_endpoint') ?? ''
-      if (metadataIssuer != appEnvironment.issuer
-        || serviceOrigin(authorizationEndpoint) != serviceOrigin(appEnvironment.issuer)
-        || serviceOrigin(tokenEndpoint) != serviceOrigin(appEnvironment.issuer)
-        || authorizationEndpoint.includes('?') || authorizationEndpoint.includes('#')
-        || tokenEndpoint.includes('?') || tokenEndpoint.includes('#')) {
-        failLogin('公司登录地址校验未通过，请联系管理员。')
-        return
-      }
-      try {
-        const current = prepareAndroidLogin(tokenEndpoint)
-        if (current == null) { failLogin('当前系统尚未支持安全登录。'); return }
-        loadingDiscovery = false
-        attempt = current
-        launchAuthorization(authorizationEndpoint, current)
-      } catch (_) {
-        failLogin('无法创建安全登录请求，请重试。')
-      }
-    },
-    fail: (_) => { if (generation == thisGeneration) failLogin('无法连接公司登录服务，请检查网络。') }
-  })
-}
-
-type CallbackValues = { valid: boolean, state: string, code: string, error: string }
-
-function callbackValues(query: string): CallbackValues {
-  const values: CallbackValues = { valid: true, state: '', code: '', error: '' }
-  const keys: string[] = []
-  try {
-    query.split('&').forEach((part: string) => {
-      const at = part.indexOf('=')
-      if (at < 1) { values.valid = false; return }
-      const key = decodeURIComponent(part.substring(0, at))
-      const value = decodeURIComponent(part.substring(at + 1).replace(/\+/g, ' '))
-      if (key == null || value == null) { values.valid = false; return }
-      if (keys.includes(key)) { values.valid = false; return }
-      keys.push(key)
-      if (key == 'state') values.state = value
-      if (key == 'code') values.code = value
-      if (key == 'error') values.error = value
-      if (key == 'access_token' || key == 'id_token') values.valid = false
-    })
-  } catch (_) { values.valid = false }
-  return values
-}
-
-function verifyCurrentUser(accessToken: string, expiresIn: number, thisGeneration: number): void {
-  uni.request<UTSJSONObject>({
-    url: appEnvironment.gatewayOrigin + '/api/v1/me', method: 'GET', timeout: 20000,
-    header: { 'Authorization': 'Bearer ' + accessToken, 'Accept-Language': 'zh-CN' },
-    success: (response) => {
-      if (generation != thisGeneration) return
-      const body = response.data
-      if (response.statusCode != 200 || body == null) { failLogin('公司账号校验失败，请重新登录。'); return }
+      if (generation != current) return
+      const body = response.data == null ? null : parseApiJson(response.data!)
+      if (response.statusCode != 200 || body == null) { fail('公司账号校验失败，请重新登录。'); return }
       const profile = body.getJSON('data') ?? body
       const userId = profile.getString('id') ?? ''
       const tenantId = profile.getString('tenantId') ?? ''
       if (profile.getString('principalScope') != 'TENANT' || userId.length == 0 || tenantId.length == 0) {
-        failLogin('请使用公司员工账号登录销售工作台。')
-        return
+        fail('请使用公司员工账号登录销售工作台。'); return
       }
-      clearSession()
-      session.userId = userId
-      session.tenantId = tenantId
-      session.username = profile.getString('username') ?? ''
-      session.displayName = profile.getString('displayName') ?? session.username
-      session.permissions = profile.getArray<string>('permissions') ?? [] as string[]
-      session.accessToken = accessToken
-      session.expiresAt = Date.now() + (expiresIn - 30) * 1000
-      session.authenticated = true
-      const callback = loginSuccess
-      clearAttempt()
-      loginSuccess = null
-      loginFailure = null
-      if (callback != null) callback()
+      if (expected != null && (expected.userId != userId || expected.tenantId != tenantId)) {
+        fail('登录身份校验未通过，请重新登录。'); return
+      }
+      const stored: StoredSession = { refreshToken: tokens.refreshToken, issuer: appEnvironment.issuer,
+        clientId: appEnvironment.clientId, userId, tenantId }
+      writeSecureSession(stored, () => {
+        if (generation != current) return
+        if (expected == null) {
+          try {
+            uni.removeStorageSync(logoutMarkerKey())
+            if (logoutMarkerState().length > 0) throw new Error('logout marker retained')
+          } catch (_) {
+            fail('无法确认本机登录状态，本次登录未完成，请重试。'); return
+          }
+        }
+        refreshToken = tokens.refreshToken
+        session.userId = userId
+        session.tenantId = tenantId
+        session.username = profile.getString('username') ?? ''
+        session.displayName = profile.getString('displayName') ?? session.username
+        session.permissions = profile.getArray<string>('permissions') ?? [] as string[]
+        session.accessToken = tokens.accessToken
+        session.expiresAt = tokens.expiresAt
+        session.tokenVersion += 1
+        session.authenticated = true
+        session.restoring = false
+        session.loginError = ''
+        success()
+      }, (_) => { if (generation == current) fail('无法安全保存登录凭据，本次登录未完成。') })
     },
-    fail: (_) => { if (generation == thisGeneration) failLogin('无法校验公司账号，请检查网络后重新登录。') }
+    fail: (_) => { if (generation == current) fail('无法校验公司账号，请检查网络后重新登录。') }
   })
 }
 
-export function handleAuthCallback(url: string): void {
-  const question = url.indexOf('?')
-  if (question < 0 || url.substring(0, question) != appEnvironment.redirectUri) return
-  const current = attempt
-  if (current == null) { failLogin('登录会话已失效，请重新发起公司登录。'); return }
-  if (current.exchanging) return
-  if (Date.now() > current.expiresAt || url.includes('#')) { failLogin('登录回调已失效，请重新登录。'); return }
-  const values = callbackValues(url.substring(question + 1))
-  if (!values.valid || values.state.length == 0 || values.state != current.state) { failLogin('登录安全校验失败，请重新登录。'); return }
-  if (values.error.length > 0) { failLogin('公司登录未完成，请重新登录。'); return }
-  if (values.code.length == 0) { failLogin('公司登录未返回授权结果，请重试。'); return }
-  current.exchanging = true
-  const thisGeneration = current.generation
-  uni.request<UTSJSONObject>({
-    url: current.tokenEndpoint, method: 'POST', timeout: 20000,
-    header: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    data: 'grant_type=authorization_code&client_id=' + encodeURIComponent(appEnvironment.clientId)
-      + '&redirect_uri=' + encodeURIComponent(appEnvironment.redirectUri)
-      + '&code=' + encodeURIComponent(values.code) + '&code_verifier=' + encodeURIComponent(current.verifier),
-    success: (response) => {
-      if (generation != thisGeneration) return
-      const body = response.data
-      if (response.statusCode != 200 || body == null) { failLogin('公司登录授权已失效，请重新登录。'); return }
-      const accessToken = body.getString('access_token') ?? ''
-      const expiresIn = body.getNumber('expires_in') ?? 0
-      if (accessToken.length == 0 || body.getString('token_type')?.toLowerCase() != 'bearer' || expiresIn <= 30) {
-        failLogin('公司登录授权信息不完整，请联系管理员。')
-        return
-      }
-      // profile-only OAuth: identity always comes from the verified /me response.
-      // ID tokens and refresh tokens are neither used nor stored in this slice.
-      verifyCurrentUser(accessToken, expiresIn, thisGeneration)
-    },
-    fail: (_) => { if (generation == thisGeneration) failLogin('登录授权交换失败，请检查网络后重新登录。') }
-  })
+export function beginCompanyLogin(username: string, password: string, success: () => void, fail: (message: string) => void): void {
+  if (!environmentReady()) { fail('公司登录服务尚未配置，暂不能登录。'); return }
+  if (!secureSessionSupported()) { fail('此系统的安全登录仍在接入中，请先使用 Android 内部测试版。'); return }
+  if (username.trim().length == 0 || password.length == 0) { fail('请输入公司账号和密码。'); return }
+  if (loginInFlight || refreshInFlight || session.restoring || session.logoutState == 'clearing') { fail('正在处理登录状态，请稍候。'); return }
+  let proof: ProofKey | null = null
+  try { proof = proofKey() } catch (_) { fail('无法创建安全登录请求，请重试。'); return }
+  if (proof == null) { fail('当前系统尚未支持安全登录。'); return }
+  const currentProof = proof!
+  generation += 1
+  const current = generation
+  loginInFlight = true
+  refreshToken = ''
+  clearSession()
+  finishWaiters('账号已变更，请重新加载。')
+  const failCurrent = (message: string): void => {
+    if (generation != current) return
+    invalidateCompanySession(message)
+    fail(message)
+  }
+  clearSecureSession(() => {
+    if (generation != current) return
+    // Password exists only in the native request. It is never stored or logged.
+    uni.request<string>({
+      url: issuerPath('/api/v1/auth/native-app/login'), method: 'POST', timeout: 20000, dataType: 'text',
+      header: { 'Content-Type': 'application/json', 'Accept-Language': 'zh-CN' },
+      data: { clientId: appEnvironment.clientId, redirectUri: appEnvironment.redirectUri,
+        codeChallenge: currentProof.challenge, codeChallengeMethod: 'S256', state: currentProof.state,
+        username: username.trim(), password },
+      success: (response) => {
+        if (generation != current) return
+        const body = response.data == null ? null : parseApiJson(response.data!)
+        const result = body?.getJSON('data')
+        if (response.statusCode != 200 || body?.getString('code') != 'OK' || result == null) {
+          failCurrent(loginMessage(response.statusCode)); return
+        }
+        const code = result.getString('authorizationCode') ?? ''
+        if (code.length == 0 || result.getString('state') != currentProof.state || (result.getNumber('expiresIn') ?? 0) <= 0) {
+          failCurrent('登录安全校验失败，请重新登录。'); return
+        }
+        uni.request<string>({
+          url: issuerPath('/oauth2/token'), method: 'POST', timeout: 20000, dataType: 'text',
+          header: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          data: 'grant_type=authorization_code&client_id=' + encodeURIComponent(appEnvironment.clientId)
+            + '&redirect_uri=' + encodeURIComponent(appEnvironment.redirectUri)
+            + '&code=' + encodeURIComponent(code) + '&code_verifier=' + encodeURIComponent(currentProof.verifier),
+          success: (tokenResponse) => {
+            if (generation != current) return
+            const tokens = tokenPair(tokenResponse.data == null ? null : parseApiJson(tokenResponse.data!))
+            if (tokenResponse.statusCode != 200 || tokens == null) { failCurrent('公司登录授权已失效，请重新登录。'); return }
+            verifyAndPublish(tokens!, null, current, () => { loginInFlight = false; success() }, failCurrent)
+          },
+          fail: (_) => { failCurrent('登录授权交换失败，请检查网络后重新登录。') }
+        })
+      },
+      fail: (_) => { failCurrent('无法连接公司登录服务，请检查网络后重试。') }
+    })
+  }, (_) => { failCurrent('无法安全更新本机登录凭据，请重试。') })
+}
+
+function rotateSession(saved: StoredSession, current: number): void {
+  refreshInFlight = true
+  session.refreshing = true
+  refreshToken = ''
+  const failRefresh = (message: string): void => { if (generation == current) invalidateCompanySession(message) }
+  // Consume the persisted credential before sending it. A timeout or process death
+  // must never replay a refresh token that the server may already have rotated.
+  clearSecureSession(() => {
+    if (generation != current) return
+    uni.request<string>({
+      url: issuerPath('/oauth2/token'), method: 'POST', timeout: 20000, dataType: 'text',
+      header: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      data: 'grant_type=refresh_token&client_id=' + encodeURIComponent(appEnvironment.clientId)
+        + '&refresh_token=' + encodeURIComponent(saved.refreshToken),
+      success: (response) => {
+        if (generation != current) return
+        const tokens = tokenPair(response.data == null ? null : parseApiJson(response.data!))
+        if (response.statusCode != 200 || tokens == null || tokens.refreshToken == saved.refreshToken) {
+          failRefresh('登录已失效，请重新登录公司账号。'); return
+        }
+        verifyAndPublish(tokens!, saved, current, () => {
+          refreshInFlight = false
+          session.refreshing = false
+          finishWaiters('')
+        }, failRefresh)
+      },
+      fail: (_) => { failRefresh('登录续期未完成，请重新登录，避免重复使用旧凭据。') }
+    })
+  }, (_) => { failRefresh('无法安全更新登录凭据，请重新登录。') })
+}
+
+export function ensureAccessToken(forceRefresh: boolean, success: (token: string) => void, fail: (message: string) => void): void {
+  if (session.restoring || refreshInFlight) { waiters.push({ success, fail }); return }
+  if (!session.authenticated) { fail('请先登录公司账号。'); return }
+  if (!forceRefresh && session.accessToken.length > 0 && session.expiresAt > Date.now() + 30000) {
+    success(session.accessToken); return
+  }
+  if (refreshToken.length == 0) { invalidateCompanySession('登录已失效，请重新登录公司账号。'); fail(session.loginError); return }
+  waiters.push({ success, fail })
+  rotateSession({ refreshToken, issuer: appEnvironment.issuer, clientId: appEnvironment.clientId,
+    userId: session.userId, tenantId: session.tenantId }, generation)
+}
+
+export function restoreCompanySession(): void {
+  if (restoreStarted) return
+  restoreStarted = true
+  if (!environmentReady() || !secureSessionSupported()) return
+  try {
+    const logoutState = logoutMarkerState()
+    if (logoutState == 'done') { session.logoutState = 'done'; return }
+    if (logoutState.length > 0) {
+      session.logoutState = 'failed'
+      session.logoutError = '上次退出尚待确认，请在账号与设置中重试退出。'
+      return
+    }
+  } catch (_) {
+    session.logoutState = 'failed'
+    session.logoutError = '无法读取本机退出状态，请在账号与设置中重试退出。'
+    return
+  }
+  session.restoring = true
+  const current = generation
+  readSecureSession((saved) => {
+    if (generation != current) return
+    if (saved == null) { session.restoring = false; finishWaiters('请先登录公司账号。'); return }
+    if (saved.issuer != appEnvironment.issuer || saved.clientId != appEnvironment.clientId
+      || saved.userId.length == 0 || saved.tenantId.length == 0 || saved.refreshToken.length == 0) {
+      invalidateCompanySession('本机登录凭据已失效，请重新登录。'); return
+    }
+    rotateSession(saved, current)
+  }, (_) => { if (generation == current) invalidateCompanySession('无法读取安全登录凭据，请重新登录。') })
+}
+
+export function cancelCompanyLogin(): void {
+  if (loginInFlight) invalidateCompanySession('')
 }
 
 export function logoutCompany(): void {
-  generation += 1
-  clearAttempt()
-  loginSuccess = null
-  loginFailure = null
-  clearSession()
+  if (session.logoutState == 'clearing') return
+  try { markLogout('pending') } catch (_) {
+    session.logoutState = 'failed'
+    session.logoutError = '无法保存退出状态，退出未完成，请重试退出。'
+    return
+  }
+  const token = session.accessToken
+  const current = resetCompanySession('')
+  session.logoutState = 'clearing'
+  let remoteFailed = false
+  clearSecureSession(() => {
+    if (generation != current) return
+    try { markLogout('done') } catch (_) {
+      session.logoutState = 'failed'
+      session.logoutError = '登录凭据已清除，但退出状态保存失败，请重试退出。'
+      return
+    }
+    session.logoutState = 'done'
+    session.logoutError = ''
+    uni.showToast({ title: remoteFailed ? '本机已退出，服务端退出未确认。' : '本机已退出。', icon: 'none' })
+  }, (_) => {
+    if (generation != current) return
+    session.logoutState = 'failed'
+    session.logoutError = '本机登录凭据尚未清除，退出未完成，请重试退出。'
+  })
+  if (!environmentReady() || token.length == 0) return
+  const reportRemoteFailure = (): void => {
+    if (generation != current) return
+    remoteFailed = true
+    if (session.logoutState == 'done') uni.showToast({ title: '本机已退出，服务端退出未确认。', icon: 'none' })
+  }
+  uni.request<string>({
+    url: issuerPath('/api/v1/auth/native-app/logout'), method: 'POST', timeout: 20000, dataType: 'text',
+    header: { 'Authorization': 'Bearer ' + token },
+    success: (response) => {
+      if (response.statusCode != 204) reportRemoteFailure()
+    },
+    fail: (_) => { reportRemoteFailure() }
+  })
 }

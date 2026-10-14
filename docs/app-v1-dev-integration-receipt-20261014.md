@@ -1,8 +1,22 @@
 # 销售工作台 App DEV 联调回执
 
-日期：2026-10-14。范围：原生 App 与隔离 DEV 接入、Android 管理员真机登录验证；真实销售账号验收尚未完成。本文不包含个人标识、凭据或 Token。
+日期：2026-10-14。本文较早的手机登录证据来自浏览器方案；用户随后确认改用 App 原生账号密码表单，新的实现与待验收项见下一节。真实销售账号范围尚未验收。本文不包含凭据或 Token。
 
-## 已确认
+
+## 原生账号密码登录更新
+
+- 用户确认：App 自有账号密码表单，密码校验、权限、会话和 Token 刷新仍由 IAM 统一负责。
+- App 已替代浏览器跳转/回调路径，加入 Android Keystore refresh 保存、启动恢复、单飞轮换和401一次重试；本机业务草稿不因 Access Token 到期被清理。
+- `npm run app:v1:test`：125/125通过，日志 `/tmp/sales-app-native-auth-final-tests.log`；含退出清除整体失败、断网、进程重开、正常退出重开及再次显式登录的行为回归。
+- 退出修复后的最终原生编译：Android 15:30:44（`/tmp/sales-app-native-login-android-build-final2.log`）、iOS 15:32:01（`/tmp/sales-app-native-login-ios-build-final.log`）、HarmonyOS unsigned HAP 15:32:48（`/tmp/sales-app-native-login-harmony-build-final.log`）。iOS/HarmonyOS认证适配仍未完成；编译不等于真机登录支持。
+- 退出补丁经独立源码行为复核通过：pending落地后重开不读旧凭据；清除失败+断网不报成功；重试可完成；done重开无错误；新显式登录仅在安全保存成功后移除退出标记。
+- IAM 35项检查通过，含21项真实Spring Security/Testcontainers流程，日志 `/tmp/iam-native-login-integration-v3.log`；覆盖原生密码认证、锁定、PKCE、refresh轮换/重放、账号停用、当前会话退出和Web刷新回归。
+- IAM 已成功打包；后端原生登录提交为 `6a78499`。
+- V133已在隔离测试数据库成功执行。共享DEV只读 `Flyway.validateWithResult()` 确认 V132 为 `APPLIED_VERSIONED_MIGRATION_NOT_RESOLVED`，V133 尚未执行，日志 `/tmp/iam-native-dev-flyway-validate.log`。本机与远程dev缺V132原始SQL；在找回原始文件前不迁移、不关闭校验、不repair。原生登录尚未替换正在运行的隔离IAM，不能据测试报告声称手机已可用。
+- 数据库规范脚本未能执行：该工作树缺其依赖的 `scripts/database/general-ci-baselines.json`。V133只扩展CHECK，未改字符列或历史迁移。
+- 待补齐迁移后，启用IAM原生入口、同步手机，验证平台同账号原生登录、短期Token续期、重开App恢复与退出。之前浏览器登录成功不替代这些检查。
+
+## 较早浏览器方案已确认
 
 - App DEV：Gateway `http://localhost:27680`、IAM `http://localhost:27681`，Android PUBLIC Client `rigour-sales-app-android-dev`，回调 `uniappx://rigour-sales/auth/callback`。HTTP 仅允许指定 loopback，调试 scheme 受精确环境/客户端/端口约束，非开发环境禁止该调试客户端。
 - Platform 隔离工作树 B2 的调试客户端注册已随 IAM 启动成功；Gateway 27680、IAM 27681、Sales 27686 health 均为 UP。
@@ -30,8 +44,8 @@
 
 ## 环境保护
 
-- DEV Sales 的临时 check-in worker 与 AI worker 已禁用；本轮无新增数据库迁移。
+- DEV Sales 的临时 check-in worker 与 AI worker 已禁用；共享 DEV 尚未执行本次新增的 V133 数据库迁移。
 - 生产临时打卡服务保持原状，本轮未切流、迁移、停用或修改其业务数据。
 - 正式上线还需正式 HTTPS 配置、PUBLIC Client 和公司签名回调，以及真实账号/设备验收；DEV health 和编译回执不能替代上线条件。
 
-本轮已确认的是 Android 管理员登录，以及客户列表、客户详情和订单列表可读，不能扩展为“订单详情已验收”“销售登录成功”或“真实销售数据已全部通过”。
+较早浏览器方案已确认 Android 管理员登录，以及客户列表、客户详情和订单列表可读；原生表单的真实 DEV 验收仍待完成，不能扩展为“订单详情已验收”“销售登录成功”或“真实销售数据已全部通过”。

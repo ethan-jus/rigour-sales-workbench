@@ -1,6 +1,6 @@
 # 销售工作台 App V1 接口就绪审查
 
-更新：2026-10-14。本轮已核对 Platform 合同、接通隔离 DEV 服务并执行 DEV 数据库只读计数；Android 真机已完成管理员登录、`/me` 读取，以及客户列表、客户详情和订单列表可读验证，未完成真实销售账号的数据范围验收。未调用或修改生产临时打卡。原 G0 Sales 详细合同见 `app-g0-platform-contract.md`；当前环境证据见 [DEV 联调回执](app-v1-dev-integration-receipt-20261014.md)。
+更新：2026-10-14。当前原生账号密码登录与 IAM refresh 的实现及待验收边界见 [原生登录接入](app-v1-auth-integration.md)；下述已完成 DEV 登录证据来自本日较早的浏览器方案，不代表新原生登录已通过真机验收。本轮已核对 Platform 合同、接通隔离 DEV 服务并执行 DEV 数据库只读计数；Android 真机已完成管理员登录、`/me` 读取，以及客户列表、客户详情和订单列表可读验证，未完成真实销售账号的数据范围验收。未调用或修改生产临时打卡。原 G0 Sales 详细合同见 `app-g0-platform-contract.md`；当前环境证据见 [DEV 联调回执](app-v1-dev-integration-receipt-20261014.md)。
 
 ## 1. 当前可实施边界
 
@@ -18,9 +18,9 @@
 - IAM 支持 PUBLIC Client 的 Authorization Code + PKCE、Refresh Token 轮换。
 - `GET /api/v1/me` 返回裸 `CurrentUserView`：`id, tenantId, tenantName, principalScope, username, displayName, roles[], permissions[]`。Sales/CRM/ERP/Order/BI 通常为 `ApiResponse`：`{code:"OK",message,data,requestId,timestamp}`。
 - 业务 API 用 `Authorization: Bearer <access_token>`，不使用 ID Token，不伪造 `X-Rigour-*` 身份头。租户由可信认证上下文确定。
-- `/login` 是 Spring Security HTML 表单和 CSRF 登录；`/scdp/session` 只返回浏览器会话及 CSRF 状态。没有查到可直接供 App 提交用户名密码换 Token 的 JSON API。
+- `/login` 是 Spring Security HTML 表单和 CSRF 登录；`/scdp/session` 只返回浏览器会话及 CSRF 状态。原来没有 App JSON 密码入口；本次新增 IAM `/api/v1/auth/native-app/login`，返回绑定 PKCE 的授权码，随后仍由标准 `/oauth2/token` 签发和续期。新入口默认关闭，DEV 部署须先补齐迁移来源。
 
-### 本轮 DEV 已完成
+### 本日较早浏览器方案的 DEV 回执
 
 - App `config.uts` 采用 `development`、Gateway `http://localhost:27680`、IAM `http://localhost:27681`、PUBLIC Client ID `rigour-sales-app-android-dev`、调试回调 `uniappx://rigour-sales/auth/callback`。Android 需通过 ADB reverse 连接本机服务。
 - Platform 隔离工作树 B2 的 `SalesAppClientBootstrapCommand` 已随 IAM 启动成功注册上述客户端；这是 DEV 客户端注册证据，不是正式环境或公司签名包注册证据。
@@ -34,8 +34,8 @@
 
 - 本轮检查的 2 个 DEV IAM 账号均未匹配 Sales identity，未进行冒用身份绑定。管理员的 Sales `activity-summary` 返回 403 符合未绑定销售身份的状态；需要具备本人销售档案、平台权限及生效规则的真实账号验证，数据库有记录不代表该账号可见。
 - Android 管理员的浏览器登录返回、`/me` 身份读取、客户列表/详情和订单列表可读已通过；订单详情、拜访列表/详情、字段逐项核对和真实销售员工可见范围仍待验收。iOS、HarmonyOS、Web 公司登录尚未接入，编译成功不等于登录可用。
-- 正式环境还需 HTTPS origin、正式 PUBLIC Client 注册及公司签名包的精确回调。当前 `com.rigour.workbench://auth/callback` 仍为正式合同，不能用 DEV 注册代替正式确认。
-- 三端必须验证冷启动回调、加密随机 state/verifier、S256、state 单次消费与超时、安全令牌存储。当前 Token 仅保存在内存，不保存密码、Token 至普通 storage、日志或诊断导出。若后续申请 `openid` 并使用 ID Token，必须完整校验签名、iss、aud、nonce。
+- 正式环境还需 HTTPS origin、正式 PUBLIC Client 注册、原生登录入口授权和公司签名包。当前 `com.rigour.workbench://auth/callback` 仍为正式合同，不能用 DEV 注册代替正式确认。
+- 三端必须验证原生表单、加密随机 state/verifier、S256、刷新轮换、冷启动恢复与安全令牌存储。Android 新实现以 Keystore 保存 refresh，Access Token 仍仅内存；不保存密码或 Token 至普通 storage、日志或诊断导出。若后续申请 `openid` 并使用 ID Token，必须完整校验签名、iss、aud、nonce。
 
 ## 3. 可复用的只读接口
 
@@ -106,6 +106,6 @@ Platform 根：`06_代码工程/rigour-supply-chain-digital-platform`。
 - BI：`services/rg-scdp-bi/bi-server/src/main/java/com/rigour/analytics/application/service/BiDataScopeService.java`；`infrastructure/persistence/scope/{BiScopePredicates,BiAuthorityFilter}.java`。
 - HR：`services/rg-scdp-hr/hr-api/src/main/java/com/rigour/hr/api/v1/HrPayrollApi.java`；`hr-server/.../infrastructure/persistence/repository/HrDataScope.java`。
 
-本轮 `npm run app:v1:test` 为 86/86；`onAppShow` 修复后 Android 14:33:11、iOS 14:37:26 原生编译和 HarmonyOS 14:44:08 unsigned HAP 构建通过，iOS/HarmonyOS 公司登录仍未接入。iOS、鸿蒙日志分别为 `/tmp/sales-app-ios-auth-callback-build.log`、`/tmp/sales-app-harmony-auth-callback-build.log`。Android 手机已同步，管理员登录和客户列表/详情、订单列表可读已验证；订单详情、逐字段核对及真实销售账号范围仍待验收。DEV 数据库只读快照为 CRM 客户 2,508、订单 4,027、正式拜访 11；这些是环境记录数，不是任何销售账号的授权可见数量。
+本日较早浏览器方案的 `npm run app:v1:test` 为 86/86；`onAppShow` 修复后 Android 14:33:11、iOS 14:37:26 原生编译和 HarmonyOS 14:44:08 unsigned HAP 构建通过，iOS/HarmonyOS 公司登录仍未接入。iOS、鸿蒙日志分别为 `/tmp/sales-app-ios-auth-callback-build.log`、`/tmp/sales-app-harmony-auth-callback-build.log`。Android 手机已同步，管理员登录和客户列表/详情、订单列表可读已验证；订单详情、逐字段核对及真实销售账号范围仍待验收。DEV 数据库只读快照为 CRM 客户 2,508、订单 4,027、正式拜访 11；这些是环境记录数，不是任何销售账号的授权可见数量。
 
 下一次真实联调至少验证：同平台真实员工登录、401/403 独立展示、两个不同员工互不可越权读取、宽权限账号页面文案正确、空数据不替换演示数据、列表与详情的精确 ID、金额和北京时间对应平台原记录，以及第二页/切换筛选不混数据。当前服务 health、计数、mock 测试和编译不替代上述账号验收。
