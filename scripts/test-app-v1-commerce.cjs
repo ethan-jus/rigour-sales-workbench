@@ -335,3 +335,37 @@ for (const kind of ['customers', 'orders']) {
     assert.equal(h.requests.length, 6); assert.equal(s.commerce[kind].length, 0)
   })
 }
+
+
+test('home preloads share in-flight and fresh results with customer and order tabs', () => {
+  const h = harness(), s = h.service
+  s.preloadCommerceLists()
+  assert.equal(h.requests.length, 2)
+  s.preloadCommerceLists()
+  s.loadCustomers('', false, false)
+  s.loadOrders('', '', false, false)
+  assert.equal(h.requests.length, 2)
+  h.requests[0][3](new JsonObject({ data: { total: 1, items: [{ id: '1', customerName: '真实客户' }] } }))
+  h.requests[1][3](new JsonObject({ data: { total: 1, items: [{ id: '2', orderNo: 'XS02' }] } }))
+  s.preloadCommerceLists()
+  assert.equal(h.requests.length, 2)
+  assert.equal(s.commerce.customers[0].name, '真实客户')
+  assert.equal(s.commerce.orders[0].number, 'XS02')
+  s.loadCustomers('新搜索')
+  s.loadOrders('', 'APPROVED')
+  assert.equal(h.requests.length, 4)
+  s.preloadCommerceLists()
+  assert.equal(h.requests.length, 4)
+  assert.equal(s.commerce.customerQuery, '新搜索')
+  assert.equal(s.commerce.orderStatusQuery, 'APPROVED')
+})
+
+test('home preloading is restricted by current login and permissions', () => {
+  const h = harness(), s = h.service
+  h.session.permissions = ['crm:customer:read']
+  s.preloadCommerceLists()
+  assert.equal(h.requests.length, 1)
+  h.session.authenticated = false
+  s.preloadCommerceLists()
+  assert.equal(h.requests.length, 1)
+})

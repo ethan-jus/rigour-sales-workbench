@@ -207,6 +207,13 @@ let orderRequest = 0
 let customerDetailRequest = 0
 let productDetailRequest = 0
 let orderDetailRequest = 0
+// Warm only the two frequently opened lists; use the same scope, freshness and in-flight guards as the pages.
+export function preloadCommerceLists(): void {
+  loadDrafts()
+  if (!session.authenticated) return
+  if (hasPermission('crm:customer:read')) loadCustomers(commerce.customerQuery, false, false)
+  if (hasPermission('order:read')) loadOrders(commerce.orderQuery, commerce.orderStatusQuery, false, false)
+}
 export function loadCustomers(query: string = '', append: boolean = false, refresh: boolean = true): void {
   loadDrafts()
   if (!session.authenticated) return

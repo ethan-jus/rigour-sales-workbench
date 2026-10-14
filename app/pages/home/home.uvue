@@ -35,7 +35,7 @@
 <script setup lang="uts">
 import { session, hasPermission } from '../../services/session.uts'
 import { requestApi } from '../../services/api.uts'
-import { commerce, loadDrafts, CartDraft } from '../../services/commerce.uts'
+import { commerce, loadDrafts, preloadCommerceLists, CartDraft } from '../../services/commerce.uts'
 import { loadLocalVisits, visitDraftCount, hasActiveVisitRecording, resumeVisitPath, visitToday } from '../../services/visits.uts'
 const today = ref(visitToday())
 const visitsTotal = ref('—')
@@ -61,7 +61,7 @@ function openPlan(): void { uni.navigateTo({ url: '/pages/visit/visit?view=plan'
 function openWork(view: string): void { uni.navigateTo({ url: '/pages/work/work?view=' + view }) }
 function startVisit(): void { uni.navigateTo({ url: recording.value ? resumeVisitPath() : '/pages/visit/visit?view=select' }) }
 function loadHome(): void {
-  loadDrafts(); loadLocalVisits(); visitsTotal.value = '—'; today.value = visitToday()
+  loadDrafts(); preloadCommerceLists(); loadLocalVisits(); visitsTotal.value = '—'; today.value = visitToday()
   summaryHint.value = session.authenticated ? '当前账号暂无拜访统计权限' : '登录后查看本人拜访记录'
   if (!hasPermission('sales:visit:own:read')) return
   summaryHint.value = '正在加载…'
