@@ -37,7 +37,8 @@ export function parseApiJson(text: string): UTSJSONObject | null {
   while (end > start && isWhitespace(text.charAt(end - 1))) end--
   const input = text.substring(start, end)
   if (!input.startsWith('{') || !input.endsWith('}')) return null
-  let output = ''
+  const parts = [] as string[]
+  let copiedUntil = 0
   let quoted = false
   let escaped = false
   let previous = ''
@@ -46,14 +47,13 @@ export function parseApiJson(text: string): UTSJSONObject | null {
   while (index < input.length) {
     const character = input.charAt(index)
     if (quoted) {
-      output += character
       if (escaped) escaped = false
       else if (character == '\\') escaped = true
       else if (character == '"') { quoted = false; previous = '"' }
       index++
       continue
     }
-    if (character == '"') { quoted = true; output += character; index++; continue }
+    if (character == '"') { quoted = true; index++; continue }
     if (isDigit(character) || character == '-') {
       let end = index + 1
       while (end < input.length && isNumberCharacter(input.charAt(end))) end++
@@ -61,7 +61,11 @@ export function parseApiJson(text: string): UTSJSONObject | null {
       const arrayValue = previous == ',' && containers.length > 0 && containers[containers.length - 1] == '['
       const valuePosition = previous == ':' || previous == '[' || arrayValue
       // Do not turn malformed JSON, such as an unquoted numeric key, into valid JSON.
-      output += valuePosition && isLargeInteger(number) ? '"' + number + '"' : number
+      if (valuePosition && isLargeInteger(number)) {
+        parts.push(input.substring(copiedUntil, index))
+        parts.push('"' + number + '"')
+        copiedUntil = end
+      }
       previous = number.charAt(number.length - 1)
       index = end
       continue
@@ -69,9 +73,11 @@ export function parseApiJson(text: string): UTSJSONObject | null {
     if (character == '{' || character == '[') containers.push(character)
     else if (character == '}' || character == ']') { if (containers.length > 0) containers.pop() }
     if (!isWhitespace(character)) previous = character
-    output += character
     index++
   }
   if (quoted) return null
+  // Copy whole unchanged spans once, instead of rebuilding the response for every character.
+  if (parts.length > 0) parts.push(input.substring(copiedUntil))
+  const output = parts.length == 0 ? input : parts.join('')
   try { return JSON.parse<UTSJSONObject>(output) } catch (error) { return null }
 }

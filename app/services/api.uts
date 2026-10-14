@@ -34,6 +34,7 @@ function sendAuthenticatedRequest(path: string, method: string, body: UTSJSONObj
   if (session.revision != revision) { fail('账号已变更，请重新加载。'); return }
   const tokenVersion = session.tokenVersion
   const headers: UTSJSONObject = { 'Authorization': 'Bearer ' + token, 'Accept-Language': 'zh-CN', 'Content-Type': 'application/json' }
+  const startedAt = Date.now()
   uni.request<string>({
     url: appEnvironment.gatewayOrigin + '/api/v1' + path,
     method: method as RequestMethod,
@@ -53,8 +54,10 @@ function sendAuthenticatedRequest(path: string, method: string, body: UTSJSONObj
         sendAuthenticatedRequest(path, method, body, revision, true, session.tokenVersion == tokenVersion, success, fail)
         return
       }
+      const receivedAt = Date.now()
       const responseText = response.data
       const result = responseText == null ? null : parseApiJson(responseText)
+      if (appEnvironment.environment == 'development') console.log('[DEV API] ' + method + ' ' + path.split('?')[0] + ' networkMs=' + (receivedAt - startedAt).toString() + ' parseMs=' + (Date.now() - receivedAt).toString() + ' chars=' + (responseText?.length ?? 0).toString())
       const code = result?.getString('code') ?? ''
       if (response.statusCode < 200 || response.statusCode >= 300) {
         fail(apiErrorMessage(code, response.statusCode))

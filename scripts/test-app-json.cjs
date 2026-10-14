@@ -66,3 +66,15 @@ test('integer preservation does not depend on native number or long capacity', (
   const digits = '9'.repeat(400)
   assert.deepEqual(parseApiJson('{"id":' + digits + ',"negative":-' + digits + '}'), { id: digits, negative: '-' + digits })
 })
+
+test('large paginated payload preserves text and every long identifier across unchanged spans', () => {
+  const text = '客户订单中文说明\\"[]:12345678901234567890'.repeat(300)
+  const payload = '{"items":[' + Array.from({ length: 40 }, (_, i) => '{"id":92233720368547758' + String(i).padStart(2, '0') + ',"text":' + JSON.stringify(text) + ',"amount":12.5}').join(',') + ']}'
+  const result = parseApiJson(payload)
+  assert.equal(result.items.length, 40)
+  for (let i = 0; i < 40; i++) {
+    assert.equal(result.items[i].id, '92233720368547758' + String(i).padStart(2, '0'))
+    assert.equal(result.items[i].text, text)
+    assert.equal(result.items[i].amount, 12.5)
+  }
+})

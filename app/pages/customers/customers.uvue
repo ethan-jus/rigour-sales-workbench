@@ -1,7 +1,7 @@
 <template>
-  <scroll-view class="page" direction="vertical">
-    <view class="content">
-      <view class="heading-row"><text class="heading">客户</text><text class="count" v-if="session.authenticated">{{ commerce.customersTotal }} 位</text></view>
+  <list-view class="page" direction="vertical">
+    <list-item :type="1"><view class="content list-header">
+    <view class="heading-row"><text class="heading">客户</text><text class="count" v-if="session.authenticated">{{ commerce.customersTotal }} 位</text></view>
       <text class="intro">客户信息与供应链平台同步，按账号权限展示。</text>
       <view v-if="!session.authenticated" class="empty"><text class="empty-icon">◎</text><text class="empty-title">登录后查看客户</text><text class="empty-copy">使用供应链系统账号，继续客户跟进与下单。</text><button class="primary" @click="login">使用平台账号登录</button></view>
       <view v-else>
@@ -9,25 +9,30 @@
         <view class="scope"><text class="scope-label">可查看客户</text><text class="scope-description">范围由平台授权</text></view>
         <view v-if="commerce.customersError.length > 0" class="notice"><text class="notice-title">客户加载失败</text><text class="notice-copy">{{ commerce.customersError }}</text><button class="secondary" @click="search">重新加载</button></view>
         <view v-if="commerce.customersLoading && commerce.customers.length == 0" class="empty"><text class="empty-copy">正在加载客户…</text></view>
-        <view v-for="customer in commerce.customers" :key="customer.id" class="customer-row" @click="openCustomer(customer)">
+      </view>
+    </view></list-item>
+    <list-item v-for="customer in visibleCustomers" :key="customer.id" :type="0">
+      <view class="list-row"><view class="customer-row" @click="openCustomer(customer)">
           <view class="avatar"><text class="avatar-text">客</text></view>
           <view class="customer-copy"><view class="row"><text class="customer-name">{{ customer.name }}</text><text class="chevron">›</text></view><text class="meta">{{ customer.contact.length > 0 ? customer.contact : '未填写联系人' }}{{ customer.phone.length > 0 ? ' · ' + customer.phone : '' }}</text><text class="address">{{ customer.address.length > 0 ? customer.address : '未填写地址' }}</text></view>
-        </view>
+        </view></view>
+    </list-item>
+    <list-item v-if="session.authenticated" :type="2"><view class="content list-footer">
         <view v-if="!commerce.customersLoading && commerce.customersError.length == 0 && commerce.customers.length == 0" class="empty"><text class="empty-icon">◎</text><text class="empty-title">{{ query.length > 0 ? '没有找到匹配客户' : '暂无可查看客户' }}</text><text class="empty-copy">{{ query.length > 0 ? '换个名称再搜索试试。' : '客户分配和数据权限由平台统一管理。' }}</text></view>
         <button v-if="commerce.customers.length < commerce.customersTotal" class="load-more" :disabled="commerce.customersLoading" @click="loadMore">{{ commerce.customersLoading ? '加载中…' : '加载更多客户' }}</button>
         <view v-if="drafts.length > 0" class="draft-section"><text class="section-title">继续购物草稿</text><view v-for="draft in drafts" :key="draft.customerId" class="draft-row" @click="openDraft(draft)"><view class="draft-copy"><text class="draft-name">{{ draft.customerName }}</text><text class="meta">{{ draft.lines.length }} 种商品 · 已保存在本机</text></view><text class="orange">继续 →</text></view></view>
-      </view>
-    </view>
-  </scroll-view>
+          </view></list-item>
+  </list-view>
 </template>
 <script setup lang="uts">
 import { session, requireSession } from '../../services/session.uts'
 import { commerce, loadCustomers, loadDrafts } from '../../services/commerce.uts'
 import type { Customer, CartDraft } from '../../services/commerce.uts'
 const query = ref('')
+const visibleCustomers = computed((): Customer[] => session.authenticated ? commerce.customers : [] as Customer[])
 let owner = ''
 const drafts = computed((): CartDraft[] => commerce.drafts.filter((draft: CartDraft): boolean => draft.lines.length > 0))
-onShow(() => { loadDrafts(); const currentOwner = session.tenantId + ':' + session.userId; if (owner != currentOwner) { owner = currentOwner; query.value = '' }; if (session.authenticated) loadCustomers(query.value) })
+onShow(() => { loadDrafts(); const currentOwner = session.tenantId + ':' + session.userId; if (owner != currentOwner) { owner = currentOwner; query.value = '' }; if (session.authenticated) loadCustomers(query.value, false, false) })
 function login(): void { requireSession() }
 function search(): void { loadCustomers(query.value.trim()) }
 function loadMore(): void { loadCustomers(query.value.trim(), true) }
@@ -35,6 +40,9 @@ function openCustomer(customer: Customer): void { uni.navigateTo({ url: '/pages/
 function openDraft(draft: CartDraft): void { commerce.selectedCustomerId = draft.customerId; uni.navigateTo({ url: '/pages/commerce/commerce?view=cart' }) }
 </script>
 <style>
+.list-header.content { padding-bottom: 0; }
+.list-footer.content { padding-top: 0; }
+.list-row { padding-left: 22px; padding-right: 22px; }
 .page { flex: 1; background-color: #fffdf9; }
 .content { padding: 22px; padding-bottom: 34px; }
 .heading-row { flex-direction: row; align-items: center; justify-content: space-between; }

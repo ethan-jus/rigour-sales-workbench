@@ -64,6 +64,7 @@ export function loadDrafts(): void {
   commerce.customers = [] as Customer[]
   commerce.products = [] as Product[]
   commerce.orders = [] as SalesOrder[]
+  customersLoadedAt = 0; ordersLoadedAt = 0; customersScope = ''; ordersScope = ''
   commerce.customersTotal = 0; commerce.productsTotal = 0; commerce.ordersTotal = 0
   commerce.customerQuery = ''; commerce.productQuery = ''; commerce.orderQuery = ''; commerce.orderStatusQuery = ''
   commerce.customerDetail = null; commerce.productDetail = null; commerce.orderDetail = null
@@ -193,20 +194,36 @@ function parseOrder(row: UTSJSONObject): SalesOrder {
   })
   return { paymentStatus: textField(row, 'paymentStatusCode'), outboundStatus: textField(row, 'outboundStatusCode'), paidAmount: row.getNumber('paidAmount'), unpaidAmount: row.getNumber('unpaidAmount'), id: identifier(row, 'id'), number: textField(row, 'orderNo'), customerId: identifier(row, 'customerId'), customerName: textField(row, 'customerNameSnapshot'), status: textField(row, 'orderStatusCode'), time: displayTime(textField(row, 'orderDate')), total: row.getNumber('payableAmount'), address: '', note: '', lines: lines } as SalesOrder
 }
+// Reuse only successful, recent reads for the same authenticated permission snapshot.
+const listFreshnessMs = 30000
+function listScope(): string { return ownerKey() + ':' + session.revision.toString() + ':' + session.permissions.join(',') }
+let customersLoadedAt = 0
+let ordersLoadedAt = 0
+let customersScope = ''
+let ordersScope = ''
 let customerRequest = 0
 let productRequest = 0
 let orderRequest = 0
 let customerDetailRequest = 0
 let productDetailRequest = 0
 let orderDetailRequest = 0
-export function loadCustomers(query: string = '', append: boolean = false): void {
+export function loadCustomers(query: string = '', append: boolean = false, refresh: boolean = true): void {
   loadDrafts()
   if (!session.authenticated) return
+  const scope = listScope()
+  const sameFilter = query == commerce.customerQuery
+  const sameScope = customersScope == scope
+  if (hasPermission('crm:customer:read') && sameFilter && sameScope) {
+    if (commerce.customersLoading && (append || !refresh)) return
+    if (!append && !refresh && customersLoadedAt > 0 && Date.now() - customersLoadedAt < listFreshnessMs) return
+  }
   const revision = ++customerRequest
-  const more = append && query == commerce.customerQuery
+  const more = append && sameFilter && sameScope
   const begin = more ? commerce.customers.length : 0
-  if (!more || !hasPermission('crm:customer:read')) { commerce.customers = [] as Customer[]; commerce.customersTotal = 0; commerce.customerDetail = null }
-  if (!hasPermission('crm:customer:read')) { commerce.customersLoading = false; commerce.customersError = '当前账号没有客户查看权限'; return }
+  if (!sameFilter || !sameScope || !hasPermission('crm:customer:read')) { commerce.customers = [] as Customer[]; commerce.customersTotal = 0; commerce.customerDetail = null }
+  if (!hasPermission('crm:customer:read')) { customersLoadedAt = 0; customersScope = ''; commerce.customersLoading = false; commerce.customersError = '当前账号没有客户查看权限'; return }
+  customersLoadedAt = 0
+  customersScope = scope
   const owner = ownerKey()
   commerce.customerQuery = query
   commerce.customersLoading = true
@@ -221,6 +238,7 @@ export function loadCustomers(query: string = '', append: boolean = false): void
     const items = rows.map((row: UTSJSONObject): Customer => parseCustomer(row))
     if (items.some((item: Customer): boolean => item.id.length == 0)) { commerce.customersLoading = false; commerce.customersError = '记录编号无效或超出安全范围，请联系管理员'; return }
     commerce.customers = more ? commerce.customers.concat(items) : items
+    customersLoadedAt = Date.now()
     commerce.customersTotal = data.getNumber('total') ?? items.length
     commerce.customersLoading = false
   }, (message: string) => { if (revision == customerRequest && owner == ownerKey() && session.authenticated) { commerce.customers = [] as Customer[]; commerce.customersTotal = 0; commerce.customerDetail = null; commerce.customersLoading = false; commerce.customersError = message } })
@@ -251,14 +269,23 @@ export function loadProducts(query: string = '', append: boolean = false): void 
     commerce.productsLoading = false
   }, (message: string) => { if (revision == productRequest && owner == ownerKey() && session.authenticated) { commerce.products = [] as Product[]; commerce.productsTotal = 0; commerce.productDetail = null; commerce.productsLoading = false; commerce.productsError = message } })
 }
-export function loadOrders(query: string = '', status: string = '', append: boolean = false): void {
+export function loadOrders(query: string = '', status: string = '', append: boolean = false, refresh: boolean = true): void {
   loadDrafts()
   if (!session.authenticated) return
+  const scope = listScope()
+  const sameFilter = query == commerce.orderQuery && status == commerce.orderStatusQuery
+  const sameScope = ordersScope == scope
+  if (hasPermission('order:read') && sameFilter && sameScope) {
+    if (commerce.ordersLoading && (append || !refresh)) return
+    if (!append && !refresh && ordersLoadedAt > 0 && Date.now() - ordersLoadedAt < listFreshnessMs) return
+  }
   const revision = ++orderRequest
-  const more = append && query == commerce.orderQuery && status == commerce.orderStatusQuery
+  const more = append && sameFilter && sameScope
   const begin = more ? commerce.orders.length : 0
-  if (!more || !hasPermission('order:read')) { commerce.orders = [] as SalesOrder[]; commerce.ordersTotal = 0; commerce.orderDetail = null }
-  if (!hasPermission('order:read')) { commerce.ordersLoading = false; commerce.ordersError = '当前账号没有订单查看权限'; return }
+  if (!sameFilter || !sameScope || !hasPermission('order:read')) { commerce.orders = [] as SalesOrder[]; commerce.ordersTotal = 0; commerce.orderDetail = null }
+  if (!hasPermission('order:read')) { ordersLoadedAt = 0; ordersScope = ''; commerce.ordersLoading = false; commerce.ordersError = '当前账号没有订单查看权限'; return }
+  ordersLoadedAt = 0
+  ordersScope = scope
   const owner = ownerKey()
   commerce.orderQuery = query
   commerce.orderStatusQuery = status
@@ -274,6 +301,7 @@ export function loadOrders(query: string = '', status: string = '', append: bool
     const items = rows.map((row: UTSJSONObject): SalesOrder => parseOrder(row))
     if (items.some((item: SalesOrder): boolean => item.id.length == 0)) { commerce.ordersLoading = false; commerce.ordersError = '记录编号无效或超出安全范围，请联系管理员'; return }
     commerce.orders = more ? commerce.orders.concat(items) : items
+    ordersLoadedAt = Date.now()
     commerce.ordersTotal = data.getNumber('total') ?? items.length
     commerce.ordersLoading = false
   }, (message: string) => { if (revision == orderRequest && owner == ownerKey() && session.authenticated) { commerce.orders = [] as SalesOrder[]; commerce.ordersTotal = 0; commerce.orderDetail = null; commerce.ordersLoading = false; commerce.ordersError = message } })

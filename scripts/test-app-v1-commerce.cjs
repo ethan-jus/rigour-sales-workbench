@@ -25,7 +25,7 @@ function harness() {
   const requests = []
   const messages = []
   let failStorage = false
-  const session = { authenticated: true, tenantId: 'company', userId: 'u1', username: 'sales-one', permissions: ['crm:customer:read', 'erp:product:read', 'order:read'], expiresAt: Date.now() + 3600000 }
+  const session = { revision: 1, authenticated: true, tenantId: 'company', userId: 'u1', username: 'sales-one', permissions: ['crm:customer:read', 'erp:product:read', 'order:read'], expiresAt: Date.now() + 3600000 }
   const clearSession = () => Object.assign(session, { authenticated: false, tenantId: '', userId: '', username: '', permissions: [], expiresAt: 0 })
   const requireSession = () => session.authenticated
   const imports = name => {
@@ -286,3 +286,52 @@ test('repeated cart/checkout/result/continue-shopping flow returns to existing n
     assert.equal(pages[1].options.getString('view'), 'products')
   }
 })
+
+for (const kind of ['customers', 'orders']) {
+  test(`${kind} tab reuse avoids duplicate reads, preserves rows during revalidation, and expires`, () => {
+    const h = harness(), s = h.service
+    const realNow = Date.now
+    let now = 100000
+    Date.now = () => now
+    const load = (refresh = false, append = false, query = '') => kind === 'customers'
+      ? s.loadCustomers(query, append, refresh) : s.loadOrders(query, '', append, refresh)
+    try {
+      load(); load()
+      assert.equal(h.requests.length, 1, 'in-flight tab switch must not enqueue another request')
+      h.requests[0][3](new JsonObject({ data: { total: 2, items: [{ id: 1, customerName: '甲' }] } }))
+      const firstRows = s.commerce[kind]
+      now += 1000; load()
+      assert.equal(h.requests.length, 1)
+      assert.equal(s.commerce[kind], firstRows)
+      load(true)
+      assert.equal(h.requests.length, 2, 'manual search always revalidates')
+      assert.equal(s.commerce[kind], firstRows, 'same-filter refresh must not blank the list')
+      h.requests[1][3](new JsonObject({ data: { total: 2, items: [{ id: 2 }] } }))
+      now += 30001; load()
+      assert.equal(h.requests.length, 3, 'stale snapshot triggers a new read')
+      h.requests[2][4]('暂时无法加载')
+      load()
+      assert.equal(h.requests.length, 4, 'failed read is never treated as fresh')
+    } finally { Date.now = realNow }
+  })
+
+  test(`${kind} reuse never survives changed account, session, permissions, or search`, () => {
+    const h = harness(), s = h.service
+    const load = (query = '') => kind === 'customers'
+      ? s.loadCustomers(query, false, false) : s.loadOrders(query, '', false, false)
+    const complete = () => h.requests.at(-1)[3](new JsonObject({ data: { total: 1, items: [{ id: 1 }] } }))
+    load(); complete()
+    h.session.revision++; load()
+    assert.equal(h.requests.length, 2); assert.equal(s.commerce[kind].length, 0); complete()
+    h.session.permissions.push('additional:permission'); load()
+    assert.equal(h.requests.length, 3); complete()
+    load('新筛选'); assert.equal(h.requests.length, 4); assert.equal(s.commerce[kind].length, 0); complete()
+    const allowed = h.session.permissions
+    h.session.permissions = []; load('新筛选')
+    assert.equal(s.commerce[kind].length, 0); assert.equal(h.requests.length, 4)
+    h.session.permissions = allowed; load('新筛选')
+    assert.equal(h.requests.length, 5); complete()
+    h.session.userId = 'u2'; load()
+    assert.equal(h.requests.length, 6); assert.equal(s.commerce[kind].length, 0)
+  })
+}
