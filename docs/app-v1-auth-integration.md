@@ -36,11 +36,11 @@
 
 HTTP 只用于 development 的精确 loopback 配置，不能扩大为 LAN 地址或正式环境 HTTP。正式发布须使用公司签名包、HTTPS、独立正式 PUBLIC Client 和明确启用的 IAM 原生登录入口，不携带客户端 Secret 或管理员 Token。
 
-原生 IAM 入口默认关闭，显式允许 App client IDs；参见 Platform `docs/SALES_APP_DEV_AUTH.md`。NATIVE_APP 会话需要 V133 扩展类型约束，共享 DEV 当前缺失已执行 V132 的源文件；未补齐前不迁移、不跳过校验或 repair。
+原生 IAM 入口默认关闭，显式允许 App client IDs；参见 Platform `docs/SALES_APP_DEV_AUTH.md`。NATIVE_APP 会话使用 V133 扩展类型约束。2026-10-14 已合并同事 V132 原始文件、修复空库基线冲突；隔离 DEV IAM 已启用原生入口，共享 DEV 执行 V133 后 Flyway 校验成功。未改写历史 SQL 或执行 repair。
 
 ## 验收与保留边界
 
-此前浏览器方案已由用户确认 Android 显示管理员、客户列表/详情和订单列表可读，接口也返回成功；这不代表本次原生登录和续期已通过真机验收。原始只读业务验证记录保留于 [DEV 联调回执](app-v1-dev-integration-receipt-20261014.md)。
+此前浏览器方案已由用户确认 Android 显示管理员、客户列表/详情和订单列表可读，接口也返回成功；2026-10-14 新原生入口启用后，手机登录/令牌交换/身份读取均返回200，用户明确确认原生登录成功、重开也能恢复。服务端 refresh 轮换及退出撤销另有真实 DEV 接口回执；尚未在手机上等待 Access Token 自然到期测试。原始只读业务验证记录保留于 [DEV 联调回执](app-v1-dev-integration-receipt-20261014.md)。
 
 本轮必须分别验证：原生密码登录、错误密码与锁定、Token 到期续期、并发401单次刷新、退出后旧响应、重新打开App恢复、存储故障、网络中断、账号停用及权限变化。JS mock、Android/iOS/HarmonyOS编译、Testcontainers与真实DEV手机回执分别报告。
 

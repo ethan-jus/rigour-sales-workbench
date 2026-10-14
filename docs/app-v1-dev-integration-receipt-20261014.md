@@ -12,9 +12,10 @@
 - 退出补丁经独立源码行为复核通过：pending落地后重开不读旧凭据；清除失败+断网不报成功；重试可完成；done重开无错误；新显式登录仅在安全保存成功后移除退出标记。
 - IAM 35项检查通过，含21项真实Spring Security/Testcontainers流程，日志 `/tmp/iam-native-login-integration-v3.log`；覆盖原生密码认证、锁定、PKCE、refresh轮换/重放、账号停用、当前会话退出和Web刷新回归。
 - IAM 已成功打包；后端原生登录提交为 `6a78499`。
-- V133已在隔离测试数据库成功执行。共享DEV只读 `Flyway.validateWithResult()` 确认 V132 为 `APPLIED_VERSIONED_MIGRATION_NOT_RESOLVED`，V133 尚未执行，日志 `/tmp/iam-native-dev-flyway-validate.log`。本机与远程dev缺V132原始SQL；在找回原始文件前不迁移、不关闭校验、不repair。原生登录尚未替换正在运行的隔离IAM，不能据测试报告声称手机已可用。
-- 数据库规范脚本未能执行：该工作树缺其依赖的 `scripts/database/general-ci-baselines.json`。V133只扩展CHECK，未改字符列或历史迁移。
-- 待补齐迁移后，启用IAM原生入口、同步手机，验证平台同账号原生登录、短期Token续期、重开App恢复与退出。之前浏览器登录成功不替代这些检查。
+- Platform 已合并同事 dev 原始 V132；保留发布过的 SQL，新增 B120 解决新库排序规则冲突。IAM 默认 Flyway 路径下 49 项、排序规则策略 3 项，共 52 项测试通过，0 跳过；日志 `/tmp/iam-app-baseline-fixed-tests.log`。
+- 16:28 本机隔离 IAM 已启用原生入口，仅允许 Android DEV client；共享 DEV 正常执行 V133，V132 校验值仍为 `-176225895`，V133 为 `-1799016397`，升级后只读 Flyway validate 成功。没有 repair、clean、跳过迁移或转换存量排序规则。
+- 真实 DEV 管理员接口验证通过：原生密码登录/PKCE/权限读取/客户订单读取/refresh 均 200，refresh 发生轮换；退出 204，已退出凭据刷新被拒绝（400 invalid_grant）。测试会话已撤销，未改账号密码或业务数据。接口回执与手机回执分别记录。
+- 16:24:20 Android 编译成功，16:24:26 同步真机成功，16:24:28 启动至 App 自有账号密码页。日志 `/tmp/sales-app-native-login-android-sync-20261014.log`。用户在新 IAM 启用前尝试收到旧入口的 401；后端启用后 16:30:11 手机原生登录 200，16:30:12 令牌交换及 `/me` 200；用户明确确认“登录成功，重开也能恢复”。安卓原生密码登录及重开恢复已验收。Platform 修复提交 `9486415a`。
 
 ## 较早浏览器方案已确认
 
@@ -44,8 +45,8 @@
 
 ## 环境保护
 
-- DEV Sales 的临时 check-in worker 与 AI worker 已禁用；共享 DEV 尚未执行本次新增的 V133 数据库迁移。
+- DEV Sales 的临时 check-in worker 与 AI worker 已禁用；共享 DEV 仅执行本次新增的 V133 会话类型约束迁移，不修改临时打卡数据。
 - 生产临时打卡服务保持原状，本轮未切流、迁移、停用或修改其业务数据。
 - 正式上线还需正式 HTTPS 配置、PUBLIC Client 和公司签名回调，以及真实账号/设备验收；DEV health 和编译回执不能替代上线条件。
 
-较早浏览器方案已确认 Android 管理员登录，以及客户列表、客户详情和订单列表可读；原生表单的真实 DEV 验收仍待完成，不能扩展为“订单详情已验收”“销售登录成功”或“真实销售数据已全部通过”。
+较早浏览器方案已确认 Android 管理员登录，以及客户列表、客户详情和订单列表可读；原生表单的真实 DEV 接口、安卓手机登录及重开恢复均已通过，不能扩展为“订单详情已验收”“销售登录成功”或“真实销售数据已全部通过”。
