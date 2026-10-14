@@ -1,19 +1,41 @@
 export type AppEnvironment = {
+  environment: string,
   gatewayOrigin: string,
   issuer: string,
   clientId: string,
   redirectUri: string
 }
 
-// Fill with a registered PUBLIC App client and reviewed environment before trial.
-// No passwords, client secrets or developer/administrator bearer tokens belong here.
+// DEV reaches the developer's isolated services through ADB reverse.
+// Production must use HTTPS and a company-signed App callback.
 export const appEnvironment: AppEnvironment = {
-  gatewayOrigin: '',
-  issuer: '',
-  clientId: '',
-  redirectUri: 'com.rigour.workbench://auth/callback'
+  environment: 'development',
+  gatewayOrigin: 'http://localhost:27680',
+  issuer: 'http://localhost:27681',
+  clientId: 'rigour-sales-app-android-dev',
+  redirectUri: 'uniappx://rigour-sales/auth/callback'
+}
+
+export function serviceOrigin(value: string): string {
+  if (value.startsWith('https://')) {
+    const authority = value.substring(8).split('/')[0]
+    if (/^[A-Za-z0-9.-]+(:[0-9]{1,5})?$/.test(authority)) return 'https://' + authority
+  }
+  if (appEnvironment.environment == 'development') {
+    for (const origin of ['http://localhost:27680', 'http://localhost:27681']) {
+      if (value == origin || value.startsWith(origin + '/')) return origin
+    }
+  }
+  return ''
 }
 
 export function environmentReady(): boolean {
-  return appEnvironment.gatewayOrigin.startsWith('https://') && appEnvironment.issuer.startsWith('https://') && appEnvironment.clientId.length > 0
+  if (appEnvironment.environment != 'development' && appEnvironment.clientId == 'rigour-sales-app-android-dev') return false
+  if (serviceOrigin(appEnvironment.gatewayOrigin) != appEnvironment.gatewayOrigin || appEnvironment.gatewayOrigin.length == 0) return false
+  if (serviceOrigin(appEnvironment.issuer).length == 0 || appEnvironment.issuer.includes('?') || appEnvironment.issuer.includes('#')) return false
+  if (appEnvironment.clientId.length == 0) return false
+  if (appEnvironment.redirectUri == 'com.rigour.workbench://auth/callback') return true
+  return appEnvironment.environment == 'development' && appEnvironment.clientId == 'rigour-sales-app-android-dev'
+    && appEnvironment.gatewayOrigin == 'http://localhost:27680' && appEnvironment.issuer == 'http://localhost:27681'
+    && appEnvironment.redirectUri == 'uniappx://rigour-sales/auth/callback'
 }

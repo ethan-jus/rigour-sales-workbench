@@ -4,6 +4,7 @@
     <text class="eyebrow">RIGOUR WORKSPACE</text><text class="login-heading">欢迎回到
 销售工作台</text>
     <text class="login-copy">让每一次拜访，都有新的进展。</text>
+    <text v-if="development" class="fine login-note">开发环境 · 与正式业务数据隔离</text>
     <view class="sign-in-panel"><text class="h2">使用公司账号登录</text><text class="body panel-copy">与供应链系统使用同一个账号，功能和数据权限由公司统一管理。</text>
       <button class="primary" :disabled="busy" @click="signIn">{{ busy ? '等待公司登录…' : '前往公司登录' }}</button>
       <text v-if="busy" class="link login-note" @click="cancelLogin">取消本次登录</text>
@@ -17,6 +18,8 @@
 <script setup lang="uts">
 import { beginCompanyLogin, logoutCompany } from '../../services/auth.uts'
 import { session } from '../../services/session.uts'
+import { appEnvironment } from '../../services/config.uts'
+const development = appEnvironment.environment == 'development'
 const busy = ref(false)
 const message = ref('')
 function home(): void { uni.switchTab({ url: '/pages/home/home' }) }

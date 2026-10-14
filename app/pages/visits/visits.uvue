@@ -1,8 +1,8 @@
 <template>
   <scroll-view class="page" direction="vertical">
     <view class="content">
-      <view class="heading-row"><view><text class="eyebrow">每一次拜访，都有进展</text><text class="heading">我的拜访</text></view><button class="add-button" @click="open('select')">＋</button></view>
-      <view class="stats"><view class="stat"><text class="number">{{ session.authenticated && loaded ? total.toString() : '—' }}</text><text class="muted">当前日期记录</text></view><view class="stat"><text class="number">{{ localDraftCount }}</text><text class="muted">本机草稿</text></view></view>
+      <view class="heading-row"><view><text class="eyebrow">每一次拜访，都有进展</text><text class="heading">我的拜访</text></view><button v-if="canCreate" class="add-button" @click="open('select')">＋</button></view>
+      <view class="stats"><view class="stat"><text class="number">{{ session.authenticated && loaded ? total.toString() : '—' }}</text><text class="muted">{{ date.length > 0 ? '当前日期记录' : '全部拜访记录' }}</text></view><view class="stat"><text class="number">{{ localDraftCount }}</text><text class="muted">本机草稿</text></view></view>
       <view v-if="recordingActive" class="resume" @click="resume"><text class="resume-text">{{ visitState.capture.phase == 'recording' ? '正在录音' : '录音待处理' }} · {{ formatClock(visitState.capture.activeDurationEstimateMs) }}</text><text class="resume-text">返回拜访 →</text></view>
       <view class="tabs"><text :class="tab == 'records' ? 'tab selected' : 'tab'" @click="tab = 'records'">已提交</text><text :class="tab == 'drafts' ? 'tab selected' : 'tab'" @click="tab = 'drafts'">本机草稿 {{ localDraftCount }}</text></view>
       <view v-if="tab == 'records'">
@@ -12,7 +12,7 @@
         <view v-else-if="error.length > 0" class="notice"><text class="notice-text">{{ error }}</text><button class="secondary" @click="loadRecords(true)">重新加载</button></view>
         <text v-if="loading" class="loading">正在加载拜访记录…</text>
         <view v-for="item in records" :key="item.id" class="record" @click="detail(item.id)"><view class="record-icon"><text class="record-icon-text">访</text></view><view class="record-body"><text class="muted">{{ item.time }}</text><text class="store-name">{{ item.storeName }}</text><text class="record-note">{{ item.note.length > 0 ? item.note : '尚未填写沟通记录' }}</text><text class="record-status">{{ statusLabel(item.status) }} · {{ reviewLabel(item.review) }}</text></view><text class="chevron">›</text></view>
-        <view v-if="loaded && !loading && records.length == 0 && error.length == 0" class="empty"><text class="empty-title">这个日期还没有拜访记录</text><text class="help">可选择其他日期，或先记录一次新的拜访。</text></view>
+        <view v-if="loaded && !loading && records.length == 0 && error.length == 0" class="empty"><text class="empty-title">{{ date.length > 0 ? '这个日期还没有正式拜访记录' : '暂无正式拜访记录' }}</text><text class="help">这里只展示当前账号在平台的正式拜访；临时打卡和本机草稿不在此列表。</text></view>
         <button v-if="records.length < total && !loading" class="secondary" @click="loadRecords(false)">加载更多</button>
       </view>
       <view v-else>
@@ -25,10 +25,11 @@
   </scroll-view>
 </template>
 <script setup lang="uts">
-import { session } from '../../services/session.uts'
-import { VisitPhoto, visitState, loadLocalVisits, visitDraftCount, hasActiveVisitRecording, resumeVisitPath, visitClock, visitTime, visitToday, visitPhotoPath, getVisitData, parseVisitItem, VisitItem, visitStatus, visitReview } from '../../services/visits.uts'
+import { session, hasPermission } from '../../services/session.uts'
+import { VisitPhoto, visitReadKey, visitState, loadLocalVisits, visitDraftCount, hasActiveVisitRecording, resumeVisitPath, visitClock, visitTime, visitToday, visitPhotoPath, getVisitData, parseVisitItem, VisitItem, visitStatus, visitReview } from '../../services/visits.uts'
 const localDraftCount = computed((): number => visitDraftCount())
 
+const canCreate = computed((): boolean => hasPermission('sales:visit-target:read') && hasPermission('sales:visit:own:write'))
 const recordingActive = computed((): boolean => hasActiveVisitRecording())
 
 const tab = ref('records')
@@ -39,7 +40,9 @@ const page = ref(1)
 const loading = ref(false)
 const loaded = ref(false)
 const error = ref('')
-let owner = ''
+let readKey = ''
+let requestVersion = 0
+let visible = false
 
 
 function formatClock(ms: number): string { return visitClock(ms) }
@@ -53,29 +56,32 @@ function detail(id: string): void { uni.navigateTo({ url: '/pages/visit/visit?vi
 function openDraft(id: string): void { uni.navigateTo({ url: '/pages/visit/visit?view=active&id=' + encodeURIComponent(id) }) }
 function resume(): void { uni.navigateTo({ url: resumeVisitPath() }) }
 function loadRecords(reset: boolean): void {
-  if (loading.value) return
+  if (!reset && loading.value) return
   if (date.value.length > 0 && !/^\d{4}-\d{2}-\d{2}$/.test(date.value)) { error.value = '日期请填写为 YYYY-MM-DD，例如 ' + visitToday(); return }
   if (reset) { page.value = 1; records.value = []; total.value = 0; loaded.value = false }
-  if (!session.authenticated) { error.value = ''; return }
+  requestVersion += 1; const version = requestVersion
+  if (!session.authenticated) { loading.value = false; error.value = ''; return }
   loading.value = true; error.value = ''
-  const expectedOwner = session.tenantId + ':' + session.userId
   const path = '/sales/me/visits?page=' + page.value.toString() + '&pageSize=20' + (date.value.length > 0 ? '&date=' + encodeURIComponent(date.value) : '')
   getVisitData(path, 'sales:visit:own:read', (data) => {
+    if (version != requestVersion) return
     loading.value = false
-    if (expectedOwner != session.tenantId + ':' + session.userId || !session.authenticated) return
     const items = data['items'] as UTSJSONObject[] | null
     if (items == null) { error.value = '拜访数据格式异常，请稍后重试。'; return }
     items.forEach((item: UTSJSONObject): void => { records.value.push(parseVisitItem(item)) })
     total.value = data.getNumber('total') ?? records.value.length; page.value += 1; loaded.value = true
-  }, (message) => { loading.value = false; error.value = message })
+  }, (message) => { if (version == requestVersion) { loading.value = false; error.value = message } })
 }
 function showToday(): void { date.value = visitToday(); loadRecords(true) }
+function resetReadState(): void { requestVersion += 1; records.value = []; total.value = 0; loaded.value = false; loading.value = false; error.value = ''; page.value = 1 }
+watch((): string => visitReadKey(), (next: string) => { readKey = next; resetReadState(); if (visible) loadRecords(true) })
 onShow(() => {
-  loadLocalVisits()
-  const currentOwner = session.authenticated ? session.tenantId + ':' + session.userId : ''
-  if (owner != currentOwner) { owner = currentOwner; records.value = []; loaded.value = false; total.value = 0 }
+  visible = true; loadLocalVisits()
+  if (readKey != visitReadKey()) { readKey = visitReadKey(); resetReadState() }
   loadRecords(true)
 })
+onHide(() => { visible = false })
+onUnload(() => { visible = false; requestVersion += 1 })
 </script>
 <style>
 .page { flex: 1; background-color: #faf9f6; }

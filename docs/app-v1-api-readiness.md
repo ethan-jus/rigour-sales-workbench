@@ -1,6 +1,6 @@
 # 销售工作台 App V1 接口就绪审查
 
-核查时间：2026-10-14。仅核对 Platform 当前本地源码，未调用生产接口、未读取凭据、未执行数据库或生产写操作。本文是原生页面实现的接入边界，不代表任何环境已完成联调。原 G0 Sales 详细合同见 `app-g0-platform-contract.md`。
+更新：2026-10-14。本轮已核对 Platform 合同、接通隔离 DEV 服务并执行 DEV 数据库只读计数；Android 真机已完成管理员登录、`/me` 读取，以及客户列表、客户详情和订单列表可读验证，未完成真实销售账号的数据范围验收。未调用或修改生产临时打卡。原 G0 Sales 详细合同见 `app-g0-platform-contract.md`；当前环境证据见 [DEV 联调回执](app-v1-dev-integration-receipt-20261014.md)。
 
 ## 1. 当前可实施边界
 
@@ -8,6 +8,8 @@
 - 本轮可实现正式原生页面、真实只读接口客户端、明确的未登录/无权限/无数据/失败状态，以及本机草稿。未具备完整合同的写动作不能显示“提交成功”。
 - Sales 的 `/me/*` 查询确实由服务端限制为本人。CRM、Order、BI 的普通查询按平台授权范围读取，可能是本人、部门、地区或全部；页面不能一律叫“我的”，不能靠请求中附带 `ownerEmployeeCode` 代替服务端授权。
 - 商品管理 `erp:product:read` 同时能读含进价的详情。App 只调用不含规格的列表能避免页面主动拉取进价，但不是服务端字段授权。面向普通销售开放前仍需销售商品专用 DTO/权限，不应仅靠前端隐藏解决。
+- 客户、订单查询与商品安全投影已接入正式 API 路径；商品详情按 `productIds` 重新读取 `withVariants=false` 的列表投影。客户订单入口目前是名称搜索，已明确可能包含同名客户，不声称按客户 ID 精确关联。
+- 搜索条件变化时重新从第 1 页取数；详情缓存不再混入分页列表。权限失效/请求失败不保留旧列表，账号隔离的本机购物草稿仍保留；未开放的报价、订单提交、回款、退货不会伪装成成功。
 
 ## 2. 身份与网络
 
@@ -18,13 +20,22 @@
 - 业务 API 用 `Authorization: Bearer <access_token>`，不使用 ID Token，不伪造 `X-Rigour-*` 身份头。租户由可信认证上下文确定。
 - `/login` 是 Spring Security HTML 表单和 CSRF 登录；`/scdp/session` 只返回浏览器会话及 CSRF 状态。没有查到可直接供 App 提交用户名密码换 Token 的 JSON API。
 
-### 移动登录仍缺什么
+### 本轮 DEV 已完成
 
-- 未查到移动端 Client ID 与 `com.rigour.workbench://auth/callback` 的注册迁移；旧 `.env.example` 的 issuer/clientId 为空。不能将文档示例当作已启用客户端。
-- `ScdpClientBootstrapProperties` 默认 `rigour-scdp-browser`，只接受精确 HTTPS 或显式允许的 DEV HTTP 回调，不能直接注册自定义 App scheme。
-- `ScdpClientBootstrapCommand` 注册 `none` 客户端认证、code + refresh、openid/profile、15 分钟 Access Token、7 天轮换 Refresh Token。V109 仅给现有 `rigour-scdp-*` PUBLIC 客户端补 refresh grant。
-- 三端必须完成系统浏览器唤起、精确回调匹配、冷启动回调、加密随机 state/verifier、S256、state 单次消费与超时、安全令牌存储。不能保存密码、Token 至普通 storage、日志或诊断导出。
-- 可评估不申请 `openid` 的 OAuth Code + PKCE 模式，只申请真实客户端允许的非 OIDC scope（如 `profile`），把 Access Token 当作不透明值交给可信 HTTPS Gateway，再通过 `/me` 确认身份；需真实环境验证该 scope 组合。不能称此路径已完成 OIDC 验证。若申请 `openid` 并使用 ID Token，必须校验签名、iss、aud、nonce，不能只解码 JWT。
+- App `config.uts` 采用 `development`、Gateway `http://localhost:27680`、IAM `http://localhost:27681`、PUBLIC Client ID `rigour-sales-app-android-dev`、调试回调 `uniappx://rigour-sales/auth/callback`。Android 需通过 ADB reverse 连接本机服务。
+- Platform 隔离工作树 B2 的 `SalesAppClientBootstrapCommand` 已随 IAM 启动成功注册上述客户端；这是 DEV 客户端注册证据，不是正式环境或公司签名包注册证据。
+- Gateway 27680、IAM 27681、Sales 27686 health 为 UP。Sales 临时 check-in worker、AI worker 禁用；无新增迁移，生产临时打卡保持原状。
+- 9 个主 DEV 服务在 Nacos 的实例地址均为当前 `.106` 主机，且 healthy；隔离 App 三服务的 health 检查同时为 UP。
+- Android 已实现系统浏览器 OAuth Code + S256 PKCE，申请 `profile`，不使用 ID Token；通过 `/me` 读取真实公司身份与权限。HTTP 和调试 scheme 仅允许精确的 DEV 组合，非开发环境禁止使用该调试 Client ID。实际配置行为已纳入自动测试。
+- `App.uvue` 组合式钩子改为 `onAppShow`，保留完整的 `appScheme` / `appLink` 参数和严格 state/PKCE 校验。新版已同步到手机；14:34:46 用户手动打开 App，14:34:55 `/oauth2/token` 返回 200，14:34:57 `/api/v1/me` 返回 200，用户确认显示“管理员”。14:35:06、14:35:12 客户列表接口返回 200；14:36:56 客户详情 `/api/v1/crm/internal-customers/4233` 返回 200；14:37:24 订单列表 `/api/v1/orders/sales` 返回 200。用户确认“能看到详情，订单”，管理员客户列表、客户详情及订单列表可读已验证，不扩展为订单详情或逐字段核对完成。
+- `api.uts` 按文本接收响应，经 `parseApiJson` 保留大整数 ID；公开 Sales 403/409/404 业务错误映射为固定中文，不展示后台原文。
+
+### 仍待验收
+
+- 本轮检查的 2 个 DEV IAM 账号均未匹配 Sales identity，未进行冒用身份绑定。管理员的 Sales `activity-summary` 返回 403 符合未绑定销售身份的状态；需要具备本人销售档案、平台权限及生效规则的真实账号验证，数据库有记录不代表该账号可见。
+- Android 管理员的浏览器登录返回、`/me` 身份读取、客户列表/详情和订单列表可读已通过；订单详情、拜访列表/详情、字段逐项核对和真实销售员工可见范围仍待验收。iOS、HarmonyOS、Web 公司登录尚未接入，编译成功不等于登录可用。
+- 正式环境还需 HTTPS origin、正式 PUBLIC Client 注册及公司签名包的精确回调。当前 `com.rigour.workbench://auth/callback` 仍为正式合同，不能用 DEV 注册代替正式确认。
+- 三端必须验证冷启动回调、加密随机 state/verifier、S256、state 单次消费与超时、安全令牌存储。当前 Token 仅保存在内存，不保存密码、Token 至普通 storage、日志或诊断导出。若后续申请 `openid` 并使用 ID Token，必须完整校验签名、iss、aud、nonce。
 
 ## 3. 可复用的只读接口
 
@@ -36,6 +47,7 @@
 | 客户详情 | `GET /api/v1/crm/internal-customers/{id}` | 同上，额外 `address,remark` 等；不是 UUID 版 `/crm/customers` |
 | 收货地址 | `GET /api/v1/crm/internal-customers/{id}/shipping-addresses` | `crm:customer:read`；data 数组：`id(UUID),consignee,contact,phone,regionText,addressDetail,fullAddress,defaultAddress,revision` |
 | 商品列表 | `GET /api/v1/erp/product-management/products?begin=0&step=20&productName=&withVariants=false` | `erp:product:read`；`id,productName,productCode,productSpecification,unitCode,mainImageUrl,defaultSalePrice,shelfStatusCode,submitStatusCode,variantCount`；默认价只能标参考价，未返回库存 |
+| App 商品详情 | `GET /api/v1/erp/product-management/products?begin=0&step=1&productIds={id}&withVariants=false` | 精确 ID 安全投影，核对返回 ID；不调用含采购价的管理详情 |
 | 订单列表 | `GET /api/v1/orders/sales?begin=0&step=20&customerName=&orderNo=&orderStatusCode=&orderDateFrom=&orderDateTo=` | `order:read`；`id,orderNo,customerId,customerNameSnapshot,contactPhoneSnapshot,orderDate,orderStatusCode,paymentStatusCode,outboundStatusCode,payableAmount,paidAmount,unpaidAmount,revision` |
 | 订单详情 | `GET /api/v1/orders/sales/{id}` | `order:read`；额外 `lines[],remark,paymentAttachments[]` |
 | 回款记录 | `GET /api/v1/orders/sales-payments?begin=0&step=20&salesOrderNo=&paymentTimeFrom=&paymentTimeTo=` | ACTIVE 授权使用 `order:payment:read`，旧模式回退 `order:read`；受关联订单范围限制。仅阅读，非销售申请列表 |
@@ -55,8 +67,10 @@
 
 ## 4. 不可混用的身份和状态
 
+2026-10-14 源码复核：IAM 员工绑定使用 `employeeCode`，HR 身份接口返回 Long `id`；正式 Sales 的 `employeeId` 仍是 UUID/BINARY(16)。未找到 IAM/HR 到 `sales_identity_projection`、`sales_profile` 的自动事件消费者或同步任务，当前仅有管理员维护入口。因此新建普通员工账号不能自动解决 Sales 身份契约，也不能把 IAM userId 或随机 UUID 当作 HR employeeId。读取依次要求功能权限、有效身份投影、有效销售档案；缺身份返回 403 `SALES_IDENTITY_UNBOUND`，缺档案返回 403 `SALES_PROFILE_INACTIVE`，`/me/context` 缺生效外勤规则返回 409 `SALES_POLICY_NOT_FOUND`。
+
 - Sales 门店合同的 customerId/storeId 是 UUID；CRM 内部客户、ERP 商品、Order 订单使用 Long。当前没有查到可供 App 直接使用的统一客户门店映射合同。选中的 CRM Long customerId 不能传给 Sales 创建拜访。
-- Long 的传输与精度：上述三个内部实体使用 `@TableId(type = IdType.AUTO)`；当前列表/详情 DTO 的 Long 字段无字符串序列化注解，也未查到全局 Long 转字符串的 Jackson 定制，按源码默认输出 JSON number，并非 Snowflake ID 模型。本轮未检查运行环境报文及数据库最大值，不能保证永远小于 JavaScript 安全整数上限。App 应优先保留字符串 ID；数字 ID 只接受正整数且不大于 `9007199254740991`，超出时明确阻断关联/详情操作，不能把已经失精的 number 转成 string 后继续使用。后续移动专用合同建议明确用十进制字符串 ID。
+- Long 的传输与精度：上述三个内部实体使用 `@TableId(type = IdType.AUTO)`；当前列表/详情 DTO 的 Long 字段无字符串序列化注解，也未查到全局 Long 转字符串的 Jackson 定制，按源码默认输出 JSON number，并非 Snowflake ID 模型。App 现已用 `uni.request<string>`、`dataType:'text'` 和 `parseApiJson`，在普通 JSON 解析前将超出 `±9007199254740991` 的整数字面量保留为字符串；已有字符串、小数和指数保持原语义。畸形 JSON 和非对象根返回失败。商务 ID 优先接收精确字符串；若仍收到不安全 number 则阻断关联，不能先失精再转 string。没有为此修改平台历史 DTO 或数据库。真实销售账号报文仍需验收。
 - 客户：`ACTIVE=启用`、`INACTIVE=停用`。
 - 订单：`DRAFT=草稿`、`SUBMITTED=已提交`、`COMPLETED=已完成`、`CANCELLED=已取消`。不能把 SUBMITTED 强行显示为原型的“待审核”，当前状态机没有独立审批状态。
 - 收款：`UNPAID=未收款`、`PARTIAL_PAID=部分收款`、`PAID=已收款`、`CANCELLED=已取消`。
@@ -64,6 +78,8 @@
 - 拜访到店/离店状态和 `reviewStatus` 分开；已到店不等于有效拜访。录音片段数不等于“有录音的拜访数”。
 
 ## 5. 写能力缺口与下一步
+
+正式身份接入可复用 IAM `GET /internal/v1/iam/supply/authorization?action=sales:context:read`：由服务端携带受信原操作人身份，核验会话、账号与 HR 资格后读取 `employeeCode`、权限及版本，App 不直接调用内部端点。Sales 应按真实 HR 员工编码/Long ID 引用员工，并通过核验、审计的正式命令开通或停用自身档案，不能靠管理员账号或临时映射绕过。CRM 的 `crm_store_projection`、`crm_sales_assignment_projection` 同样尚无自动同步链；还需接通真实客户/门店标识与归属的版本化投影，不能把身份接通等同于已能读取真实拜访目标。
 
 | 能力 | 现有合同及限制 | 应先补齐 |
 |---|---|---|
@@ -82,7 +98,7 @@
 
 Platform 根：`06_代码工程/rigour-supply-chain-digital-platform`。
 
-- IAM：`services/rg-scdp-iam/iam-server/src/main/java/com/rigour/tenant/iam/infrastructure/bootstrap/ScdpClientBootstrap{Properties,Command}.java`；`api/controller/auth/{AuthController,ScdpSessionController}.java`；`infrastructure/security/oidc/JdbcRegisteredClientRepository.java`。
+- IAM：`services/rg-scdp-iam/iam-server/src/main/java/com/rigour/tenant/iam/infrastructure/bootstrap/{ScdpClientBootstrap,SalesAppClientBootstrap}{Properties,Command}.java`；`api/controller/auth/{AuthController,ScdpSessionController}.java`；`infrastructure/security/oidc/JdbcRegisteredClientRepository.java`。
 - CRM：`services/rg-scdp-crm/crm-api/src/main/java/com/rigour/merchant/api/v1/CrmInternalCustomerApi.java`；`crm-server/.../infrastructure/persistence/repository/CrmDataScope.java`。
 - ERP：`services/rg-scdp-erp/erp-api/src/main/java/com/rigour/erp/api/v1/ErpProductManagementApi.java` 与 `model/ProductVariantManagementView.java`；`erp-server/.../application/service/product/ErpProductManagementService.java`。
 - Order：`services/rg-scdp-order/order-api/src/main/java/com/rigour/order/api/v1/{OrderSalesOrderApi,OrderSalesPaymentRecordApi}.java`；`order-server/.../application/service/sales/OrderSalesOrderService.java`；`infrastructure/persistence/repository/{OrderDataScope,MybatisPlusSalesPaymentRecordRepository}.java`。
@@ -90,4 +106,6 @@ Platform 根：`06_代码工程/rigour-supply-chain-digital-platform`。
 - BI：`services/rg-scdp-bi/bi-server/src/main/java/com/rigour/analytics/application/service/BiDataScopeService.java`；`infrastructure/persistence/scope/{BiScopePredicates,BiAuthorityFilter}.java`。
 - HR：`services/rg-scdp-hr/hr-api/src/main/java/com/rigour/hr/api/v1/HrPayrollApi.java`；`hr-server/.../infrastructure/persistence/repository/HrDataScope.java`。
 
-下一次真实联调至少验证：同平台真实员工登录、401/403 独立展示、两个不同员工互不可越权读取、宽权限账号页面文案正确、空数据不替换演示数据、金额与时间对应原业务记录。当前源码审查不替代这些验收。
+本轮 `npm run app:v1:test` 为 86/86；`onAppShow` 修复后 Android 14:33:11、iOS 14:37:26 原生编译和 HarmonyOS 14:44:08 unsigned HAP 构建通过，iOS/HarmonyOS 公司登录仍未接入。iOS、鸿蒙日志分别为 `/tmp/sales-app-ios-auth-callback-build.log`、`/tmp/sales-app-harmony-auth-callback-build.log`。Android 手机已同步，管理员登录和客户列表/详情、订单列表可读已验证；订单详情、逐字段核对及真实销售账号范围仍待验收。DEV 数据库只读快照为 CRM 客户 2,508、订单 4,027、正式拜访 11；这些是环境记录数，不是任何销售账号的授权可见数量。
+
+下一次真实联调至少验证：同平台真实员工登录、401/403 独立展示、两个不同员工互不可越权读取、宽权限账号页面文案正确、空数据不替换演示数据、列表与详情的精确 ID、金额和北京时间对应平台原记录，以及第二页/切换筛选不混数据。当前服务 health、计数、mock 测试和编译不替代上述账号验收。

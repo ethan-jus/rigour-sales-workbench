@@ -32,7 +32,7 @@ const target = { projectionId: 'projection-1', storeId: 'store-1', customerId: '
 const clip = { id: 'clip-1', fileName: 'clip-1.aac', createdAt: 1, savedAt: 2, activeDurationEstimateMs: 20000, interrupted: false }
 
 function harness(storage = new Map()) {
-  const session = { authenticated: true, tenantId: 'tenant-1', username: 'sales-a', userId: 'user-sales-a', permissions: ['sales:visit:own:write', 'sales:visit:own:read'] }
+  const session = { revision: 0, authenticated: true, tenantId: 'tenant-1', username: 'sales-a', userId: 'user-sales-a', permissions: ['sales:visit:own:write', 'sales:visit:own:read'] }
   let ownerWatcher, captureCallback, locationCallback, imageCallback
   let now = 100000, failStorage = false, captureCreates = 0, stopCount = 0
   let snapshot = { phase: 'idle', message: '', activeDurationEstimateMs: 0, temporaryPath: '', savedPath: '' }
@@ -80,6 +80,7 @@ function harness(storage = new Map()) {
     choosePhoto() { imageCallback({ tempFilePaths: ['/camera/photo.jpg'] }) },
     switchOwner(username, userId = 'user-' + username) {
       const previous = session.authenticated ? session.tenantId + ':' + session.userId : ''
+      session.revision += 1
       session.authenticated = username.length > 0
       session.username = username
       session.userId = username.length > 0 ? userId : ''
@@ -254,4 +255,98 @@ test('visit navigation reuses an exact view/id entry and never reuses another dr
   assert.deepEqual(calls.pop(), ['to', '/pages/visit/visit?view=active&id=draft-b'])
   navigate('uploads')
   assert.equal(calls.length, 0, 'clicking the current destination does not add another page')
+})
+
+
+// Executes real page setup/lifecycle and read callbacks against the same mocked
+// uni/HTTP service. DOM rendering, native widgets and a live backend are not under test.
+function jsonObject(value) {
+  const object = Object.fromEntries(Object.entries(value).map(([key, item]) => [key,
+    Array.isArray(item) ? item.map(row => row != null && typeof row === 'object' ? jsonObject(row) : row)
+      : item != null && typeof item === 'object' ? jsonObject(item) : item]))
+  Object.defineProperties(object, {
+    getString: { value: key => typeof object[key] === 'string' ? object[key] : null },
+    getNumber: { value: key => typeof object[key] === 'number' ? object[key] : null },
+  })
+  return object
+}
+function pageHarness(h, relative) {
+  const script = compiler.parse(fs.readFileSync(path.join(appRoot, relative), 'utf8')).descriptor.scriptSetup.content
+  const hooks = {}, watchers = []
+  const dependencies = {
+    '../../services/session.uts': { session: h.session, hasPermission: permission => h.session.authenticated && h.session.permissions.includes(permission) },
+    '../../services/visits.uts': h.service,
+    '../../services/capture.uts': { savedClipPath: value => '/saved/' + value.fileName },
+  }
+  const visit = relative.includes('/visit/')
+  const exposed = visit ? 'targets, targetsLoaded, plans, plansLoaded, remote, error, loading, reload, loadTargets, planLabel'
+    : 'records, loaded, error, loading, total, loadRecords'
+  const setup = new Function('exports', 'require', 'ref', 'computed', 'watch', 'onLoad', 'onShow', 'onHide', 'onUnload', 'uni',
+    transpile(appBranch(script)) + '\nreturn { ' + exposed + ' };')
+  const state = setup({}, name => { assert.ok(dependencies[name], name); return dependencies[name] }, value => ({ value }), getter => ({ get value() { return getter() } }),
+    (getter, callback) => { watchers.push({ getter, callback }) },
+    callback => { hooks.load = callback }, callback => { hooks.show = callback }, callback => { hooks.hide = callback }, callback => { hooks.unload = callback },
+    {})
+  return { ...state, hooks, changed: () => watchers.forEach(item => item.callback(item.getter())) }
+}
+
+test('read callbacks from an earlier login or revoked permission cannot repopulate the current session', () => {
+  const h = harness(), v = h.service
+  let deliveries = 0
+  const request = () => v.getVisitData('/sales/me/visits', 'sales:visit:own:read', () => deliveries++, () => deliveries++)
+  request(); h.session.revision++
+  h.network[0][3]({ data: { items: [] } }); h.network[0][4]('Old response')
+  assert.equal(deliveries, 0)
+  request(); h.session.permissions = []
+  h.network[1][3]({ data: { items: [] } }); h.network[1][4]('Old failure')
+  assert.equal(deliveries, 0)
+})
+
+test('formal Sales DTO retains UUIDs and uses the submitted store snapshot and Beijing time', () => {
+  const h = harness()
+  const storeId = '019fb000-0000-7000-8000-000000000101'
+  const customerId = '019fb000-0000-7000-8000-000000000102'
+  const parsed = h.service.parseVisitTarget(jsonObject({ projectionId: storeId, storeId, customerId, storeName: '正式门店', storeAddress: '正式地址' }))
+  assert.equal(parsed.storeId, storeId); assert.equal(parsed.customerId, customerId)
+  const record = h.service.parseVisitItem(jsonObject({ id: storeId, checkedInAt: '2026-10-14T02:30:00Z', status: 'CHECKED_IN', targetSnapshot: { storeName: '拜访时门店', storeAddress: '拜访时地址' } }))
+  assert.equal(record.storeName, '拜访时门店'); assert.equal(record.time, '2026-10-14 10:30')
+})
+
+test('returning from login loads real target data; logout clears cached data without a temporary-system fallback', () => {
+  const h = harness(); h.switchOwner('')
+  const page = pageHarness(h, 'pages/visit/visit.uvue')
+  page.hooks.load({ view: 'select' }); page.hooks.show()
+  assert.equal(h.network.length, 0); assert.equal(page.targetsLoaded.value, false)
+  page.hooks.hide(); h.switchOwner('sales-a'); h.session.permissions.push('sales:visit-target:read'); page.changed(); page.hooks.show()
+  assert.equal(h.network.length, 1); assert.match(h.network[0][0], /^\/sales\/me\/visit-targets\?/)
+  h.network[0][3]({ data: jsonObject({ items: [{ projectionId: 'p', storeId: 's', customerId: 'c', storeName: '本人门店' }], total: 1 }) })
+  assert.equal(page.targets.value[0].storeName, '本人门店')
+  h.switchOwner(''); page.changed()
+  assert.equal(page.targets.value.length, 0); assert.equal(page.targetsLoaded.value, false)
+  assert.equal(h.network.length, 1, 'no temporary-system request may occur')
+})
+
+test('plans distinguish malformed payload, official setup failure and a valid empty list', () => {
+  const h = harness(); h.session.permissions.push('sales:visit-plan:own:read')
+  const page = pageHarness(h, 'pages/visit/visit.uvue')
+  page.hooks.load({ view: 'plan' }); page.hooks.show()
+  h.network[0][3]({ data: jsonObject({ date: '2026-10-14' }) })
+  assert.match(page.error.value, /格式异常/); assert.equal(page.plansLoaded.value, false)
+  page.reload(); h.network[1][4]('销售身份尚未完成绑定（SALES_IDENTITY_UNBOUND）')
+  assert.match(page.error.value, /身份尚未完成绑定/); assert.equal(page.plansLoaded.value, false)
+  page.reload(); h.network[2][3]({ data: jsonObject({ date: '2026-10-14', items: [] }) })
+  assert.equal(page.error.value, ''); assert.equal(page.plansLoaded.value, true)
+  assert.equal(page.planLabel('CANCELLED'), '已取消')
+})
+
+test('records refresh supersedes pending results, and an account change clears old records while hidden', () => {
+  const h = harness(), page = pageHarness(h, 'pages/visits/visits.uvue')
+  page.hooks.show(); page.loadRecords(true)
+  h.network[1][3]({ data: jsonObject({ items: [{ id: 'new', checkedInAt: '2026-10-14T02:30:00Z', targetSnapshot: { storeName: '新记录' } }], total: 1 }) })
+  h.network[0][3]({ data: jsonObject({ items: [{ id: 'old' }], total: 1 }) })
+  assert.equal(page.records.value.length, 1); assert.equal(page.records.value[0].id, 'new')
+  page.hooks.hide(); h.switchOwner('sales-b'); page.changed()
+  assert.equal(page.records.value.length, 0); assert.equal(page.loaded.value, false); assert.equal(page.total.value, 0)
+  assert.equal(h.network.length, 2, 'hidden page must not fetch another user until shown')
+  page.hooks.show(); assert.equal(h.network.length, 3)
 })

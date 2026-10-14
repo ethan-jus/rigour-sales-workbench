@@ -14,7 +14,8 @@ export type CommerceState = {
   customersLoading: boolean, productsLoading: boolean, ordersLoading: boolean,
   customersError: string, productsError: string, ordersError: string,
   customersTotal: number, productsTotal: number, ordersTotal: number,
-  customerQuery: string, productQuery: string, orderQuery: string,
+  customerQuery: string, productQuery: string, orderQuery: string, orderStatusQuery: string,
+  customerDetail: Customer | null, productDetail: Product | null, orderDetail: SalesOrder | null,
   drafts: CartDraft[], selectedCustomerId: string, selectedProductId: string, selectedOrderId: string, draftOwner: string
 }
 
@@ -23,7 +24,8 @@ export const commerce = reactive({
   customersLoading: false, productsLoading: false, ordersLoading: false,
   customersError: '', productsError: '', ordersError: '',
   customersTotal: 0, productsTotal: 0, ordersTotal: 0,
-  customerQuery: '', productQuery: '', orderQuery: '',
+  customerQuery: '', productQuery: '', orderQuery: '', orderStatusQuery: '',
+  customerDetail: null, productDetail: null, orderDetail: null,
   drafts: [] as CartDraft[], selectedCustomerId: '', selectedProductId: '', selectedOrderId: '', draftOwner: ''
 } as CommerceState)
 
@@ -39,12 +41,18 @@ export function displayTime(value: string): string {
   return date.getUTCFullYear().toString() + '-' + (date.getUTCMonth() + 1).toString().padStart(2, '0') + '-' + date.getUTCDate().toString().padStart(2, '0') + ' ' + date.getUTCHours().toString().padStart(2, '0') + ':' + date.getUTCMinutes().toString().padStart(2, '0') + ':' + date.getUTCSeconds().toString().padStart(2, '0')
 }
 export function findCustomer(id: string): Customer | null {
+  if (!hasPermission('crm:customer:read')) return null
+  if (commerce.customerDetail?.id == id) return commerce.customerDetail
   return commerce.customers.find((row: Customer): boolean => row.id == id) ?? null
 }
 export function findProduct(id: string): Product | null {
+  if (!hasPermission('erp:product:read')) return null
+  if (commerce.productDetail?.id == id) return commerce.productDetail
   return commerce.products.find((row: Product): boolean => row.id == id) ?? null
 }
 export function findOrder(id: string): SalesOrder | null {
+  if (!hasPermission('order:read')) return null
+  if (commerce.orderDetail?.id == id) return commerce.orderDetail
   return commerce.orders.find((row: SalesOrder): boolean => row.id == id) ?? null
 }
 function ownerKey(): string { return session.tenantId + ':' + session.userId }
@@ -58,7 +66,9 @@ export function loadDrafts(): void {
   commerce.products = [] as Product[]
   commerce.orders = [] as SalesOrder[]
   commerce.customersTotal = 0; commerce.productsTotal = 0; commerce.ordersTotal = 0
-  commerce.customerQuery = ''; commerce.productQuery = ''; commerce.orderQuery = ''
+  commerce.customerQuery = ''; commerce.productQuery = ''; commerce.orderQuery = ''; commerce.orderStatusQuery = ''
+  commerce.customerDetail = null; commerce.productDetail = null; commerce.orderDetail = null
+  customerRequest++; productRequest++; orderRequest++; customerDetailRequest++; productDetailRequest++; orderDetailRequest++
   commerce.customersError = ''; commerce.productsError = ''; commerce.ordersError = ''
   commerce.customersLoading = false; commerce.productsLoading = false; commerce.ordersLoading = false
   commerce.selectedProductId = ''; commerce.selectedOrderId = ''
@@ -187,99 +197,142 @@ function parseOrder(row: UTSJSONObject): SalesOrder {
 let customerRequest = 0
 let productRequest = 0
 let orderRequest = 0
+let customerDetailRequest = 0
+let productDetailRequest = 0
+let orderDetailRequest = 0
 export function loadCustomers(query: string = '', append: boolean = false): void {
   loadDrafts()
   if (!session.authenticated) return
-  if (!hasPermission('crm:customer:read')) { commerce.customersError = '当前账号没有客户查看权限'; return }
-  const owner = ownerKey()
   const revision = ++customerRequest
-  const begin = append ? commerce.customers.length : 0
+  const more = append && query == commerce.customerQuery
+  const begin = more ? commerce.customers.length : 0
+  if (!more || !hasPermission('crm:customer:read')) { commerce.customers = [] as Customer[]; commerce.customersTotal = 0; commerce.customerDetail = null }
+  if (!hasPermission('crm:customer:read')) { commerce.customersLoading = false; commerce.customersError = '当前账号没有客户查看权限'; return }
+  const owner = ownerKey()
   commerce.customerQuery = query
   commerce.customersLoading = true
   commerce.customersError = ''
   requestApi('/crm/internal-customers?begin=' + begin.toString() + '&step=20&customerName=' + encodeURIComponent(query), 'GET', null, (response: UTSJSONObject) => {
     if (revision != customerRequest || owner != ownerKey() || !session.authenticated) return
+    if (!hasPermission('crm:customer:read')) { loadCustomers(query); return }
     const data = response.getJSON('data')
     if (data == null) { commerce.customersLoading = false; commerce.customersError = '客户数据格式不正确，请稍后重试'; return }
-    const rows = data.getArray<UTSJSONObject>('items') ?? [] as UTSJSONObject[]
+    const rows = data.getArray<UTSJSONObject>('items')
+    if (rows == null) { commerce.customersLoading = false; commerce.customersError = '客户列表格式不正确，请稍后重试'; return }
     const items = rows.map((row: UTSJSONObject): Customer => parseCustomer(row))
     if (items.some((item: Customer): boolean => item.id.length == 0)) { commerce.customersLoading = false; commerce.customersError = '记录编号无效或超出安全范围，请联系管理员'; return }
-    commerce.customers = append ? commerce.customers.concat(items) : items
+    commerce.customers = more ? commerce.customers.concat(items) : items
     commerce.customersTotal = data.getNumber('total') ?? items.length
     commerce.customersLoading = false
-  }, (message: string) => { if (revision == customerRequest && owner == ownerKey() && session.authenticated) { commerce.customersLoading = false; commerce.customersError = message } })
+  }, (message: string) => { if (revision == customerRequest && owner == ownerKey() && session.authenticated) { commerce.customers = [] as Customer[]; commerce.customersTotal = 0; commerce.customerDetail = null; commerce.customersLoading = false; commerce.customersError = message } })
 }
 export function loadProducts(query: string = '', append: boolean = false): void {
   loadDrafts()
   if (!session.authenticated) return
-  if (!hasPermission('erp:product:read')) { commerce.productsError = '当前账号没有商品查看权限'; return }
-  const owner = ownerKey()
   const revision = ++productRequest
-  const begin = append ? commerce.products.length : 0
+  const more = append && query == commerce.productQuery
+  const begin = more ? commerce.products.length : 0
+  if (!more || !hasPermission('erp:product:read')) { commerce.products = [] as Product[]; commerce.productsTotal = 0; commerce.productDetail = null }
+  if (!hasPermission('erp:product:read')) { commerce.productsLoading = false; commerce.productsError = '当前账号没有商品查看权限'; return }
+  const owner = ownerKey()
   commerce.productQuery = query
   commerce.productsLoading = true
   commerce.productsError = ''
   requestApi('/erp/product-management/products?begin=' + begin.toString() + '&step=20&withVariants=false&productName=' + encodeURIComponent(query), 'GET', null, (response: UTSJSONObject) => {
     if (revision != productRequest || owner != ownerKey() || !session.authenticated) return
+    if (!hasPermission('erp:product:read')) { loadProducts(query); return }
     const data = response.getJSON('data')
     if (data == null) { commerce.productsLoading = false; commerce.productsError = '商品数据格式不正确，请稍后重试'; return }
-    const rows = data.getArray<UTSJSONObject>('items') ?? [] as UTSJSONObject[]
+    const rows = data.getArray<UTSJSONObject>('items')
+    if (rows == null) { commerce.productsLoading = false; commerce.productsError = '商品列表格式不正确，请稍后重试'; return }
     const items = rows.map((row: UTSJSONObject): Product => parseProduct(row))
     if (items.some((item: Product): boolean => item.id.length == 0)) { commerce.productsLoading = false; commerce.productsError = '记录编号无效或超出安全范围，请联系管理员'; return }
-    commerce.products = append ? commerce.products.concat(items) : items
+    commerce.products = more ? commerce.products.concat(items) : items
     commerce.productsTotal = data.getNumber('total') ?? items.length
     commerce.productsLoading = false
-  }, (message: string) => { if (revision == productRequest && owner == ownerKey() && session.authenticated) { commerce.productsLoading = false; commerce.productsError = message } })
+  }, (message: string) => { if (revision == productRequest && owner == ownerKey() && session.authenticated) { commerce.products = [] as Product[]; commerce.productsTotal = 0; commerce.productDetail = null; commerce.productsLoading = false; commerce.productsError = message } })
 }
 export function loadOrders(query: string = '', status: string = '', append: boolean = false): void {
   loadDrafts()
   if (!session.authenticated) return
-  if (!hasPermission('order:read')) { commerce.ordersError = '当前账号没有订单查看权限'; return }
-  const owner = ownerKey()
   const revision = ++orderRequest
-  const begin = append ? commerce.orders.length : 0
+  const more = append && query == commerce.orderQuery && status == commerce.orderStatusQuery
+  const begin = more ? commerce.orders.length : 0
+  if (!more || !hasPermission('order:read')) { commerce.orders = [] as SalesOrder[]; commerce.ordersTotal = 0; commerce.orderDetail = null }
+  if (!hasPermission('order:read')) { commerce.ordersLoading = false; commerce.ordersError = '当前账号没有订单查看权限'; return }
+  const owner = ownerKey()
   commerce.orderQuery = query
+  commerce.orderStatusQuery = status
   commerce.ordersLoading = true
   commerce.ordersError = ''
   requestApi('/orders/sales?begin=' + begin.toString() + '&step=20&customerName=' + encodeURIComponent(query) + '&orderStatusCode=' + encodeURIComponent(status), 'GET', null, (response: UTSJSONObject) => {
     if (revision != orderRequest || owner != ownerKey() || !session.authenticated) return
+    if (!hasPermission('order:read')) { loadOrders(query, status); return }
     const data = response.getJSON('data')
     if (data == null) { commerce.ordersLoading = false; commerce.ordersError = '订单数据格式不正确，请稍后重试'; return }
-    const rows = data.getArray<UTSJSONObject>('items') ?? [] as UTSJSONObject[]
+    const rows = data.getArray<UTSJSONObject>('items')
+    if (rows == null) { commerce.ordersLoading = false; commerce.ordersError = '订单列表格式不正确，请稍后重试'; return }
     const items = rows.map((row: UTSJSONObject): SalesOrder => parseOrder(row))
     if (items.some((item: SalesOrder): boolean => item.id.length == 0)) { commerce.ordersLoading = false; commerce.ordersError = '记录编号无效或超出安全范围，请联系管理员'; return }
-    commerce.orders = append ? commerce.orders.concat(items) : items
+    commerce.orders = more ? commerce.orders.concat(items) : items
     commerce.ordersTotal = data.getNumber('total') ?? items.length
     commerce.ordersLoading = false
-  }, (message: string) => { if (revision == orderRequest && owner == ownerKey() && session.authenticated) { commerce.ordersLoading = false; commerce.ordersError = message } })
+  }, (message: string) => { if (revision == orderRequest && owner == ownerKey() && session.authenticated) { commerce.orders = [] as SalesOrder[]; commerce.ordersTotal = 0; commerce.orderDetail = null; commerce.ordersLoading = false; commerce.ordersError = message } })
 }
 export function loadOrderDetail(id: string, success: (order: SalesOrder) => void, fail: (message: string) => void): void {
+  loadDrafts()
+  const revision = ++orderDetailRequest
+  commerce.orderDetail = null
+  if (!hasPermission('order:read')) { fail('当前账号没有订单查看权限'); return }
   const owner = ownerKey()
   requestApi('/orders/sales/' + encodeURIComponent(id), 'GET', null, (response: UTSJSONObject) => {
+    if (revision != orderDetailRequest) return
     if (owner != ownerKey() || !session.authenticated) { fail('登录状态已变化，请重新进入页面'); return }
+    if (!hasPermission('order:read')) { fail('当前账号没有订单查看权限'); return }
     const data = response.getJSON('data')
     if (data == null) { fail('订单详情暂时不可用'); return }
     const order = parseOrder(data)
-    if (order.id.length == 0) { fail('订单编号无效，无法打开详情'); return }
-    const index = commerce.orders.findIndex((item: SalesOrder): boolean => item.id == id)
-    if (index >= 0) commerce.orders[index] = order
-    else commerce.orders.push(order)
+    if (order.id != id || order.id.length == 0) { fail('订单编号不一致，无法打开详情'); return }
+    commerce.orderDetail = order
     success(order)
-  }, fail)
+  }, (message: string) => { if (revision == orderDetailRequest && owner == ownerKey()) fail(message) })
 }
 export function loadCustomerDetail(id: string, success: (customer: Customer) => void, fail: (message: string) => void): void {
+  loadDrafts()
+  const revision = ++customerDetailRequest
+  commerce.customerDetail = null
+  if (!hasPermission('crm:customer:read')) { fail('当前账号没有客户查看权限'); return }
   const owner = ownerKey()
   requestApi('/crm/internal-customers/' + encodeURIComponent(id), 'GET', null, (response: UTSJSONObject) => {
+    if (revision != customerDetailRequest) return
     if (owner != ownerKey() || !session.authenticated) { fail('登录状态已变化，请重新进入页面'); return }
+    if (!hasPermission('crm:customer:read')) { fail('当前账号没有客户查看权限'); return }
     const data = response.getJSON('data')
     if (data == null) { fail('客户详情暂时不可用'); return }
     const customer = parseCustomer(data)
-    if (customer.id.length == 0) { fail('客户编号无效，无法建立购物草稿'); return }
-    const index = commerce.customers.findIndex((item: Customer): boolean => item.id == id)
-    if (index >= 0) commerce.customers[index] = customer
-    else commerce.customers.push(customer)
+    if (customer.id != id || customer.id.length == 0) { fail('客户编号不一致，无法建立购物草稿'); return }
+    commerce.customerDetail = customer
     success(customer)
-  }, fail)
+  }, (message: string) => { if (revision == customerDetailRequest && owner == ownerKey()) fail(message) })
+}
+export function loadProductDetail(id: string, success: (product: Product) => void, fail: (message: string) => void): void {
+  loadDrafts()
+  const revision = ++productDetailRequest
+  commerce.productDetail = null
+  if (!hasPermission('erp:product:read')) { fail('当前账号没有商品查看权限'); return }
+  const owner = ownerKey()
+  // The product-management detail endpoint includes purchase prices; use its safe list projection.
+  requestApi('/erp/product-management/products?begin=0&step=1&withVariants=false&productIds=' + encodeURIComponent(id), 'GET', null, (response: UTSJSONObject) => {
+    if (revision != productDetailRequest) return
+    if (owner != ownerKey() || !session.authenticated) { fail('登录状态已变化，请重新进入页面'); return }
+    if (!hasPermission('erp:product:read')) { fail('当前账号没有商品查看权限'); return }
+    const rows = response.getJSON('data')?.getArray<UTSJSONObject>('items')
+    if (rows == null || rows.length != 1) { fail('商品不存在或已不可查看，请返回商品列表'); return }
+    const product = parseProduct(rows[0])
+    if (product.id != id || product.id.length == 0) { fail('商品编号不一致，无法打开详情'); return }
+    commerce.productDetail = product
+    success(product)
+  }, (message: string) => { if (revision == productDetailRequest && owner == ownerKey()) fail(message) })
 }
 export function orderStatusLabel(status: string): string {
   if (status == 'DRAFT') return '草稿'

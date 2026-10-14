@@ -1,8 +1,25 @@
 import { session, clearSession } from './session.uts'
-import { appEnvironment } from './config.uts'
+import { appEnvironment, environmentReady } from './config.uts'
+import { parseApiJson } from './json.uts'
+
+export function apiErrorMessage(code: string, status: number): string {
+  if (status == 401) return '登录已失效，请重新登录公司账号。'
+  if (status == 403) {
+    if (code == 'SALES_IDENTITY_UNBOUND') return '当前账号尚未绑定销售身份，请联系管理员完成绑定。'
+    if (code == 'SALES_PROFILE_INACTIVE') return '当前销售身份尚未生效，请联系管理员检查员工和销售档案。'
+    return '暂无此功能或数据的权限，请联系管理员。'
+  }
+  if (status == 409) {
+    if (code == 'SALES_POLICY_NOT_FOUND') return '尚未配置生效的销售外勤规则，请联系管理员。'
+    if (code == 'SALES_VISIT_POLICY_NOT_FOUND') return '尚未配置生效的拜访规则，请联系管理员。'
+  }
+  if (status == 404 && code == 'SALES_VISIT_NOT_FOUND') return '拜访记录不存在或已不可查看，请返回记录列表。'
+  if (status >= 200 && status < 300) return '业务处理未完成，请稍后重试。'
+  return '服务暂时不可用（' + status.toString() + '），请稍后重试。'
+}
 
 export function requestApi(path: string, method: string, body: UTSJSONObject | null, success: (data: UTSJSONObject) => void, fail: (message: string) => void): void {
-  if (!appEnvironment.gatewayOrigin.startsWith('https://')) {
+  if (!environmentReady()) {
     fail('公司服务尚未配置，请联系管理员完成接入。')
     return
   }
@@ -14,26 +31,30 @@ export function requestApi(path: string, method: string, body: UTSJSONObject | n
   }
   const revision = session.revision
   const headers: UTSJSONObject = { 'Authorization': 'Bearer ' + session.accessToken, 'Accept-Language': 'zh-CN', 'Content-Type': 'application/json' }
-  uni.request<UTSJSONObject>({
+  uni.request<string>({
     url: appEnvironment.gatewayOrigin + '/api/v1' + path,
     method: method as RequestMethod,
     data: body,
     header: headers,
+    dataType: 'text',
     timeout: 20000,
     success: (response) => {
       if (session.revision != revision) { fail('账号已变更，请重新加载。'); return }
-      if (response.statusCode == 401) { clearSession(); fail('登录已失效，请重新登录公司账号。'); return }
-      if (response.statusCode == 403) { fail('暂无此功能或数据的权限，请联系管理员。'); return }
+      if (response.statusCode == 401) { clearSession(); fail(apiErrorMessage('', 401)); return }
+      const responseText = response.data
+      const result = responseText == null ? null : parseApiJson(responseText)
+      const code = result?.getString('code') ?? ''
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        fail('服务暂时不可用（' + response.statusCode.toString() + '），请稍后重试。')
+        fail(apiErrorMessage(code, response.statusCode))
         return
       }
-      const result = response.data
       if (result == null) { fail('服务未返回有效数据，请重试。'); return }
-      const code = result.getString('code')
-      if (code != null && code != 'OK') { fail(result.getString('message') ?? '业务处理未完成，请重试。'); return }
+      if (code.length > 0 && code != 'OK') { fail(apiErrorMessage(code, response.statusCode)); return }
       success(result)
     },
-    fail: (_) => fail('无法连接公司服务，请检查网络后重试。')
+    fail: (_) => {
+      if (session.revision != revision) { fail('账号已变更，请重新加载。'); return }
+      fail('无法连接公司服务，请检查网络后重试。')
+    }
   })
 }

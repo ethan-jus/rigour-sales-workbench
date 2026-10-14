@@ -6,7 +6,7 @@ onLaunch((options) => {
   if (options.appScheme != null) handleAuthCallback(options.appScheme!)
   if (options.appLink != null) handleAuthCallback(options.appLink!)
 })
-onShow((options) => {
+onAppShow((options) => {
   if (options == null) return
   if (options.appScheme != null) handleAuthCallback(options.appScheme!)
   if (options.appLink != null) handleAuthCallback(options.appLink!)

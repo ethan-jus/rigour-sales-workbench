@@ -1,4 +1,4 @@
-import { appEnvironment, environmentReady } from './config.uts'
+import { appEnvironment, environmentReady, serviceOrigin } from './config.uts'
 import { session, clearSession } from './session.uts'
 
 // #ifdef APP-ANDROID
@@ -25,13 +25,6 @@ let loadingDiscovery = false
 let loginSuccess: (() => void) | null = null
 let loginFailure: ((message: string) => void) | null = null
 let expirationTimer: number | null = null
-
-function httpsOrigin(value: string): string {
-  if (!value.startsWith('https://')) return ''
-  const authority = value.substring(8).split('/')[0]
-  if (!/^[A-Za-z0-9.-]+(:[0-9]{1,5})?$/.test(authority)) return ''
-  return 'https://' + authority
-}
 
 function clearAttempt(): void {
   attempt = null
@@ -88,13 +81,6 @@ export function beginCompanyLogin(success: () => void, fail: (message: string) =
   fail('此系统的公司登录仍在接入中，请先使用 Android 内部测试版。')
   return
   // #endif
-  if (httpsOrigin(appEnvironment.gatewayOrigin) != appEnvironment.gatewayOrigin
-    || httpsOrigin(appEnvironment.issuer).length == 0
-    || appEnvironment.issuer.includes('?') || appEnvironment.issuer.includes('#')
-    || appEnvironment.redirectUri != 'com.rigour.workbench://auth/callback') {
-    fail('公司登录配置不完整，请联系管理员。')
-    return
-  }
   if (loadingDiscovery || attempt != null) { fail('正在等待公司登录，请完成浏览器中的登录或稍后重试。'); return }
   generation += 1
   const thisGeneration = generation
@@ -115,8 +101,8 @@ export function beginCompanyLogin(success: () => void, fail: (message: string) =
       const authorizationEndpoint = metadata.getString('authorization_endpoint') ?? ''
       const tokenEndpoint = metadata.getString('token_endpoint') ?? ''
       if (metadataIssuer != appEnvironment.issuer
-        || httpsOrigin(authorizationEndpoint) != httpsOrigin(appEnvironment.issuer)
-        || httpsOrigin(tokenEndpoint) != httpsOrigin(appEnvironment.issuer)
+        || serviceOrigin(authorizationEndpoint) != serviceOrigin(appEnvironment.issuer)
+        || serviceOrigin(tokenEndpoint) != serviceOrigin(appEnvironment.issuer)
         || authorizationEndpoint.includes('?') || authorizationEndpoint.includes('#')
         || tokenEndpoint.includes('?') || tokenEndpoint.includes('#')) {
         failLogin('公司登录地址校验未通过，请联系管理员。')

@@ -1,0 +1,77 @@
+function isDigit(value: string): boolean {
+  if (value.length != 1) return false
+  const code = value.charCodeAt(0) ?? -1
+  return code >= 48 && code <= 57
+}
+
+function isNumberCharacter(value: string): boolean {
+  return isDigit(value) || value == '-' || value == '+' || value == '.' || value == 'e' || value == 'E'
+}
+
+function isWhitespace(value: string): boolean {
+  return value == ' ' || value == '\n' || value == '\r' || value == '\t'
+}
+
+function isLargeInteger(value: string): boolean {
+  const start = value.startsWith('-') ? 1 : 0
+  const length = value.length - start
+  if (length == 0 || (length > 1 && value.charAt(start) == '0')) return false
+  for (let index = start; index < value.length; index++) {
+    if (!isDigit(value.charAt(index))) return false
+  }
+  const limit = '9007199254740991'
+  if (length != limit.length) return length > limit.length
+  for (let index = 0; index < limit.length; index++) {
+    const actual = value.charCodeAt(start + index) ?? -1
+    const maximum = limit.charCodeAt(index) ?? -1
+    if (actual != maximum) return actual > maximum
+  }
+  return false
+}
+
+// Preserve large integer identifiers before the native JSON parser rounds them.
+export function parseApiJson(text: string): UTSJSONObject | null {
+  let start = 0
+  let end = text.length
+  while (start < end && isWhitespace(text.charAt(start))) start++
+  while (end > start && isWhitespace(text.charAt(end - 1))) end--
+  const input = text.substring(start, end)
+  if (!input.startsWith('{') || !input.endsWith('}')) return null
+  let output = ''
+  let quoted = false
+  let escaped = false
+  let previous = ''
+  const containers = [] as string[]
+  let index = 0
+  while (index < input.length) {
+    const character = input.charAt(index)
+    if (quoted) {
+      output += character
+      if (escaped) escaped = false
+      else if (character == '\\') escaped = true
+      else if (character == '"') { quoted = false; previous = '"' }
+      index++
+      continue
+    }
+    if (character == '"') { quoted = true; output += character; index++; continue }
+    if (isDigit(character) || character == '-') {
+      let end = index + 1
+      while (end < input.length && isNumberCharacter(input.charAt(end))) end++
+      const number = input.substring(index, end)
+      const arrayValue = previous == ',' && containers.length > 0 && containers[containers.length - 1] == '['
+      const valuePosition = previous == ':' || previous == '[' || arrayValue
+      // Do not turn malformed JSON, such as an unquoted numeric key, into valid JSON.
+      output += valuePosition && isLargeInteger(number) ? '"' + number + '"' : number
+      previous = number.charAt(number.length - 1)
+      index = end
+      continue
+    }
+    if (character == '{' || character == '[') containers.push(character)
+    else if (character == '}' || character == ']') { if (containers.length > 0) containers.pop() }
+    if (!isWhitespace(character)) previous = character
+    output += character
+    index++
+  }
+  if (quoted) return null
+  try { return JSON.parse<UTSJSONObject>(output) } catch (error) { return null }
+}

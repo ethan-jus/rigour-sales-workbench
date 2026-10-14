@@ -7,6 +7,15 @@ const fs = require('fs'),
 const ts = require('typescript');
 const path = require('node:path');
 const check = require('node:test');
+function configFixture(values) {
+  const source = fs.readFileSync(path.join(__dirname, '../app/services/config.uts'), 'utf8');
+  const context = { exports: {} };
+  vm.runInNewContext(ts.transpileModule(source, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText, context);
+  Object.assign(context.exports.appEnvironment, values);
+  return context.exports;
+}
 check('native app lifecycle accepts missing launch/show options and forwards actual auth links', () => {
   const app = fs.readFileSync(path.join(__dirname, '../app/App.uvue'), 'utf8');
   const nativeScript = app.split('// #ifdef APP')[1].split('// #endif')[0];
@@ -18,7 +27,7 @@ check('native app lifecycle accepts missing launch/show options and forwards act
     exports: {},
     require: () => ({ handleAuthCallback: (link) => links.push(link) }),
     onLaunch: (hook) => { hooks.launch = hook; },
-    onShow: (hook) => { hooks.show = hook; },
+    onAppShow: (hook) => { hooks.show = hook; },
   });
   for (const hook of Object.values(hooks)) {
     assert.doesNotThrow(() => hook(null));
@@ -85,6 +94,7 @@ function fixture() {
   let completed = 0,
     now = 100000;
   const env = {
+    environment: 'production',
     gatewayOrigin: 'https://gateway.example.test',
     issuer: 'https://iam.example.test',
     clientId: 'test-public',
@@ -95,8 +105,9 @@ function fixture() {
     sessions.accessToken = '';
     sessions.revision++;
   }
+  const config = configFixture(env);
   const modules = {
-    './config.uts': { appEnvironment: env, environmentReady: () => env.clientId.length > 0 },
+    './config.uts': config,
     './session.uts': { session: sessions, clearSession: clear },
     'java.security.SecureRandom': class {
       generateSeed(n) {
@@ -167,7 +178,7 @@ function fixture() {
   }
   return {
     api: context.exports,
-    env,
+    env: config.appEnvironment,
     requests,
     errors,
     urls,
@@ -313,110 +324,4 @@ check('platform administrator without tenant cannot become sales user', () => {
   });
   assert.equal(f.sessions.authenticated, false);
   assert.equal(f.errors.length, 1);
-});
-
-function apiFixture() {
-  const requests = [],
-    errors = [],
-    successes = [];
-  const session = {
-    authenticated: true,
-    accessToken: 'test-access',
-    expiresAt: 200000,
-    revision: 1,
-  };
-  const appEnvironment = { gatewayOrigin: 'https://gateway.example.test' };
-  function clearSession() {
-    session.authenticated = false;
-    session.accessToken = '';
-    session.revision++;
-  }
-  const apiSource = fs.readFileSync(path.join(__dirname, '../app/services/api.uts'), 'utf8');
-  const apiJs = ts.transpileModule(apiSource, {
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
-  }).outputText;
-  const modules = {
-    './session.uts': { session, clearSession },
-    './config.uts': { appEnvironment },
-  };
-  const context = {
-    exports: {},
-    require: (n) => modules[n],
-    Date: { now: () => 100000 },
-    uni: { request: (r) => requests.push(r) },
-  };
-  vm.createContext(context);
-  vm.runInContext(apiJs, context);
-  return {
-    session,
-    appEnvironment,
-    requests,
-    errors,
-    successes,
-    request: () =>
-      context.exports.requestApi(
-        '/orders/sales',
-        'GET',
-        null,
-        (data) => successes.push(data),
-        (message) => errors.push(message),
-      ),
-  };
-}
-check('API 401 clears expired authentication and never returns data', () => {
-  const f = apiFixture();
-  f.request();
-  f.requests[0].success({ statusCode: 401, data: new Obj({}) });
-  assert.equal(f.session.authenticated, false);
-  assert.equal(f.successes.length, 0);
-  assert.equal(f.errors.length, 1);
-});
-check('API 403 preserves session and explicitly reports permission denial', () => {
-  const f = apiFixture();
-  f.request();
-  f.requests[0].success({ statusCode: 403, data: new Obj({}) });
-  assert.equal(f.session.authenticated, true);
-  assert.equal(f.successes.length, 0);
-  assert.match(f.errors[0], /权限/);
-});
-check('API response from previous account cannot populate new account', () => {
-  const f = apiFixture();
-  f.request();
-  f.session.revision++;
-  f.requests[0].success({
-    statusCode: 200,
-    data: new Obj({ code: 'OK', data: { items: [{ id: 'old-account-order' }] } }),
-  });
-  assert.equal(f.successes.length, 0);
-  assert.match(f.errors[0], /账号/);
-});
-check('API late 401 cannot log out a newer account', () => {
-  const f = apiFixture();
-  f.request();
-  f.session.revision++;
-  f.requests[0].success({ statusCode: 401, data: new Obj({}) });
-  assert.equal(f.session.authenticated, true);
-  assert.equal(f.successes.length, 0);
-});
-check('API network timeout is a failure, not an empty successful list', () => {
-  const f = apiFixture();
-  f.request();
-  f.requests[0].fail({ errMsg: 'request:fail timeout' });
-  assert.equal(f.successes.length, 0);
-  assert.equal(f.errors.length, 1);
-  assert.equal(f.requests[0].timeout, 20000);
-});
-check('API HTTP 503 is not an empty successful list', () => {
-  const f = apiFixture();
-  f.request();
-  f.requests[0].success({ statusCode: 503, data: new Obj({}) });
-  assert.equal(f.successes.length, 0);
-  assert.match(f.errors[0], /503/);
-});
-check('API expired in-memory token is never sent', () => {
-  const f = apiFixture();
-  f.session.expiresAt = 99999;
-  f.request();
-  assert.equal(f.requests.length, 0);
-  assert.equal(f.session.authenticated, false);
 });

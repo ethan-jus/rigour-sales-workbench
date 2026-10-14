@@ -187,6 +187,73 @@ test('unsafe numeric identifiers are rejected instead of binding a rounded custo
   assert.equal(s.commerce.products[0].id, '9007199254740993')
 })
 
+test('load more with changed search or order status restarts at zero and replaces old rows', () => {
+  const h = harness(), s = h.service
+  s.loadCustomers('甲')
+  h.requests[0][3](new JsonObject({ data: { total: 21, items: [{ id: 1, customerName: '甲' }] } }))
+  s.loadCustomers('乙', true)
+  assert.match(h.requests[1][0], /begin=0&/)
+  assert.equal(s.commerce.customers.length, 0)
+  h.requests[1][3](new JsonObject({ data: { total: 1, items: [{ id: 2, customerName: '乙' }] } }))
+  assert.deepEqual(s.commerce.customers.map(row => row.id), ['2'])
+  s.loadOrders('', 'DRAFT')
+  h.requests[2][3](new JsonObject({ data: { total: 21, items: [{ id: 3, orderStatusCode: 'DRAFT' }] } }))
+  s.loadOrders('', 'SUBMITTED', true)
+  assert.match(h.requests[3][0], /begin=0&/)
+  assert.equal(s.commerce.orders.length, 0)
+  assert.equal(s.commerce.orderStatusQuery, 'SUBMITTED')
+})
+
+test('detail records never contaminate paginated lists or change the next offset', () => {
+  const h = harness(), s = h.service
+  s.loadCustomers('甲')
+  h.requests[0][3](new JsonObject({ data: { total: 21, items: [{ id: 1, customerName: '甲' }] } }))
+  s.loadCustomerDetail('99', () => {}, assert.fail)
+  h.requests[1][3](new JsonObject({ data: { id: 99, customerName: '其他详情' } }))
+  assert.equal(s.findCustomer('99').name, '其他详情')
+  assert.deepEqual(s.commerce.customers.map(row => row.id), ['1'])
+  s.loadCustomers('甲', true)
+  assert.match(h.requests[2][0], /begin=1&/)
+})
+
+test('removed permission and failed refresh clear previously visible business records', () => {
+  const h = harness(), s = h.service
+  s.loadOrders()
+  h.requests[0][3](new JsonObject({ data: { total: 21, items: [{ id: 1 }] } }))
+  s.loadOrders('', '', true)
+  h.requests[1][4]('当前账号无权查看')
+  assert.equal(s.commerce.orders.length, 0)
+  assert.equal(s.commerce.ordersTotal, 0)
+  s.loadProducts()
+  h.session.permissions = ['crm:customer:read', 'order:read']
+  h.requests[2][3](new JsonObject({ data: { total: 1, items: [{ id: 2 }] } }))
+  assert.equal(s.commerce.products.length, 0)
+  assert.equal(s.commerce.productsLoading, false)
+  assert.match(s.commerce.productsError, /没有商品查看权限/)
+})
+
+test('product detail revalidates exact id through safe list projection without variants', () => {
+  const h = harness(), s = h.service
+  let result = null, error = ''
+  s.loadProductDetail('9007199254740993', value => { result = value }, message => { error = message })
+  assert.equal(h.requests[0][0], '/erp/product-management/products?begin=0&step=1&withVariants=false&productIds=9007199254740993')
+  h.requests[0][3](new JsonObject({ data: { total: 1, items: [{ id: '9007199254740993', productName: '真实商品' }] } }))
+  assert.equal(result.name, '真实商品')
+  assert.equal(s.commerce.products.length, 0)
+  s.loadProductDetail('3', assert.fail, message => { error = message })
+  h.requests[1][3](new JsonObject({ data: { total: 1, items: [{ id: 4 }] } }))
+  assert.match(error, /编号不一致/)
+  assert.equal(s.commerce.productDetail, null)
+})
+
+test('malformed list response is an error, not a real empty business dataset', () => {
+  const h = harness(), s = h.service
+  s.loadCustomers()
+  h.requests[0][3](new JsonObject({ data: { total: 31 } }))
+  assert.match(s.commerce.customersError, /格式不正确/)
+  assert.equal(s.commerce.customersLoading, false)
+})
+
 test('repeated cart/checkout/result/continue-shopping flow returns to existing native pages', () => {
   const pageSource = fs.readFileSync(path.resolve(__dirname, '../app/pages/commerce/commerce.uvue'), 'utf8')
   const start = pageSource.indexOf('function open(destination: string')

@@ -8,7 +8,7 @@
       <view class="customer-hero"><view class="hero-avatar"><text class="hero-letter">客</text></view><text class="tiny-tag">{{ customer.status == 'ACTIVE' ? '启用客户' : customer.status == 'INACTIVE' ? '已停用' : '客户档案' }}</text><text class="hero-name">{{ customer.name }}</text><text class="muted centered">{{ customer.address.length > 0 ? customer.address : '地址待完善' }}</text></view>
       <button class="primary" :disabled="customer.id.length == 0 || customer.status == 'INACTIVE'" @click="startOrder">为客户下单</button>
       <view class="section"><text class="section-title">联系信息</text><view class="info-row"><text class="label">联系人</text><text class="value">{{ customer.contact.length > 0 ? customer.contact : '未填写' }}</text></view><view class="info-row" @click="callCustomer"><text class="label">联系电话</text><text class="link">{{ customer.phone.length > 0 ? customer.phone : '未填写' }}</text></view><view class="info-row"><text class="label">客户地址</text><text class="value address-value">{{ customer.address.length > 0 ? customer.address : '未填写' }}</text></view></view>
-      <view class="section"><text class="section-title">业务跟进</text><view class="action-row" @click="customerOrders"><view><text class="row-title">客户订单</text><text class="muted">查看平台中的历史订单</text></view><text class="chevron">›</text></view><view class="action-row" @click="goVisits"><view><text class="row-title">拜访打卡</text><text class="muted">前往拜访，选择现场门店</text></view><text class="chevron">›</text></view></view>
+      <view class="section"><text class="section-title">业务跟进</text><view class="action-row" @click="customerOrders"><view><text class="row-title">搜索客户名称的订单</text><text class="muted">按当前名称查询，结果可能包含同名客户</text></view><text class="chevron">›</text></view><view class="action-row" @click="goVisits"><view><text class="row-title">拜访打卡</text><text class="muted">前往拜访，选择现场门店</text></view><text class="chevron">›</text></view></view>
     </view>
 
     <view v-else-if="view == 'products'">
@@ -67,7 +67,7 @@
 
 <script setup lang="uts">
 import { session, requireSession } from '../../services/session.uts'
-import { commerce, loadDrafts, loadProducts, loadCustomerDetail, loadOrderDetail, findCustomer, findProduct, findOrder, currentDraft, selectOrderCustomer, addToCart, cartQuantity, changeCartQuantity, removeCartLine, saveCheckout, formatMoney, orderStatusLabel, paymentStatusLabel, outboundStatusLabel } from '../../services/commerce.uts'
+import { commerce, loadDrafts, loadProducts, loadCustomerDetail, loadProductDetail, loadOrderDetail, findCustomer, findProduct, findOrder, currentDraft, selectOrderCustomer, addToCart, cartQuantity, changeCartQuantity, removeCartLine, saveCheckout, formatMoney, orderStatusLabel, paymentStatusLabel, outboundStatusLabel } from '../../services/commerce.uts'
 import type { Customer, Product, SalesOrder, CartDraft, CartLine, OrderLine } from '../../services/commerce.uts'
 const view = ref('products')
 const id = ref('')
@@ -101,7 +101,8 @@ function reload(): void {
   error.value = ''
   if (view.value == 'products') loadProducts(query.value)
   if (view.value == 'customer') { loading.value = true; loadCustomerDetail(id.value, (_customer: Customer) => { loading.value = false }, (message: string) => { loading.value = false; error.value = message }) }
-  if (view.value == 'order-detail') { loading.value = true; loadOrderDetail(id.value.length > 0 ? id.value : commerce.selectedOrderId, (_order: SalesOrder) => { loading.value = false }, (message: string) => { loading.value = false; error.value = message }) }
+  if (view.value == 'product') { loading.value = true; loadProductDetail(id.value, (_product: Product) => { loading.value = false }, (message: string) => { loading.value = false; error.value = message }) }
+  if (view.value == 'order-detail' || view.value == 'payment' || view.value == 'returns') { loading.value = true; loadOrderDetail(id.value.length > 0 ? id.value : commerce.selectedOrderId, (_order: SalesOrder) => { loading.value = false }, (message: string) => { loading.value = false; error.value = message }) }
   if (view.value == 'checkout') { address.value = draft.value.address; note.value = draft.value.note }
 }
 function open(destination: string, targetId: string = ''): void {
@@ -122,7 +123,7 @@ function open(destination: string, targetId: string = ''): void {
 function chooseCustomer(): void { uni.switchTab({ url: '/pages/customers/customers' }) }
 function startOrder(): void { if (customer.value.id.length == 0) return; if (selectOrderCustomer(customer.value)) open('products') }
 function callCustomer(): void { if (customer.value.phone.length > 0) uni.makePhoneCall({ phoneNumber: customer.value.phone }) }
-function customerOrders(): void { commerce.orderQuery = customer.value.name; uni.switchTab({ url: '/pages/orders/orders' }) }
+function customerOrders(): void { commerce.orderQuery = customer.value.name; commerce.orderStatusQuery = ''; uni.switchTab({ url: '/pages/orders/orders' }) }
 function goVisits(): void { uni.switchTab({ url: '/pages/visits/visits' }) }
 function hideBrokenImage(item: Product): void { item.imageUrl = '' }
 function searchProducts(): void { loadProducts(query.value.trim()) }

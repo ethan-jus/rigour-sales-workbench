@@ -26,7 +26,7 @@ type OrderFilter = { code: string, label: string }
 const filters = [{ code: '', label: '全部' }, { code: 'DRAFT', label: '草稿' }, { code: 'SUBMITTED', label: '已提交' }, { code: 'COMPLETED', label: '已完成' }, { code: 'CANCELLED', label: '已取消' }] as OrderFilter[]
 const selectedStatus = ref('')
 const query = ref('')
-onShow(() => { loadDrafts(); if (session.authenticated) { query.value = commerce.orderQuery; loadOrders(query.value, selectedStatus.value) } })
+onShow(() => { loadDrafts(); if (session.authenticated) { query.value = commerce.orderQuery; selectedStatus.value = commerce.orderStatusQuery; loadOrders(query.value, selectedStatus.value) } })
 function login(): void { requireSession() }
 function search(): void { loadOrders(query.value.trim(), selectedStatus.value) }
 function loadMore(): void { loadOrders(query.value.trim(), selectedStatus.value, true) }

@@ -15,6 +15,7 @@ let captureTicker = 0
 let latestLocation: DeviceLocation | null = null
 
 function ownerKey(): string { return session.authenticated && session.tenantId.length > 0 && session.userId.length > 0 ? session.tenantId + ':' + session.userId : '' }
+export function visitReadKey(): string { return session.authenticated ? ownerKey() + ':' + session.revision.toString() + ':' + session.permissions.join(',') : '' }
 function storageKeyFor(owner: string): string { return 'rigour.visit.drafts.v1.' + encodeURIComponent(owner) }
 function storageKey(): string { return storageKeyFor(ownerKey()) }
 function ownsDrafts(): boolean { return ownerKey().length > 0 && visitState.loadedOwner == ownerKey() }
@@ -72,11 +73,13 @@ export function locateForVisit(attachToDraft: boolean = true): void {
 export function getVisitData(path: string, permission: string, success: (data: UTSJSONObject) => void, fail: (message: string) => void): void {
   if (!session.authenticated) { fail('请先使用供应链系统账号登录。'); return }
   if (!hasPermission(permission)) { fail('当前账号没有此功能的权限。'); return }
+  const expectedKey = visitReadKey()
   requestApi(path, 'GET', null, (response) => {
+    if (expectedKey != visitReadKey()) return
     const payload = response['data'] as UTSJSONObject | null
     if (payload == null) { fail('接口未返回有效数据，请稍后重试。'); return }
     success(payload)
-  }, fail)
+  }, (message) => { if (expectedKey == visitReadKey()) fail(message) })
 }
 export function parseVisitTarget(value: UTSJSONObject): VisitTarget { return { projectionId: value.getString('projectionId') ?? '', storeId: value.getString('storeId') ?? '', customerId: value.getString('customerId') ?? '', storeName: value.getString('storeName') ?? '门店名称未提供', customerName: value.getString('customerName') ?? '', address: value.getString('storeAddress') ?? '门店地址未提供' } as VisitTarget }
 export function parseVisitItem(value: UTSJSONObject): VisitItem {
