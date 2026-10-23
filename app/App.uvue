@@ -1,7 +1,8 @@
 <script setup lang="uts">
 // #ifdef APP
 import { restoreCompanySession } from './services/auth.uts'
-onLaunch(() => { restoreCompanySession() })
+import { startSalesProfileSync } from './services/sales-profile.uts'
+onLaunch(() => { startSalesProfileSync(); restoreCompanySession() })
 // #endif
 // #ifdef WEB
 onLaunch(() => {})

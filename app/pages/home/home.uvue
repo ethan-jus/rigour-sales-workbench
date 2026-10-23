@@ -34,7 +34,7 @@
 </template>
 <script setup lang="uts">
 import { session, hasPermission } from '../../services/session.uts'
-import { requestApi } from '../../services/api.uts'
+import { requestSalesApi } from '../../services/sales-profile.uts'
 import { commerce, loadDrafts, preloadCommerceLists, CartDraft } from '../../services/commerce.uts'
 import { loadLocalVisits, visitDraftCount, hasActiveVisitRecording, resumeVisitPath, visitToday } from '../../services/visits.uts'
 const today = ref(visitToday())
@@ -65,7 +65,7 @@ function loadHome(): void {
   summaryHint.value = session.authenticated ? '当前账号暂无拜访统计权限' : '登录后查看本人拜访记录'
   if (!hasPermission('sales:visit:own:read')) return
   summaryHint.value = '正在加载…'
-  requestApi('/sales/me/activity-summary?from=' + today.value.substring(0, 7) + '-01&to=' + today.value, 'GET', null, (response) => {
+  requestSalesApi('/sales/me/activity-summary?from=' + today.value.substring(0, 7) + '-01&to=' + today.value, (response) => {
     const data = response.getJSON('data')
     const count = data?.getNumber('totalVisitCount')
     visitsTotal.value = count == null ? '—' : count.toString()

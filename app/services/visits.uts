@@ -1,6 +1,6 @@
 import { reactive, watch } from 'vue'
 import { session, hasPermission } from './session.uts'
-import { requestApi } from './api.uts'
+import { requestSalesApi } from './sales-profile.uts'
 import { createCaptureSession, loadSavedClips, savedClipPath, CaptureSession, CaptureState, SavedClip } from './capture.uts'
 import { requestDeviceLocation, DeviceLocation } from './location.uts'
 
@@ -74,7 +74,7 @@ export function getVisitData(path: string, permission: string, success: (data: U
   if (!session.authenticated) { fail('请先使用供应链系统账号登录。'); return }
   if (!hasPermission(permission)) { fail('当前账号没有此功能的权限。'); return }
   const expectedKey = visitReadKey()
-  requestApi(path, 'GET', null, (response) => {
+  requestSalesApi(path, (response) => {
     if (expectedKey != visitReadKey()) return
     const payload = response['data'] as UTSJSONObject | null
     if (payload == null) { fail('接口未返回有效数据，请稍后重试。'); return }

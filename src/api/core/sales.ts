@@ -27,7 +27,9 @@ export interface FieldPolicyView {
 
 export interface SalesContextView {
   userId: string;
-  employeeId: string;
+  employeeId: string | null;
+  hrEmployeeId?: string | null;
+  employeeCode?: string | null;
   salesProfileId: string;
   salesNo: string;
   cityOrgId: string | null;
@@ -369,7 +371,8 @@ export interface LocationBatchResult {
 
 export interface WorkDayView {
   id: string;
-  employeeId: string;
+  employeeId: string | null;
+  hrEmployeeId?: string | null;
   salesProfileId: string;
   businessDate: string;
   timezoneId: string;

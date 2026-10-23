@@ -251,7 +251,7 @@ test('API 403 preserves session and explicitly reports permission denial', () =>
 
 test('public business-code allowlist provides Chinese actionable errors', () => {
   for (const [status, code, expected] of [
-    [403, 'SALES_IDENTITY_UNBOUND', /绑定销售身份/],
+    [403, 'SALES_IDENTITY_UNBOUND', /公司员工信息/],
     [403, 'SALES_PROFILE_INACTIVE', /身份尚未生效/],
     [403, 'FORBIDDEN', /权限/],
     [409, 'SALES_POLICY_NOT_FOUND', /外勤规则/],

@@ -140,12 +140,14 @@ function fixture({ android = true, supported = android, metadata = new Map(), va
 check('native lifecycle restores the company session on launch', () => {
   const app = fs.readFileSync(path.join(__dirname, '../app/App.uvue'), 'utf8')
   const nativeScript = app.split('// #ifdef APP')[1].split('// #endif')[0]
-  const hooks = {}; let restored = 0
+  const hooks = {}; const calls = []
   runModule(nativeScript, {
-    require: () => ({ restoreCompanySession: () => restored++ }),
+    require: name => name === './services/auth.uts'
+      ? { restoreCompanySession: () => calls.push('restore') }
+      : { startSalesProfileSync: () => calls.push('watch-sales-identity') },
     onLaunch: hook => { hooks.launch = hook },
   })
-  assert.equal(restored, 0); hooks.launch(); assert.equal(restored, 1)
+  assert.deepEqual(calls, []); hooks.launch(); assert.deepEqual(calls, ['watch-sales-identity', 'restore'])
 })
 
 check('config validates official HTTPS and the exact isolated Android DEV combination', () => {

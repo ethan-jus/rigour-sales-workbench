@@ -56,7 +56,7 @@ function harness(storage = new Map()) {
   const dependencies = {
     vue: { reactive: value => value, watch: (_getter, callback) => { ownerWatcher = callback } },
     './session.uts': { session, hasPermission: value => session.authenticated && session.permissions.includes(value) },
-    './api.uts': { requestApi: (...args) => network.push(args) },
+    './sales-profile.uts': { requestSalesApi: (path, success, fail) => network.push([path, 'GET', null, success, fail]) },
     './capture.uts': {
       createCaptureSession: callback => { captureCreates += 1; captureCallback = callback; return capture },
       loadSavedClips: callback => callback([clip]), savedClipPath: value => '/saved/' + value.fileName,

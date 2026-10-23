@@ -3,6 +3,12 @@
     <template v-if="view == 'account'">
       <text class="h1">账号与设置</text><text class="muted intro">账号和权限由公司统一管理</text>
       <view class="card"><text class="fine">当前账号</text><text class="h2 account-name">{{ session.authenticated ? session.displayName : '尚未登录' }}</text><text class="body">{{ session.username }}</text></view>
+      <view v-if="canReadSalesProfile" class="card">
+        <text class="h3">本人销售档案</text>
+        <text v-if="salesProfile.employeeCode.length > 0" class="body account-name">{{ salesProfile.employeeName }} · {{ salesProfile.employeeCode }}</text>
+        <text class="muted account-name">{{ salesProfile.busy ? '正在核验公司员工身份…' : salesProfile.message }}</text>
+        <button v-if="!salesProfile.busy && salesProfile.status != 'ACTIVE'" class="secondary" @click="retryProfile">重新识别身份</button>
+      </view>
       <view class="entry" @click="deviceCheck"><view class="grow"><text class="h3">定位与录音检查</text><text class="muted">检查权限、保存和回放</text></view><text class="chevron">›</text></view>
       <view class="entry" @click="uploads"><view class="grow"><text class="h3">本机草稿与附件</text><text class="muted">查看还未提交的记录</text></view><text class="chevron">›</text></view>
       <view class="entry"><view class="grow"><text class="h3">App 版本</text><text class="muted">0.2.0 · 内部试用版</text></view></view>
@@ -42,7 +48,7 @@
 <script setup lang="uts">
 import { session, hasPermission } from '../../services/session.uts'
 import { logoutCompany } from '../../services/auth.uts'
-import { requestApi } from '../../services/api.uts'
+import { salesProfile, syncSalesProfile, requestSalesApi } from '../../services/sales-profile.uts'
 import { loadDrafts, commerce, CartDraft } from '../../services/commerce.uts'
 import { loadLocalVisits, visitDraftCount, hasActiveVisitRecording, visitToday } from '../../services/visits.uts'
 const view = ref('account')
@@ -53,6 +59,8 @@ const effective = ref('—')
 const message = ref('')
 let requestNumber = 0
 const localVisitCount = computed((): number => visitDraftCount())
+const canReadSalesProfile = computed((): boolean => hasPermission('sales:context:read'))
+function retryProfile(): void { syncSalesProfile() }
 const localCartCount = computed((): number => session.authenticated ? commerce.drafts.filter((draft: CartDraft): boolean => draft.lines.length > 0).length : 0)
 function login(): void { uni.navigateTo({ url: '/pages/login/login' }) }
 function deviceCheck(): void { uni.navigateTo({ url: '/pages/device-check/device-check' }) }
@@ -77,7 +85,7 @@ function loadPerformance(): void {
   dateLabel.value = from + ' 至 ' + to; total.value = '—'; effective.value = '—'; message.value = ''
   if (!session.authenticated) return
   if (!hasPermission('sales:visit:own:read')) { message.value = '当前账号没有拜访统计权限'; return }
-  requestApi('/sales/me/activity-summary?from=' + from + '&to=' + to, 'GET', null, (response) => {
+  requestSalesApi('/sales/me/activity-summary?from=' + from + '&to=' + to, (response) => {
     if (revision != requestNumber) return
     const data = response.getJSON('data')
     total.value = data?.getNumber('totalVisitCount')?.toString() ?? '—'
@@ -90,7 +98,7 @@ onLoad((options) => {
   const titles: UTSJSONObject = { account: '账号与设置', performance: '目标与业绩', commission: '我的提成', messages: '消息与待办', cashflow: '到账明细' }
   uni.setNavigationBarTitle({ title: titles.getString(view.value) ?? '工作台' })
 })
-onShow(() => { loadDrafts(); loadLocalVisits(); if (view.value == 'performance') loadPerformance() })
+onShow(() => { loadDrafts(); loadLocalVisits(); if (view.value == 'performance') loadPerformance(); if (view.value == 'account') syncSalesProfile() })
 </script>
 <style>
 .intro { margin-top: 12px; margin-bottom: 23px; }

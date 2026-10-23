@@ -1,0 +1,86 @@
+import { reactive, watch } from 'vue'
+import { session, hasPermission } from './session.uts'
+import { requestApi } from './api.uts'
+
+type SalesProfileState = { busy: boolean, status: string, employeeName: string, employeeCode: string, message: string }
+type ProfileWaiter = { ready: () => void, fail: (message: string) => void }
+export const salesProfile = reactive({ busy: false, status: '', employeeName: '', employeeCode: '', message: '' } as SalesProfileState)
+let requestNumber = 0
+let syncStarted = false
+let waiters: ProfileWaiter[] = []
+let activeOwner = ''
+
+function ownerKey(): string {
+  return session.authenticated ? session.tenantId + ':' + session.userId + ':' + session.revision.toString() + ':' + session.permissions.join(',') : ''
+}
+
+function alignOwner(): void {
+  const owner = ownerKey()
+  if (owner != activeOwner) { activeOwner = owner; reset() }
+}
+
+function finishWaiters(message: string): void {
+  const current = waiters; waiters = [] as ProfileWaiter[]
+  current.forEach((waiter: ProfileWaiter) => { if (message.length == 0) waiter.ready(); else waiter.fail(message) })
+}
+
+function reset(): void {
+  requestNumber += 1
+  salesProfile.busy = false; salesProfile.status = ''; salesProfile.employeeName = ''; salesProfile.employeeCode = ''; salesProfile.message = ''
+  finishWaiters('账号已变更，请重新加载。')
+}
+
+export function syncSalesProfile(): void {
+  alignOwner()
+  if (salesProfile.busy || !hasPermission('sales:context:read')) return
+  requestProfile()
+}
+
+// 首次登录的拜访读取等待同一次身份同步，避免与自动建档竞争产生暂时性 403。
+export function requestSalesApi(path: string, success: (data: UTSJSONObject) => void, fail: (message: string) => void): void {
+  alignOwner()
+  if (!hasPermission('sales:context:read')) { fail('当前账号没有销售身份读取权限。'); return }
+  const revision = session.revision
+  const ready = (): void => {
+    if (revision != session.revision) { fail('账号已变更，请重新加载。'); return }
+    requestApi(path, 'GET', null, success, fail)
+  }
+  if (salesProfile.status == 'ACTIVE' && !salesProfile.busy) { ready(); return }
+  waiters.push({ ready, fail } as ProfileWaiter)
+  syncSalesProfile()
+}
+
+export function startSalesProfileSync(): void {
+  if (syncStarted) return
+  syncStarted = true
+  watch((): string => ownerKey(), (_value: string, _old: string) => { syncSalesProfile() })
+  syncSalesProfile()
+}
+
+function requestProfile(): void {
+  const number = ++requestNumber
+  const revision = session.revision
+  const owner = ownerKey()
+  salesProfile.busy = true; salesProfile.message = ''; salesProfile.status = ''
+  requestApi('/sales/me/profile', 'POST', null, (response) => {
+    if (number != requestNumber || revision != session.revision || owner != ownerKey()) return
+    salesProfile.busy = false
+    const data = response.getJSON('data')
+    const status = data?.getString('status') ?? ''
+    const employeeId = data?.getString('hrEmployeeId') ?? ''
+    const code = data?.getString('employeeCode') ?? ''
+    const profileId = data?.getString('salesProfileId') ?? ''
+    if (employeeId.length == 0 || code.length == 0 || profileId.length == 0 || status != 'ACTIVE') {
+      salesProfile.message = '未能确认销售档案状态，请重新查询。'; finishWaiters(salesProfile.message); return
+    }
+    salesProfile.status = status
+    salesProfile.employeeName = data?.getString('employeeName') ?? ''
+    salesProfile.employeeCode = code
+    salesProfile.message = '已识别本人销售身份。门店归属与外勤规则以公司配置为准。'
+    finishWaiters('')
+  }, (message) => {
+    if (number != requestNumber || revision != session.revision || owner != ownerKey()) return
+    salesProfile.busy = false; salesProfile.status = ''; salesProfile.message = message
+    finishWaiters(message)
+  })
+}

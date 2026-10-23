@@ -6,11 +6,12 @@ import { parseApiJson } from './json.uts'
 export function apiErrorMessage(code: string, status: number): string {
   if (status == 401) return '登录已失效，请重新登录公司账号。'
   if (status == 403) {
-    if (code == 'SALES_IDENTITY_UNBOUND') return '当前账号尚未绑定销售身份，请联系管理员完成绑定。'
+    if (code == 'SALES_IDENTITY_UNBOUND') return '当前账号缺少有效的公司员工信息，暂时无法识别销售身份。'
     if (code == 'SALES_PROFILE_INACTIVE') return '当前销售身份尚未生效，请联系管理员检查员工和销售档案。'
     return '暂无此功能或数据的权限，请联系管理员。'
   }
   if (status == 409) {
+    if (code == 'SALES_EMPLOYEE_BINDING_CONFLICT') return '公司员工信息与已有销售档案不一致，请联系管理员核对。'
     if (code == 'SALES_POLICY_NOT_FOUND') return '尚未配置生效的销售外勤规则，请联系管理员。'
     if (code == 'SALES_VISIT_POLICY_NOT_FOUND') return '尚未配置生效的拜访规则，请联系管理员。'
   }
