@@ -157,7 +157,7 @@ check('config validates official HTTPS and the exact isolated Android DEV combin
   for (const change of [{ clientId: '' }, { gatewayOrigin: 'http://gateway.example.test' }, { issuer: 'https://iam.example.test?token=x' }, { redirectUri: 'other://callback' }]) {
     const c = configFixture({ ...f.env, ...change }); assert.equal(c.environmentReady(), false)
   }
-  for (const change of [{ environment: 'production' }, { issuer: 'http://localhost:27682' }, { gatewayOrigin: 'http://localhost:27680.attacker.test' }]) {
+  for (const change of [{ environment: 'production' }, { issuer: 'http://localhost:27682' }, { gatewayOrigin: 'http://localhost:26880.attacker.test' }]) {
     const c = configFixture(change); assert.equal(c.environmentReady(), false)
   }
 })

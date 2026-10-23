@@ -1,5 +1,7 @@
 # App V1 原生账号登录与 IAM 续期
 
+> 2026-10-23 当前配置：只使用主项目 IDEA Gateway 26880 / IAM 26881；旧独立 JAR 已停止。现有 IAM 需先解决 V139 历史校验冲突再重启，当前不代表原生登录已在新环境验收。
+
 > 2026-10-23 接续：已实现登录后自动核验 IAM/HR 并初始化本人销售档案的源码，无需 App 手动绑定。新档案使用真实 HR Long ID 独立引用，旧 UUID 不强转。部署、门店归属及真机验收尚未完成，详见 [自动身份接入记录](app-sales-identity-20261023.md)。下文 10-14 身份缺口描述是历史快照。
 
 更新：2026-10-14。用户确认采用 App 自有账号密码页面，供应链 IAM 继续统一认证、权限、登录过期与 Token 刷新。本次替代了此前 Android 浏览器跳转登录；原生登录的验收结果与此前浏览器登录证据分开记录。
@@ -28,8 +30,8 @@
 
 | 项目 | 配置 / 范围 |
 |---|---|
-| Gateway | `http://localhost:27680` |
-| IAM issuer | `http://localhost:27681` |
+| Gateway | `http://localhost:26880` |
+| IAM issuer | `http://localhost:26881` |
 | Client ID | `rigour-sales-app-android-dev` |
 | code 交换绑定 URI | `uniappx://rigour-sales/auth/callback` |
 | 连接 | Android ADB reverse；独立进程不注册共享 Nacos |

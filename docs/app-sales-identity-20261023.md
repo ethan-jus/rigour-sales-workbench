@@ -19,6 +19,12 @@
 
 本次代码已合并回 `/Users/ethan/myspance/rigour/B2B供应链/自动化系统构建/06_代码工程/rigour-sales-workbench` 的 `dev` 分支。HBuilderX 打开此目录下的 `app/`，后续直接在这里开发；使用其他工作树须先说明并征得用户同意。原有 `ios/App/App/AppDelegate.swift` 修改原样保留。
 
-后端使用同级 `rigour-supply-chain-digital-platform` 主工程。IDEA 运行 `SalesApplication - App 本地 26886` 与 `GatewayApplication - App 本地 27680`；后者把现有 App 入口转到主工程 Sales，具体本机配置和替换顺序见后端 `docs/SALES_APP_EMPLOYEE_IDENTITY.md`。App 的 Gateway 27680 / IAM 27681 设置保持不变。新运行项尚待用户启动，不能把本地合并视为已运行生效。
+后端使用同级 `rigour-supply-chain-digital-platform` 主工程，沿用原有 IDEA `GatewayApplication`（26880）、`IamApplication`（26881）、`SalesApplication`（26886）运行项。不再使用额外 App 本地运行项或独立 JAR。
 
-在上述主目录重新执行 App 141 项回归与 Android 编译，均通过。
+App Gateway 和 issuer 已改为 26880/26881，精确 HTTP 白名单同步调整，旧端口被拒绝。Android 调试需设置 ADB reverse 26880/26881。安全会话按 issuer 隔离，切换后需重新登录，不搬运旧 refresh token。
+
+IAM `application-dev.yml` 开启原生登录，仅允许 `rigour-sales-app-android-dev`；该 PUBLIC 客户端已存在且有效，bootstrap 明确关闭。生产默认仍关闭。现有 IAM 尚未重启加载此设置，真实登录与自动身份识别还未验收。
+
+**IAM 重启前阻塞**：只读 Flyway 校验发现 V139 CHECKSUM_MISMATCH（DEV -812060856 / 本地 466362980），且 DEV V141 原始文件尚未进入主源码。需取得对应原始迁移并按环境历史解决，不能 repair 或关闭校验。当前不要求用户盲目重启 IAM；Gateway、Sales 无需为此次地址改动重启。
+
+旧 5 个 App JAR 已按用户要求停止；主项目 7 个 IDEA 服务保持原 PID、health=UP。多余运行项已删除。最新验证 App 141 项、Android 编译通过；IAM 8 项定向测试通过。未修改员工、权限或登录会话数据。

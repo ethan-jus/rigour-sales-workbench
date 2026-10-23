@@ -1,8 +1,10 @@
 # 销售工作台 App V1 接口就绪审查
 
+> 2026-10-23 当前配置：只使用主项目 IDEA Gateway 26880 / IAM 26881；旧独立 JAR 已停止。现有 IAM 需先解决 V139 历史校验冲突再重启，当前不代表原生登录已在新环境验收。
+
 > 2026-10-23 接续：已实现登录后自动核验 IAM/HR 并初始化本人销售档案的源码，无需 App 手动绑定。新档案使用真实 HR Long ID 独立引用，旧 UUID 不强转。部署、门店归属及真机验收尚未完成，详见 [自动身份接入记录](app-sales-identity-20261023.md)。下文 10-14 身份缺口描述是历史快照。
 
-更新：2026-10-14。当前原生账号密码登录与 IAM refresh 的实现及待验收边界见 [原生登录接入](app-v1-auth-integration.md)；下述已完成 DEV 登录证据来自本日较早的浏览器方案，不代表新原生登录已通过真机验收。本轮已核对 Platform 合同、接通隔离 DEV 服务并执行 DEV 数据库只读计数；Android 真机已完成管理员登录、`/me` 读取，以及客户列表、客户详情和订单列表可读验证，未完成真实销售账号的数据范围验收。未调用或修改生产临时打卡。原 G0 Sales 详细合同见 `app-g0-platform-contract.md`；当前环境证据见 [DEV 联调回执](app-v1-dev-integration-receipt-20261014.md)。
+更新：2026-10-14。当前原生账号密码登录与 IAM refresh 的实现及待验收边界见 [原生登录接入](app-v1-auth-integration.md)；下述已完成 DEV 登录证据来自本日较早的浏览器方案，不代表新原生登录已通过真机验收。本轮已核对 Platform 合同、接通过 DEV 服务并执行 DEV 数据库只读计数；Android 真机已完成管理员登录、`/me` 读取，以及客户列表、客户详情和订单列表可读验证，未完成真实销售账号的数据范围验收。未调用或修改生产临时打卡。原 G0 Sales 详细合同见 `app-g0-platform-contract.md`；当前环境证据见 [DEV 联调回执](app-v1-dev-integration-receipt-20261014.md)。
 
 ## 1. 当前可实施边界
 
@@ -20,14 +22,12 @@
 - IAM 支持 PUBLIC Client 的 Authorization Code + PKCE、Refresh Token 轮换。
 - `GET /api/v1/me` 返回裸 `CurrentUserView`：`id, tenantId, tenantName, principalScope, username, displayName, roles[], permissions[]`。Sales/CRM/ERP/Order/BI 通常为 `ApiResponse`：`{code:"OK",message,data,requestId,timestamp}`。
 - 业务 API 用 `Authorization: Bearer <access_token>`，不使用 ID Token，不伪造 `X-Rigour-*` 身份头。租户由可信认证上下文确定。
-- `/login` 是 Spring Security HTML 表单和 CSRF 登录；`/scdp/session` 只返回浏览器会话及 CSRF 状态。原来没有 App JSON 密码入口；本次新增 IAM `/api/v1/auth/native-app/login`，返回绑定 PKCE 的授权码，随后仍由标准 `/oauth2/token` 签发和续期。新入口默认关闭，DEV 部署须先补齐迁移来源。
+- `/login` 是 Spring Security HTML 表单和 CSRF 登录；`/scdp/session` 只返回浏览器会话及 CSRF 状态。原来没有 App JSON 密码入口；本次新增 IAM `/api/v1/auth/native-app/login`，返回绑定 PKCE 的授权码，随后仍由标准 `/oauth2/token` 签发和续期。生产原生入口默认关闭；主项目 DEV 已配置 Android 白名单，生效需 IAM 重启且迁移校验通过。
 
 ### 本日较早浏览器方案的 DEV 回执
 
-- App `config.uts` 采用 `development`、Gateway `http://localhost:27680`、IAM `http://localhost:27681`、PUBLIC Client ID `rigour-sales-app-android-dev`、调试回调 `uniappx://rigour-sales/auth/callback`。Android 需通过 ADB reverse 连接本机服务。
+- App `config.uts` 采用 `development`、Gateway `http://localhost:26880`、IAM `http://localhost:26881`、PUBLIC Client ID `rigour-sales-app-android-dev`、调试回调 `uniappx://rigour-sales/auth/callback`。Android 需通过 ADB reverse 连接本机服务。
 - 当时 Platform DEV 的 `SalesAppClientBootstrapCommand` 已随 IAM 启动成功注册上述客户端；这是 DEV 客户端注册证据，不是正式环境或公司签名包注册证据。
-- Gateway 27680、IAM 27681、Sales 27686 health 为 UP。Sales 临时 check-in worker、AI worker 禁用；无新增迁移，生产临时打卡保持原状。
-- 9 个主 DEV 服务在 Nacos 的实例地址均为当前 `.106` 主机，且 healthy；隔离 App 三服务的 health 检查同时为 UP。
 - Android 已实现系统浏览器 OAuth Code + S256 PKCE，申请 `profile`，不使用 ID Token；通过 `/me` 读取真实公司身份与权限。HTTP 和调试 scheme 仅允许精确的 DEV 组合，非开发环境禁止使用该调试 Client ID。实际配置行为已纳入自动测试。
 - `App.uvue` 组合式钩子改为 `onAppShow`，保留完整的 `appScheme` / `appLink` 参数和严格 state/PKCE 校验。新版已同步到手机；14:34:46 用户手动打开 App，14:34:55 `/oauth2/token` 返回 200，14:34:57 `/api/v1/me` 返回 200，用户确认显示“管理员”。14:35:06、14:35:12 客户列表接口返回 200；14:36:56 客户详情 `/api/v1/crm/internal-customers/4233` 返回 200；14:37:24 订单列表 `/api/v1/orders/sales` 返回 200。用户确认“能看到详情，订单”，管理员客户列表、客户详情及订单列表可读已验证，不扩展为订单详情或逐字段核对完成。
 - `api.uts` 按文本接收响应，经 `parseApiJson` 保留大整数 ID；公开 Sales 403/409/404 业务错误映射为固定中文，不展示后台原文。

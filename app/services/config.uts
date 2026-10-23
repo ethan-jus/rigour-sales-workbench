@@ -6,12 +6,12 @@ export type AppEnvironment = {
   redirectUri: string
 }
 
-// DEV reaches the developer's isolated services through ADB reverse.
+// DEV reaches the main IDEA Gateway/IAM through ADB reverse.
 // Production must use HTTPS and a company-signed App callback.
 export const appEnvironment: AppEnvironment = {
   environment: 'development',
-  gatewayOrigin: 'http://localhost:27680',
-  issuer: 'http://localhost:27681',
+  gatewayOrigin: 'http://localhost:26880',
+  issuer: 'http://localhost:26881',
   clientId: 'rigour-sales-app-android-dev',
   redirectUri: 'uniappx://rigour-sales/auth/callback'
 }
@@ -22,7 +22,7 @@ export function serviceOrigin(value: string): string {
     if (/^[A-Za-z0-9.-]+(:[0-9]{1,5})?$/.test(authority)) return 'https://' + authority
   }
   if (appEnvironment.environment == 'development') {
-    for (const origin of ['http://localhost:27680', 'http://localhost:27681']) {
+    for (const origin of ['http://localhost:26880', 'http://localhost:26881']) {
       if (value == origin || value.startsWith(origin + '/')) return origin
     }
   }
@@ -36,6 +36,6 @@ export function environmentReady(): boolean {
   if (appEnvironment.clientId.length == 0) return false
   if (appEnvironment.redirectUri == 'com.rigour.workbench://auth/callback') return true
   return appEnvironment.environment == 'development' && appEnvironment.clientId == 'rigour-sales-app-android-dev'
-    && appEnvironment.gatewayOrigin == 'http://localhost:27680' && appEnvironment.issuer == 'http://localhost:27681'
+    && appEnvironment.gatewayOrigin == 'http://localhost:26880' && appEnvironment.issuer == 'http://localhost:26881'
     && appEnvironment.redirectUri == 'uniappx://rigour-sales/auth/callback'
 }

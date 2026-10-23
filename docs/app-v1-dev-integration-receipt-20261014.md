@@ -1,5 +1,7 @@
 # 销售工作台 App DEV 联调回执
 
+> 历史验收回执。旧 JAR 拓扑已退役，端口和启动指引已删除；当前只使用主项目 IDEA Gateway 26880 / IAM 26881。新环境登录待验收。
+
 日期：2026-10-14。本文较早的手机登录证据来自浏览器方案；用户随后确认改用 App 原生账号密码表单，新的实现与待验收项见下一节。真实销售账号范围尚未验收。本文不包含凭据或 Token。
 
 
@@ -19,8 +21,6 @@
 
 ## 较早浏览器方案已确认
 
-- App DEV：Gateway `http://localhost:27680`、IAM `http://localhost:27681`，Android PUBLIC Client `rigour-sales-app-android-dev`，回调 `uniappx://rigour-sales/auth/callback`。HTTP 仅允许指定 loopback，调试 scheme 受精确环境/客户端/端口约束，非开发环境禁止该调试客户端。
-- 当时 Platform DEV 的调试客户端注册已随 IAM 启动成功；Gateway 27680、IAM 27681、Sales 27686 health 均为 UP。
 - 9 个主 DEV 服务在 Nacos 的实例地址均为当前 `.106` 主机，且 healthy；隔离 App 的三个服务 health 也为 UP。
 - DEV 数据库只读计数：CRM 客户 **2,508**、订单 **4,027**、正式拜访 **11**。这些计数证明环境存在业务记录，不证明某销售账号可见或手机页面已展示。
 - `npm run app:v1:test`：**86/86 通过**，含登录状态、API/配置边界、JSON 大整数、商务与拜访回归。
@@ -77,4 +77,3 @@
 - `npm run app:v1:test`：132/132 通过，新增预加载与栏目共用请求、成功结果复用、搜索/筛选不被覆盖、登录权限边界测试。日志 `/tmp/app-data-prefetch-tests.log`。
 - Android 17:05:52 编译检查成功、17:05:56 同步成功、17:05:58 启动；17:06:02/03 手机在首页已收到客户和订单请求结果。日志 `/tmp/app-data-prefetch-android-sync.log`。已请用户再次验证，尚未收到本轮体验确认。
 - 本轮为 Android 验证；没有重新启动 iOS/HarmonyOS 模拟器或宣称两平台性能通过。
-- App 开发入口 27680 的客户、订单路由现指向隔离 CRM 27683 / Order 27685；这些服务及 Gateway 使用隔离 IAM 27681。配置关闭 Nacos 注册，不覆盖 IDEA 268xx 服务。现用真实 DEV 数据，生产临时打卡系统未改动。

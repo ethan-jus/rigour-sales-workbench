@@ -83,23 +83,24 @@ test('unconfigured or invalid origins cannot make authenticated requests', () =>
 
 test('DEV HTTP origin exception accepts only the two exact loopback authorities', () => {
   const config = moduleFixture('config.uts')
-  for (const origin of ['http://localhost:27680', 'http://localhost:27681']) {
+  for (const origin of ['http://localhost:26880', 'http://localhost:26881']) {
     assert.equal(config.serviceOrigin(origin), origin)
     assert.equal(config.serviceOrigin(origin + '/oauth2/authorize?state=test'), origin)
   }
   for (const origin of [
-    'http://localhost:276800', 'http://localhost:27680.attacker.invalid',
-    'http://localhost.attacker.invalid:27680', 'http://localhost:27680@attacker.invalid',
-    'http://user@localhost:27680', 'http://localhost:27680\\@attacker.invalid',
-    'http://127.0.0.1:27680', 'http://[::1]:27680', 'http://192.168.1.10:27680',
-    'http://10.0.0.2:27680', 'http://localhost:80', 'http://localhost:27680?other=host',
+    'http://localhost:268800', 'http://localhost:26880.attacker.invalid',
+    'http://localhost.attacker.invalid:26880', 'http://localhost:26880@attacker.invalid',
+    'http://user@localhost:26880', 'http://localhost:26880\\@attacker.invalid',
+    'http://localhost:27680', 'http://localhost:27681',
+    'http://127.0.0.1:26880', 'http://[::1]:26880', 'http://192.168.1.10:26880',
+    'http://10.0.0.2:26880', 'http://localhost:80', 'http://localhost:26880?other=host',
   ]) assert.equal(config.serviceOrigin(origin), '', origin)
 })
 
 test('production never inherits the HTTP loopback exception', () => {
   const config = moduleFixture('config.uts')
   Object.assign(config.appEnvironment, { environment: 'production', clientId: 'company-native', redirectUri: 'com.rigour.workbench://auth/callback' })
-  for (const origin of ['http://localhost:27680', 'http://localhost:27681', 'http://192.168.1.10:27680']) assert.equal(config.serviceOrigin(origin), '')
+  for (const origin of ['http://localhost:26880', 'http://localhost:26881', 'http://192.168.1.10:26880']) assert.equal(config.serviceOrigin(origin), '')
   assert.equal(config.environmentReady(), false)
   config.appEnvironment.gatewayOrigin = 'https://gateway.example.test'
   assert.equal(config.environmentReady(), false)
@@ -124,7 +125,7 @@ test('debug callback requires the exact DEV client and role-specific loopback or
   for (const overrides of [
     { environment: 'production' }, { environment: 'staging' },
     { clientId: 'different-dev-client' }, { clientId: 'rigour-sales-app-android-dev-extra' },
-    { gatewayOrigin: 'http://localhost:27681', issuer: 'http://localhost:27680' },
+    { gatewayOrigin: 'http://localhost:26881', issuer: 'http://localhost:26880' },
     { gatewayOrigin: 'https://gateway.example.test', issuer: 'https://iam.example.test' },
     { redirectUri: 'uniappx://rigour-sales/auth/callback/extra' },
     { redirectUri: 'uniappx://rigour-sales/auth/callback?extra=1' },
