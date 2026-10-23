@@ -68,13 +68,13 @@ HBuilderX 当前 VDOM 模式选用 `launcher-harmony/base/project-x.zip`，其�
 /Applications/DevEco-Studio.app/Contents/tools/emulator/Emulator -start RigourG0
 /Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/toolchains/hdc list targets
 
-cd /Users/ethan/.codex/worktrees/rigour-sales-workbench-app-g0
+cd /Users/ethan/myspance/rigour/B2B供应链/自动化系统构建/06_代码工程/rigour-sales-workbench
 
 # 仅编译并生成运行包：脚本使用 --compile true，不负责安装启动。
 node scripts/app-g0.mjs app-harmony
 
 # 安装并启动到本次已验证的模拟器目标。
-/Applications/HBuilderX.app/Contents/MacOS/cli launch app-harmony --project /Users/ethan/.codex/worktrees/rigour-sales-workbench-app-g0/app --deviceId 127.0.0.1:5555
+/Applications/HBuilderX.app/Contents/MacOS/cli launch app-harmony --project /Users/ethan/myspance/rigour/B2B供应链/自动化系统构建/06_代码工程/rigour-sales-workbench/app --deviceId 127.0.0.1:5555
 ```
 
 目标编号以 `hdc list targets` 的实际输出为准。运行包产物位于：

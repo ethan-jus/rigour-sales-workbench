@@ -13,3 +13,12 @@
 后端合同与部署前提见 Platform `docs/SALES_APP_EMPLOYEE_IDENTITY.md`。App 更新依赖 Sales V28 与新接口上线；当前本机正在运行的隔离服务未替换。未改临时网页打卡，未自动创建签到、拜访或门店归属。
 
 验证：141 项 App 回归通过，0 跳过；Android 原生编译通过。iOS/纯鸿蒙本轮未编译或真机验收，安全登录仍沿用原有能力边界。手机未连接，真实普通销售登录、HR 资格、规则与门店闭环尚待联调。
+
+
+## 日常开发目录（2026-10-23 修正）
+
+本次代码已合并回 `/Users/ethan/myspance/rigour/B2B供应链/自动化系统构建/06_代码工程/rigour-sales-workbench` 的 `dev` 分支。HBuilderX 打开此目录下的 `app/`，后续直接在这里开发；使用其他工作树须先说明并征得用户同意。原有 `ios/App/App/AppDelegate.swift` 修改原样保留。
+
+后端使用同级 `rigour-supply-chain-digital-platform` 主工程。IDEA 运行 `SalesApplication - App 本地 26886` 与 `GatewayApplication - App 本地 27680`；后者把现有 App 入口转到主工程 Sales，具体本机配置和替换顺序见后端 `docs/SALES_APP_EMPLOYEE_IDENTITY.md`。App 的 Gateway 27680 / IAM 27681 设置保持不变。新运行项尚待用户启动，不能把本地合并视为已运行生效。
+
+在上述主目录重新执行 App 141 项回归与 Android 编译，均通过。

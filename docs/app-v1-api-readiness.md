@@ -25,7 +25,7 @@
 ### 本日较早浏览器方案的 DEV 回执
 
 - App `config.uts` 采用 `development`、Gateway `http://localhost:27680`、IAM `http://localhost:27681`、PUBLIC Client ID `rigour-sales-app-android-dev`、调试回调 `uniappx://rigour-sales/auth/callback`。Android 需通过 ADB reverse 连接本机服务。
-- Platform 隔离工作树 B2 的 `SalesAppClientBootstrapCommand` 已随 IAM 启动成功注册上述客户端；这是 DEV 客户端注册证据，不是正式环境或公司签名包注册证据。
+- 当时 Platform DEV 的 `SalesAppClientBootstrapCommand` 已随 IAM 启动成功注册上述客户端；这是 DEV 客户端注册证据，不是正式环境或公司签名包注册证据。
 - Gateway 27680、IAM 27681、Sales 27686 health 为 UP。Sales 临时 check-in worker、AI worker 禁用；无新增迁移，生产临时打卡保持原状。
 - 9 个主 DEV 服务在 Nacos 的实例地址均为当前 `.106` 主机，且 healthy；隔离 App 三服务的 health 检查同时为 UP。
 - Android 已实现系统浏览器 OAuth Code + S256 PKCE，申请 `profile`，不使用 ID Token；通过 `/me` 读取真实公司身份与权限。HTTP 和调试 scheme 仅允许精确的 DEV 组合，非开发环境禁止使用该调试 Client ID。实际配置行为已纳入自动测试。
