@@ -169,7 +169,7 @@ test('expiry stops old recording; late file receipt belongs to old owner after a
 
 test('photo metadata is added only after the native file copy succeeds', () => {
   const h = harness(), v = h.service
-  v.loadLocalVisits(); v.createVisitDraft(target); v.addVisitPhotos(true); h.choosePhoto()
+  v.loadLocalVisits(); v.createVisitDraft(target); v.addVisitPhotos(); h.choosePhoto()
   assert.equal(v.activeVisitDraft().photos.length, 0)
   assert.equal(h.copies.length, 1)
   assert.equal(h.copies[0].srcPath, '/camera/photo.jpg')
@@ -339,14 +339,4 @@ test('plans distinguish malformed payload, official setup failure and a valid em
   assert.equal(page.planLabel('CANCELLED'), '已取消')
 })
 
-test('records refresh supersedes pending results, and an account change clears old records while hidden', () => {
-  const h = harness(), page = pageHarness(h, 'pages/visits/visits.uvue')
-  page.hooks.show(); page.loadRecords(true)
-  h.network[1][3]({ data: jsonObject({ items: [{ id: 'new', checkedInAt: '2026-10-14T02:30:00Z', targetSnapshot: { storeName: '新记录' } }], total: 1 }) })
-  h.network[0][3]({ data: jsonObject({ items: [{ id: 'old' }], total: 1 }) })
-  assert.equal(page.records.value.length, 1); assert.equal(page.records.value[0].id, 'new')
-  page.hooks.hide(); h.switchOwner('sales-b'); page.changed()
-  assert.equal(page.records.value.length, 0); assert.equal(page.loaded.value, false); assert.equal(page.total.value, 0)
-  assert.equal(h.network.length, 2, 'hidden page must not fetch another user until shown')
-  page.hooks.show(); assert.equal(h.network.length, 3)
-})
+// The replacement root-page concurrency and account isolation tests are in test-app-visit-workbench.cjs.

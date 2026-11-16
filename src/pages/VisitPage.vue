@@ -11,6 +11,8 @@ import { useSalesStore } from '@/stores/sales';
 import type { CapabilityStatus } from '@/types';
 import { formatTime } from '@/utils/datetime';
 import { createIdempotencyKey } from '@/utils/id';
+import StoreContacts from '@/components/StoreContacts.vue';
+import { normalizeError } from '@/api/core/error';
 
 type PrimaryAction = 'STOP_RECORDING' | 'EDIT_RESULT' | 'CHECK_OUT' | 'BLOCKED';
 
@@ -18,6 +20,10 @@ const route = useRoute();
 const authStore = useAuthStore();
 const salesStore = useSalesStore();
 const capabilities = getWorkbenchCapabilities();
+const storeId = computed(() => typeof route.query.storeId === 'string' ? route.query.storeId : '');
+const crmVisitId = computed(() => typeof route.query.crmVisitId === 'string' ? route.query.crmVisitId : '');
+const contactPanel = ref<InstanceType<typeof StoreContacts> | null>(null);
+const crmVisit = computed(() => !!storeId.value && !!crmVisitId.value);
 
 const audioStatus = ref<CapabilityStatus>('idle');
 const cameraStatus = ref<CapabilityStatus>('idle');
@@ -68,11 +74,11 @@ const isCompletedVisit = computed(() => visit.value?.status === 'CHECKED_OUT');
 const resultSaved = computed(() => Boolean(visit.value?.resultSubmittedAt));
 const contactedKp = computed(() => contactOutcome.value === 'CONTACTED');
 const resultFormComplete = computed(() => contactedKp.value
-  ? Boolean(kpName.value.trim() && kpPhone.value.trim() && intentionLevel.value)
+  ? Boolean(intentionLevel.value && (crmVisit.value ? resultNote.value.trim() : kpName.value.trim() && kpPhone.value.trim()))
   : Boolean(contactOutcome.value && resultNote.value.trim()));
 const resultDirty = computed(() => {
   if (!visit.value) return false;
-  return contactOutcome.value !== (visit.value.contactOutcome ?? '')
+  return !!contactPanel.value?.changed || contactOutcome.value !== (visit.value.contactOutcome ?? '')
     || kpName.value.trim() !== (visit.value.kpName ?? '')
     || kpPhone.value.trim() !== (visit.value.kpPhone ?? '')
     || intentionLevel.value !== (visit.value.intentionLevel ?? '')
@@ -420,12 +426,13 @@ async function saveResult() {
   if (!visit.value) return;
   if (!resultFormComplete.value) {
     showToast(contactedKp.value
-      ? '请完整填写 KP 称呼、电话号码和合作意向'
+      ? (crmVisit.value ? '请填写合作意向与现场沟通纪要' : '请完整填写 KP 称呼、电话号码和合作意向')
       : '请选择现场结果并在沟通纪要中说明情况');
     return;
   }
   savingResult.value = true;
   try {
+    await contactPanel.value?.saveReception();
     const updated = await salesStore.submitVisitResult(visit.value.id, {
       contactOutcome: contactOutcome.value as 'CONTACTED' | 'STORE_CLOSED' | 'KP_ABSENT' | 'REFUSED' | 'OTHER_NO_CONTACT',
       kpName: contactedKp.value ? kpName.value.trim() : null,
@@ -434,7 +441,7 @@ async function saveResult() {
       resultNote: resultNote.value.trim() || null,
     });
     showToast(updated ? '拜访记录已保存' : salesStore.visitError || '拜访记录保存失败');
-  } finally {
+  } catch (e) { showToast(normalizeError(e).message); } finally {
     savingResult.value = false;
   }
 }
@@ -732,6 +739,7 @@ onBeforeRouteLeave(() => {
             {{ resultSaved ? (resultDirty ? '有未保存修改' : `已保存 ${formatTime(visit.resultSubmittedAt)}`) : '待填写' }}
           </span>
         </div>
+        <StoreContacts v-if="crmVisit" ref="contactPanel" :store-id="storeId" :visit-id="crmVisitId" :submitted="resultSaved" />
         <section class="result-card surface-card">
           <div class="outcome-field">
             <span>本次接触结果 <i>*</i></span>
@@ -742,8 +750,8 @@ onBeforeRouteLeave(() => {
             </van-radio-group>
           </div>
           <template v-if="contactedKp">
-            <van-field v-model="kpName" label="KP 称呼" required maxlength="128" placeholder="例如：王店长" />
-            <van-field v-model="kpPhone" label="联系电话" required type="tel" maxlength="32" placeholder="请输入联系电话" />
+            <van-field v-model="kpName" label="接待称呼" :required="!crmVisit" maxlength="128" placeholder="例如：王店长" />
+            <van-field v-model="kpPhone" label="联系电话" :required="!crmVisit" type="tel" maxlength="32" placeholder="请输入联系电话" />
           </template>
           <div v-if="contactedKp" class="intention-field">
             <span>合作意向 <i>*</i></span>
@@ -756,7 +764,7 @@ onBeforeRouteLeave(() => {
           <van-field
             v-model="resultNote"
             :label="contactedKp ? '沟通纪要' : '现场说明'"
-            :required="!contactedKp"
+            :required="crmVisit || !contactedKp"
             type="textarea"
             rows="4"
             maxlength="1024"

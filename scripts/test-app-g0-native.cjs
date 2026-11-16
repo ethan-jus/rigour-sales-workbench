@@ -38,6 +38,7 @@ function harness() {
   const handlers = new Map()
   const removed = []
   const files = new Map()
+  const unlinks = []
   const copies = []
   const writes = []
   let now = 10000
@@ -58,6 +59,7 @@ function harness() {
       else options.fail({ errMsg: 'File missing' })
     }),
     mkdir: (options) => queueMicrotask(() => options.success({})),
+    unlink: options => { unlinks.push(options.filePath); files.delete(options.filePath); queueMicrotask(() => options.success({})) },
     copyFile: (options) => copies.push(options),
     writeFile: (options) => writes.push(options),
     readdir: (options) => queueMicrotask(() => options.success({ files: [...files.keys()].map((name) => path.basename(name)) })),
@@ -71,7 +73,7 @@ function harness() {
   const states = []
   const session = service.createCaptureSession((state) => states.push(state))
   return {
-    service, session, states, files, removed, copies, writes,
+    service, session, states, files, removed, copies, writes, unlinks,
     setTime: (value) => { now = value },
     getStartOptions: () => startOptions,
     getStartCount: () => startCount,
@@ -274,4 +276,23 @@ test('a corrupt index or missing audio does not hide intact recordings or delete
   assert.match(warning, /损坏/)
   assert.match(warning, /不可读取/)
   assert.equal(h.files.size, before)
+})
+
+test('CRM short recordings discard only their new temporary audio before persistent copy', async () => {
+  const h = harness(), states = []
+  const capture = h.service.createCaptureSession(state => states.push(state), { owner: 'tenant:user', captureId: 'visit' }, 300000, 30000)
+  capture.start(); h.event('Start'); h.setTime(39999); capture.stop()
+  h.event('Stop', { tempFilePath: '/tmp/new-short.aac' }); await flushCallbacks()
+  assert.equal(capture.snapshot().phase, 'discarded')
+  assert.equal(capture.snapshot().discardedClip.activeDurationEstimateMs, 29999)
+  assert.equal(capture.snapshot().discardedClip.fileName, '')
+  assert.deepEqual(h.unlinks, ['/tmp/new-short.aac'])
+  assert.equal(h.copies.length, 0); assert.equal(h.writes.length, 0)
+})
+test('CRM thirty-second recording reaches durable storage and is not discarded', async () => {
+  const h = harness()
+  const capture = h.service.createCaptureSession(() => {}, { owner: 'tenant:user', captureId: 'visit' }, 300000, 30000)
+  capture.start(); h.event('Start'); h.setTime(40000); capture.stop()
+  h.event('Stop', { tempFilePath: '/tmp/thirty.aac' }); await flushCallbacks()
+  assert.equal(h.copies.length, 1); assert.deepEqual(h.unlinks, [])
 })

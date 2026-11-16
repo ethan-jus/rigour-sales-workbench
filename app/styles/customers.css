@@ -1,0 +1,100 @@
+@import './workbench-ui.css';
+.c-content { padding: 20px; padding-top: 10px; padding-bottom: 24px; width: 100%; max-width: 560px; align-self: center; }
+.c-header { height: 52px; flex-direction: row; align-items: center; justify-content: space-between; }
+.c-title { font-size: 23px; line-height: 32px; font-weight: bold; color: #252a31; }
+.c-heading { font-size: 17px; line-height: 26px; font-weight: bold; color: #252a31; }
+.c-text { color: #252a31; font-size: 14px; line-height: 22px; }
+.c-muted { color: #626970; font-size: 13px; line-height: 20px; }
+.c-orange { color: #c64c1c; }
+.c-section { margin-top: 20px; }
+.c-icon { width: 22px; height: 22px; }
+.c-arrow { width: 14px; height: 14px; margin-left: 6px; }
+.c-control { height: 48px; min-width: 48px; justify-content: center; align-items: center; }
+.c-more { font-size: 24px; color: #252a31; }
+.c-period-row { flex-direction: row; align-items: center; justify-content: space-between; margin-top: 4px; margin-bottom: 14px; }
+.c-segment { flex-direction: row; padding: 3px; border-radius: 13px; background-color: #f5f6f7; }
+.c-period { margin: 0; padding: 0 10px; height: 42px; line-height: 42px; border-width: 0; border-radius: 10px; background-color: transparent; font-size: 13px; color: #626970; }
+.c-period-active { color: #a64320; background-color: #fff2ea; font-weight: bold; }
+.c-date { height: 48px; flex-direction: row; align-items: center; padding-left: 8px; }
+.c-menu { background-color: #f5f6f7; border-radius: 10px; margin-bottom: 12px; }
+.c-menu-row { height: 48px; padding: 12px; }
+.c-stat-panel { background-color: #f5f6f7; border-radius: 14px; padding: 8px 14px; }
+.c-stats { flex-direction: row; flex-wrap: wrap; }
+.c-stat { width: 50%; min-height: 73px; justify-content: center; padding: 6px; }
+.c-stat-value { color: #252a31; font-size: 27px; line-height: 36px; font-weight: bold; }
+.c-contact-row { flex-direction: row; margin-top: 4px; }
+.c-contact-stat { flex: 1; min-width: 0; flex-direction: row; align-items: center; min-height: 48px; }
+.c-contact-right { margin-left: 16px; }
+.c-small-value { font-size: 21px; color: #252a31; font-weight: bold; margin-left: 8px; }
+.c-manage { flex-direction: row; margin-top: 9px; }
+.c-manage-item { flex: 1; min-width: 0; padding: 10px; border-radius: 11px; background-color: #f5f6f7; }
+.c-manage-middle { margin-left: 8px; margin-right: 8px; }
+.c-manage-number { font-size: 24px; line-height: 30px; color: #252a31; font-weight: bold; margin-top: 2px; }
+.c-task { min-height: 50px; flex-direction: row; align-items: center; border-bottom-width: 1px; border-bottom-style: solid; border-bottom-color: #e4e7e9; }
+.c-task-label { margin-left: 12px; font-size: 15px; line-height: 24px; color: #252a31; flex: 1; }
+.c-task-number { font-size: 20px; font-weight: bold; color: #626970; }
+.c-tabs { flex-direction: row; border-bottom-width: 1px; border-bottom-style: solid; border-bottom-color: #e4e7e9; }
+.c-tab { flex: 1; height: 48px; align-items: center; justify-content: center; }
+.c-tab-text { font-size: 16px; color: #252a31; }
+.c-tab-active { color: #c64c1c; font-weight: bold; }
+.c-tab-line { position: absolute; bottom: 0; width: 40px; height: 3px; border-radius: 2px; background-color: #c64c1c; }
+.c-search { flex-direction: row; align-items: center; background-color: #f5f6f7; border-radius: 10px; padding-left: 12px; margin-top: 16px; }
+.c-input { flex: 1; min-width: 0; height: 46px; font-size: 14px; color: #252a31; padding-left: 10px; }
+.c-search-button { padding: 0 10px; margin: 0; height: 46px; line-height: 46px; font-size: 13px; color: #c64c1c; border-width: 0; background-color: transparent; }
+.c-filters { min-height: 48px; flex-direction: row; align-items: center; justify-content: space-between; }
+.c-filter { min-height: 48px; flex-direction: row; align-items: center; margin-right: 14px; }
+.c-list-row { padding-top: 14px; padding-bottom: 14px; border-bottom-width: 1px; border-bottom-style: solid; border-bottom-color: #e4e7e9; }
+.c-name { font-size: 16px; line-height: 24px; font-weight: bold; color: #252a31; flex: 1; min-width: 0; }
+.c-address { color: #626970; font-size: 13px; line-height: 21px; margin-top: 4px; }
+.c-tag { font-size: 12px; line-height: 20px; color: #626970; padding: 0 6px; border-radius: 5px; background-color: #f0f2f4; margin-left: 6px; }
+.c-metadata { margin-top: 4px; flex-direction: row; justify-content: space-between; }
+.c-empty { padding: 32px 0; align-items: center; }
+.c-error { margin-top: 12px; margin-bottom: 10px; padding: 6px 12px; border-radius: 10px; background-color: #fff2ea; flex-direction: row; align-items: center; }
+.c-error-text { flex: 1; color: #a64320; font-size: 13px; line-height: 20px; margin-right: 8px; }
+.c-claim-hit { width: 80px; min-height: 48px; margin-left: 8px; align-items: flex-end; justify-content: center; }
+.c-claim { width: 72px; height: 32px; align-items: center; justify-content: center; border-width: 1px; border-style: solid; border-color: #c64c1c; border-radius: 7px; background-color: #ffffff; }
+.c-claim-text { font-size: 14px; line-height: 20px; color: #c64c1c; }
+.c-claim-disabled { border-color: #c7cbce; background-color: #f5f6f7; }
+.c-claim-text-disabled { color: #8b8d8e; }
+.c-pressed { background-color: #f5f6f7; }
+.c-filter-control { width: 44px; height: 46px; margin-top: 16px; margin-left: 8px; align-items: center; justify-content: center; border-width: 1px; border-style: solid; border-color: #e4e7e9; border-radius: 10px; }
+.c-region-bar { flex: 1; min-width: 0; flex-direction: row; margin-right: 8px; }
+.c-region-filter { flex: 1; min-width: 0; min-height: 48px; flex-direction: row; align-items: center; margin-right: 6px; }
+.c-region-label { color: #252a31; font-size: 13px; line-height: 20px; lines: 1; text-overflow: ellipsis; flex-shrink: 1; }
+.c-area-overlay { position: absolute; left: 0; right: 0; top: 0; bottom: 0; justify-content: flex-end; }
+.c-area-scrim { position: absolute; left: 0; right: 0; top: 0; bottom: 0; background-color: rgba(0, 0, 0, 0.25); }
+.c-area-sheet { height: 65%; background-color: #ffffff; border-top-left-radius: 16px; border-top-right-radius: 16px; padding: 0 20px; padding-bottom: var(--uni-safe-area-inset-bottom); }
+.c-area-header { flex-direction: row; align-items: center; justify-content: space-between; min-height: 56px; }
+.c-area-option { flex-direction: row; align-items: center; min-height: 48px; border-bottom-width: 1px; border-bottom-style: solid; border-bottom-color: #e4e7e9; }
+.c-note { margin-top: 10px; flex-direction: row; align-items: center; min-height: 36px; }
+.c-detail-name { color: #252a31; font-size: 21px; line-height: 30px; font-weight: bold; }
+.c-detail-tags { flex-direction: row; margin-top: 8px; margin-bottom: 12px; }
+.c-money-row { flex-direction: row; border-radius: 12px; background-color: #f5f6f7; margin-top: 18px; padding: 12px; }
+.c-money-cell { flex: 1; min-width: 0; }
+.c-money { font-size: 23px; font-weight: bold; line-height: 34px; color: #252a31; }
+.c-person { padding-top: 14px; padding-bottom: 14px; border-bottom-width: 1px; border-bottom-style: solid; border-bottom-color: #e4e7e9; }
+.c-phone { min-height: 42px; flex-direction: row; align-items: center; }
+.c-bottom { padding: 10px 20px; padding-bottom: 18px; background-color: #ffffff; border-top-width: 1px; border-top-style: solid; border-top-color: #e4e7e9; flex-direction: row; }
+.c-bottom-button { flex: 1; margin: 0; height: 48px; line-height: 48px; border-radius: 9px; border-width: 0; background-color: #c64c1c; color: #ffffff; font-size: 16px; font-weight: bold; }
+.c-bottom-secondary { margin-left: 10px; color: #c64c1c; background-color: #ffffff; border-width: 1px; border-style: solid; border-color: #c64c1c; }
+
+.c-stat-top { border-bottom-width: 1px; border-bottom-style: solid; border-bottom-color: #e4e7e9; }
+.c-stat-left { border-right-width: 1px; border-right-style: solid; border-right-color: #e4e7e9; }
+.c-contact-right { border-left-width: 1px; border-left-style: solid; border-left-color: #e4e7e9; padding-left: 12px; }
+
+.c-list-name { lines: 1; text-overflow: ellipsis; }
+
+/* #ifdef APP-ANDROID */
+.c-title,
+.c-heading,
+.c-period-active,
+.c-stat-value,
+.c-small-value,
+.c-manage-number,
+.c-task-number,
+.c-tab-active,
+.c-name,
+.c-detail-name,
+.c-money,
+.c-bottom-button { font-family: sans-serif; }
+/* #endif */

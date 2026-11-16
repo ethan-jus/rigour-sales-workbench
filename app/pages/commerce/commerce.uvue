@@ -120,7 +120,7 @@ function open(destination: string, targetId: string = ''): void {
   uni.navigateTo({ url: '/pages/commerce/commerce?view=' + destination + routeId })
 }
 
-function chooseCustomer(): void { uni.switchTab({ url: '/pages/customers/customers' }) }
+function chooseCustomer(): void { uni.navigateTo({ url: '/pages/ordering-customers/ordering-customers' }) }
 function startOrder(): void { if (customer.value.id.length == 0) return; if (selectOrderCustomer(customer.value)) open('products') }
 function callCustomer(): void { if (customer.value.phone.length > 0) uni.makePhoneCall({ phoneNumber: customer.value.phone }) }
 function customerOrders(): void { commerce.orderQuery = customer.value.name; commerce.orderStatusQuery = ''; uni.switchTab({ url: '/pages/orders/orders' }) }
@@ -211,4 +211,18 @@ onShow(() => { reload() })
 .order-total { color: #21252b; font-size: 22px; font-weight: bold; }
 .two-actions { flex-direction: row; }
 .half { flex: 1; margin-left: 5px; margin-right: 5px; }
+
+/* #ifdef APP-ANDROID */
+.title,
+.hero-name,
+.section-title,
+.row-title,
+.context-name,
+.product-name,
+.price,
+.hero-product-name,
+.notice-heading,
+.line-amount,
+.order-total { font-family: sans-serif; }
+/* #endif */
 </style>

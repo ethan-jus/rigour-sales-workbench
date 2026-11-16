@@ -1,101 +1,447 @@
 <template>
-  <scroll-view class="page" direction="vertical">
-    <view class="content">
-      <view class="row-between brand-row">
-        <view class="row"><image class="brand-logo" src="/static/sales/logo.png" mode="aspectFit"/><text class="brand-name">瑞盖 · 销售工作台</text></view>
-        <text class="avatar" @click="profile">{{ initial }}</text>
+  <view class="home-root sw-page">
+  <scroll-view class="sw-page home-page" direction="vertical">
+    <view v-if="session.authenticated" class="sw-content home-content">
+      <view class="sw-between home-header">
+        <view class="sw-row"><image class="home-logo" src="/static/sales/logo.png" mode="aspectFit" /><text class="home-title">工作台</text></view>
+        <view v-if="canReadWorkDay" class="home-attendance"><image v-if="attendanceImage.length > 0" class="home-attendance-face" :src="attendanceImage" mode="aspectFit" aria-hidden="true" /><text :class="attendanceLabelClass">{{ attendanceLabel }}</text></view>
       </view>
-      <text class="fine">{{ today }}</text>
-      <view class="row-between title-row"><text class="h1">我的业务</text><text class="period">本月</text></view>
-      <view class="metrics">
-        <view class="metric" @click="openWork('performance')"><text class="muted">本月订单金额</text><text class="amount">—</text><text class="fine">{{ session.authenticated ? '统计服务待接入' : '登录后查看业务' }}</text></view>
-        <view class="metric" @click="openWork('cashflow')"><text class="muted">本月已确认到账</text><text class="amount">—</text><text class="fine">以财务确认结果为准</text></view>
+      <view class="sw-between home-period-row">
+        <view class="home-period-tabs">
+          <button :class="period == 'today' ? 'home-period home-period-active' : 'home-period'" @click="selectPeriod('today')">今日</button>
+          <button :class="period == 'month' ? 'home-period home-period-active' : 'home-period'" @click="selectPeriod('month')">本月</button>
+          <button :class="period == 'lastMonth' ? 'home-period home-period-active' : 'home-period'" @click="selectPeriod('lastMonth')">上月</button>
+        </view>
+        <view class="home-date-select" @click="dateMenu = !dateMenu"><text class="home-date-range">{{ range.dateLabel }}</text><image class="home-date-chevron" src="/static/home/chevron-down.svg" /></view>
       </view>
-      <view class="actions">
-        <view class="action" @click="startVisit"><image class="action-icon" src="/static/tabs/visit-active.png"/><text class="action-label">{{ recording ? '继续拜访' : '开始拜访' }}</text><text class="arrow">›</text></view>
-        <view class="action action-last" @click="products"><image class="action-icon" src="/static/tabs/product-active.png"/><text class="action-label">查商品</text><text class="arrow">›</text></view>
+      <view v-if="dateMenu" class="home-date-menu">
+        <button class="home-date-option" @click="selectPeriod('year')">本年</button>
+        <picker class="home-month-picker" mode="date" fields="month" :value="range.from.substring(0, 7)" :end="today.substring(0, 7)" @change="chooseMonth"><view class="home-date-option-view"><text class="home-date-option-text">选择月份</text></view></picker>
       </view>
-      <view v-if="!session.authenticated" class="login-card">
-        <text class="badge">公司统一账号</text><text class="login-title">把今天的工作，放在一起</text><text class="body">客户、订单与拜访，使用供应链系统账号登录。</text>
-        <button class="primary" @click="login">登录工作台</button>
+      <text v-if="snapshotHint.length > 0" class="home-snapshot-hint">{{ snapshotHint }}</text>
+      <view v-if="canReadOrders || canReadReceipts" class="home-finance">
+        <view v-if="canReadOrders" class="home-finance-main">
+          <view class="home-finance-cell" @click="openMetric('orders')">
+            <view class="sw-row"><text class="home-finance-label sw-grow">{{ range.label }}交易额</text><image class="home-metric-chevron" src="/static/home/chevron-right.svg" /></view>
+            <view class="home-money-row"><text v-if="tradeAmount != '—'" class="home-currency">¥</text><text class="home-money" :style="tradeStyle">{{ compactMoney(tradeAmount) }}</text><text class="home-order-count">{{ orderCount }}笔</text></view>
+          </view>
+          <view class="home-finance-cell home-finance-second" @click="openMetric('unpaid')">
+            <view class="sw-row"><text class="home-finance-label sw-grow">累计待回款</text><image class="home-metric-chevron" src="/static/home/chevron-right.svg" /></view>
+            <view class="home-money-row"><text v-if="pendingAmount != '—'" class="home-currency home-orange">¥</text><text class="home-money home-orange" :style="pendingStyle">{{ compactMoney(pendingAmount) }}</text><text class="home-order-count">{{ pendingCount }}笔</text></view>
+          </view>
+        </view>
+        <view v-if="canReadReceipts" class="home-performance" @click="openMetric('performance')">
+          <view class="sw-row"><text class="home-performance-title sw-grow">{{ performanceRange.label }}业绩</text><text class="home-progress-percent">{{ progressLabel }}</text><image class="home-chevron" src="/static/home/chevron-right.svg" /></view>
+          <view class="home-performance-amounts">
+            <view class="home-performance-cell"><text class="home-performance-label">回款</text><text class="home-performance-value">{{ performanceMoney(completedAmount) }}</text></view>
+            <view class="home-performance-cell home-target"><text class="home-performance-label">指标</text><text class="home-performance-value">{{ performanceMoney(targetAmount) }}</text></view>
+          </view>
+          <view class="home-progress-track"><view class="home-progress-fill" :style="progressStyle" /></view>
+        </view>
       </view>
-      <view v-if="session.authenticated && draftCount > 0" class="login-card">
-        <text class="badge">未完成订单</text><text class="login-title">{{ draftName }}</text><text class="body">{{ draftCount }} 份本机购物草稿，尚未提交</text><button class="primary" @click="openDraft">继续完善订单</button>
+      <view v-if="canReadSummary" class="home-visits">
+        <text class="home-section-title home-visits-title">拜访与建联</text>
+        <view class="home-visit-row home-visit-divider">
+          <view class="home-visit-cell" hover-class="home-control-pressed" @click="openMetric('all')"><text class="home-visit-label">拜访</text><text class="home-visit-value sw-grow">{{ visitsTotal }}</text><image class="home-metric-chevron" src="/static/home/chevron-right.svg" /></view>
+          <view class="home-visit-cell home-visit-second" hover-class="home-control-pressed" @click="openMetric('effective')"><text class="home-visit-label">有效</text><text class="home-visit-value sw-grow">{{ effectiveTotal }}</text><image class="home-metric-chevron" src="/static/home/chevron-right.svg" /></view>
+        </view>
+        <view class="home-visit-row">
+          <view class="home-visit-cell" hover-class="home-control-pressed" @click="openMetric('first')"><text class="home-visit-label">新增</text><text class="home-visit-value sw-grow">{{ firstTotal }}</text><image class="home-metric-chevron" src="/static/home/chevron-right.svg" /></view>
+          <view class="home-visit-cell home-visit-second" hover-class="home-control-pressed" @click="openMetric('wecom')"><text class="home-visit-label">企微</text><text class="home-visit-value sw-grow">—</text><image class="home-metric-chevron" src="/static/home/chevron-right.svg" /></view>
+        </view>
       </view>
-      <view class="section">
-        <view class="row-between"><text class="h2">需要你跟进</text><text class="link" @click="openWork('messages')">查看全部 ›</text></view>
-        <view class="task-row" @click="uploads"><image class="task-icon" src="/static/tabs/upload.png"/><view class="grow"><text class="h3">拜访草稿</text><text class="muted">{{ visitCount > 0 ? visitCount.toString() + ' 份保存在本机，尚未提交' : '继续完善现场记录与附件' }}</text></view><text class="arrow">›</text></view>
-        <view class="task-row" @click="openPlan"><image class="task-icon" src="/static/tabs/calendar.png"/><view class="grow"><text class="h3">拜访计划</text><text class="muted">查看公司分配的拜访安排</text></view><text class="arrow">›</text></view>
+      <view class="home-actions">
+        <view v-if="canStartVisit || recording" class="home-start-control"><image class="home-start-icon" src="/static/home/visit.svg" mode="aspectFit" /><button class="home-start" hover-class="home-start-pressed" @click="startVisit">{{ recording ? '继续拜访' : '开始拜访' }}</button></view>
+        <view v-if="canReadCustomers" class="home-tool"><image class="home-tool-icon" mode="aspectFit" src="/static/home/contact-round.svg" /><button class="home-tool-button" hover-class="home-control-pressed" @click="customers">查客户</button></view>
+        <view v-if="canReadProducts" class="home-tool"><image class="home-tool-icon" mode="aspectFit" src="/static/home/product.svg" /><button class="home-tool-button" hover-class="home-control-pressed" @click="products">查商品</button></view>
+        <view v-if="canReadPlan" class="home-tool"><image class="home-tool-icon" mode="aspectFit" src="/static/home/calendar.svg" /><button class="home-tool-button" hover-class="home-control-pressed" @click="openPlan">拜访计划</button></view>
       </view>
-      <view class="summary" @click="visits"><text class="muted">本月拜访</text><text class="summary-count">{{ visitsTotal }}</text><text class="fine">{{ summaryHint }}</text></view>
-      <view class="task-row" @click="openWork('performance')"><image class="task-icon" src="/static/tabs/chart.png"/><view class="grow"><text class="h3">我的业绩与提成</text><text class="muted">查看工作成果与结算进度</text></view><text class="arrow">›</text></view>
+      <view v-if="canReadOrders || canReadPlan || visitCount > 0 || draftCount > 0" class="home-pending">
+        <text class="home-section-title">当前待办</text>
+        <view v-if="canReadOrders" class="home-task home-task-border" hover-class="home-control-pressed" @click="openMetric('unpaid')"><image class="home-task-icon" mode="aspectFit" src="/static/home/wallet.svg" /><text class="home-task-label sw-grow">待回款</text><text class="home-task-count home-orange">{{ pendingCount }}</text><image class="home-chevron" src="/static/home/chevron-right.svg" /></view>
+        <view v-if="canReadOrders" class="home-task home-task-border" hover-class="home-control-pressed" @click="openMetric('outbound')"><image class="home-task-icon" mode="aspectFit" src="/static/home/product.svg" /><text class="home-task-label sw-grow">待出库</text><text class="home-task-count">{{ outboundCount }}</text><image class="home-chevron" src="/static/home/chevron-right.svg" /></view>
+        <view v-if="canReadPlan" class="home-task home-task-border" hover-class="home-control-pressed" @click="openPendingPlans"><image class="home-task-icon" mode="aspectFit" src="/static/home/calendar-outline.svg" /><text class="home-task-label sw-grow">今日待拜访</text><text class="home-task-count">{{ planCount }}</text><image class="home-chevron" src="/static/home/chevron-right.svg" /></view>
+        <view v-if="visitCount > 0" class="home-task home-task-border" hover-class="home-control-pressed" @click="uploads"><text class="sw-body sw-grow">本机拜访草稿</text><text class="home-task-count">{{ visitCount }}</text><image class="home-chevron" src="/static/home/chevron-right.svg" /></view>
+        <view v-if="draftCount > 0" class="home-task home-task-border" hover-class="home-control-pressed" @click="openDraft"><text class="sw-body sw-grow">购物草稿</text><text class="home-task-count">{{ draftCount }}</text><image class="home-chevron" src="/static/home/chevron-right.svg" /></view>
+      </view>
+      <view v-if="errorText.length > 0" class="sw-error-panel home-error"><text class="sw-error">{{ errorText }}</text><button class="sw-text-button" :disabled="workDayLoading || summaryLoading || financeLoading || receiptLoading || planLoading" @click="retry">重试</button></view>
     </view>
   </scroll-view>
+  </view>
 </template>
 <script setup lang="uts">
-import { session, hasPermission } from '../../services/session.uts'
+import { loadVisitBoard, showVisitPlans, showVisitRecords } from '../../services/visit-workbench.uts'
+import { session, hasPermission, requireSession } from '../../services/session.uts'
 import { requestSalesApi } from '../../services/sales-profile.uts'
-import { commerce, loadDrafts, preloadCommerceLists, CartDraft } from '../../services/commerce.uts'
-import { loadLocalVisits, visitDraftCount, hasActiveVisitRecording, resumeVisitPath, visitToday } from '../../services/visits.uts'
+import { crmMessage } from '../../services/crm.uts'
+import { attendance, attendanceStatus, resetAttendance } from '../../services/attendance.uts'
+import { commerce, loadDrafts, CartDraft } from '../../services/commerce.uts'
+import { loadLocalVisits, visitDraftCount, hasActiveVisitRecording, resumeVisitPath, visitToday, visitReadKey } from '../../services/visits.uts'
+import { workbenchPeriod, workbenchMoney, requestWorkbench } from '../../services/workbench.uts'
+import { homeReadRevision, readHomeSnapshot, writeHomeSnapshot, forgetHomeSnapshot } from '../../services/home-cache.uts'
+import { appEnvironment } from '../../services/config.uts'
+const period = ref('today')
+const customMonth = ref('')
 const today = ref(visitToday())
+const dateMenu = ref(false)
 const visitsTotal = ref('—')
-const summaryHint = ref('登录后查看本人拜访记录')
-const initial = computed((): string => session.displayName.length > 0 ? session.displayName.substring(0, 1) : '我')
-const drafts = computed((): CartDraft[] => session.authenticated ? commerce.drafts.filter((draft: CartDraft): boolean => draft.lines.length > 0) : [] as CartDraft[])
-const draftCount = computed((): number => drafts.value.length)
-const draftName = computed((): string => drafts.value.length > 0 ? drafts.value[0].customerName : '')
-const visitCount = computed((): number => visitDraftCount())
-const recording = computed((): boolean => hasActiveVisitRecording())
+const effectiveTotal = ref('—')
+const firstTotal = ref('—')
+const tradeAmount = ref('—')
+const orderCount = ref('—')
+const pendingAmount = ref('—')
+const pendingCount = ref('—')
+const outboundCount = ref('—')
+const completedAmount = ref<number | null>(null)
+const targetAmount = ref<number | null>(null)
+const performanceLoaded = ref(false)
+const planCount = ref('—')
+const financeError = ref('')
+const receiptError = ref('')
+const planError = ref('')
+const financeLoading = ref(false)
+const receiptLoading = ref(false)
+const planLoading = ref(false)
+const summaryCachedAt = ref(0)
+const financeCachedAt = ref(0)
+const receiptCachedAt = ref(0)
+const planCachedAt = ref(0)
+const snapshotHint = computed((): string => {
+  const times = [summaryCachedAt.value, financeCachedAt.value, receiptCachedAt.value, planCachedAt.value].filter((value: number): boolean => value > 0)
+  if (times.length == 0) return ''
+  const saved = new Date(Math.min(...times))
+  return '上次数据 ' + saved.getHours().toString().padStart(2, '0') + ':' + saved.getMinutes().toString().padStart(2, '0') + ' · 正在更新'
+})
+let summaryQuery = ''
+let financeQuery = ''
+let planQuery = ''
+let workDayQuery = ''
+let financeRequest = 0
+let planRequest = 0
+function compactMoney(value: string): string {
+  const amount = parseFloat(value.split(',').join(''))
+  if (!Number.isFinite(amount) || amount < 100000) return value
+  const divisor = amount >= 100000000 ? 100000000 : 10000
+  let digits = (amount / divisor).toFixed(2)
+  if (digits.endsWith('.00')) digits = digits.substring(0, digits.length - 3)
+  else if (digits.endsWith('0')) digits = digits.substring(0, digits.length - 1)
+  return digits + (divisor == 100000000 ? '亿' : '万')
+}
+function moneyStyle(value: string): UTSJSONObject { const length = compactMoney(value).length; return { 'font-size': length > 8 ? '16px' : length > 6 ? '20px' : '24px' } as UTSJSONObject }
+const tradeStyle = computed((): UTSJSONObject => moneyStyle(tradeAmount.value))
+const pendingStyle = computed((): UTSJSONObject => moneyStyle(pendingAmount.value))
+const range = computed(() => workbenchPeriod(period.value, today.value, customMonth.value))
+const performanceRange = computed(() => workbenchPeriod(period.value == 'today' ? 'month' : period.value, today.value, customMonth.value))
+const progressPercent = computed((): number => {
+  const completed = completedAmount.value ?? 0; const target = targetAmount.value ?? 0
+  return target <= 0 ? 0 : completed / target * 100
+})
+const progressLabel = computed((): string => !performanceLoaded.value ? '—' : completedAmount.value == null ? '待核定' : (targetAmount.value ?? 0) <= 0 ? '—' : parseFloat(progressPercent.value.toFixed(1)).toString() + '%')
+const progressStyle = computed((): UTSJSONObject => { return { width: Math.min(100, Math.max(0, progressPercent.value)).toString() + '%' } as UTSJSONObject })
+function performanceMoney(value: number | null): string { return value == null ? '—' : '¥' + compactMoney(workbenchMoney(value)) }
+const canReadOrders = computed((): boolean => hasPermission('order:read'))
+const canReadReceipts = computed((): boolean => hasPermission('order:payment:read'))
+const canReadCustomers = computed((): boolean => hasPermission('crm:pool:private-read') || hasPermission('crm:pool:public-read') || hasPermission('crm:customer:read'))
+const summaryLoading = ref(false)
+const summaryError = ref('')
+const workDayStatus = ref('')
+const workDayLoading = ref(false)
+const workDayError = ref('')
+const errorText = computed((): string => { const messages = [workDayError.value, summaryError.value, financeError.value, receiptError.value, planError.value].filter((message: string): boolean => message.length > 0); return messages.filter((message: string, index: number): boolean => messages.indexOf(message) == index).join('\n') })
 let visible = false
-function login(): void { uni.navigateTo({ url: '/pages/login/login' }) }
-function profile(): void { uni.switchTab({ url: '/pages/profile/profile' }) }
+let summaryRequest = 0
+let workDayRequest = 0
+const canReadSummary = computed((): boolean => hasPermission('sales:visit:own:read'))
+const canReadWorkDay = computed((): boolean => hasPermission('sales:context:read'))
+const canReadPlan = computed((): boolean => hasPermission('sales:visit-plan:own:read'))
+const canReadProducts = computed((): boolean => hasPermission('erp:product:read'))
+const canVisitCrm = computed((): boolean => hasPermission('crm:pool:private-read') && hasPermission('crm:store:visit-write'))
+const canStartVisit = computed((): boolean => canVisitCrm.value || (hasPermission('sales:visit-target:read') && hasPermission('sales:visit:own:write')))
+const recording = computed((): boolean => hasActiveVisitRecording())
+const drafts = computed((): CartDraft[] => session.authenticated && commerce.draftOwner == session.tenantId + ':' + session.userId ? commerce.drafts.filter((draft: CartDraft): boolean => draft.lines.length > 0) : [] as CartDraft[])
+const draftCount = computed((): number => drafts.value.length)
+const draftName = computed((): string => drafts.value.length == 1 ? drafts.value[0].customerName : '')
+const visitCount = computed((): number => visitDraftCount())
+const attendanceLabel = computed((): string => {
+  if (workDayLoading.value && workDayStatus.value.length == 0) return '正在更新'
+  if (workDayError.value.length > 0) return '状态待确认'
+  if (attendance.pending) return '待同步'
+  if (workDayStatus.value == 'ACTIVE') return '工作中'
+  if (workDayStatus.value == 'FINISHED') return '已下班'
+  if (workDayStatus.value == 'NOT_STARTED') return '未上班'
+  return '状态待确认'
+})
+const attendanceImage = computed((): string => {
+  if (attendanceLabel.value == '工作中') return '/static/home/status-working.png'
+  if (attendanceLabel.value == '已下班') return '/static/home/status-finished.png'
+  if (attendanceLabel.value == '未上班') return '/static/home/status-ready.png'
+  return ''
+})
+const attendanceLabelClass = computed((): string => attendanceLabel.value == '工作中' ? 'home-attendance-label home-attendance-working' : attendanceLabel.value == '已下班' ? 'home-attendance-label home-attendance-finished' : 'home-attendance-label')
+function products(): void { if (canReadProducts.value) uni.navigateTo({ url: '/pages/commerce/commerce?view=products' }) }
+function uploads(): void { if (requireSession()) uni.navigateTo({ url: '/pages/visit/visit?view=uploads' }) }
+function openPlan(): void { if (canReadPlan.value) showVisitPlans(today.value) }
+function openPendingPlans(): void { if (canReadPlan.value) showVisitPlans(today.value) }
 function openDraft(): void {
-  if (drafts.value.length == 0) return
+  if (draftCount.value == 0) return
+  if (draftCount.value > 1) { uni.switchTab({ url: '/pages/customers/customers' }); return }
   commerce.selectedCustomerId = drafts.value[0].customerId
   uni.navigateTo({ url: '/pages/commerce/commerce?view=cart' })
 }
-function visits(): void { uni.switchTab({ url: '/pages/visits/visits' }) }
-function products(): void { uni.navigateTo({ url: '/pages/commerce/commerce?view=products' }) }
-function uploads(): void { uni.navigateTo({ url: '/pages/visit/visit?view=uploads' }) }
-function openPlan(): void { uni.navigateTo({ url: '/pages/visit/visit?view=plan' }) }
-function openWork(view: string): void { uni.navigateTo({ url: '/pages/work/work?view=' + view }) }
-function startVisit(): void { uni.navigateTo({ url: recording.value ? resumeVisitPath() : '/pages/visit/visit?view=select' }) }
-function loadHome(): void {
-  loadDrafts(); preloadCommerceLists(); loadLocalVisits(); visitsTotal.value = '—'; today.value = visitToday()
-  summaryHint.value = session.authenticated ? '当前账号暂无拜访统计权限' : '登录后查看本人拜访记录'
-  if (!hasPermission('sales:visit:own:read')) return
-  summaryHint.value = '正在加载…'
-  requestSalesApi('/sales/me/activity-summary?from=' + today.value.substring(0, 7) + '-01&to=' + today.value, (response) => {
-    const data = response.getJSON('data')
-    const count = data?.getNumber('totalVisitCount')
-    visitsTotal.value = count == null ? '—' : count.toString()
-    summaryHint.value = count == null ? '统计暂不可用' : '按北京时间统计 · 点击查看明细'
-  }, (message) => { summaryHint.value = message })
+function startVisit(): void {
+  if (!requireSession()) return
+  if (recording.value) uni.navigateTo({ url: resumeVisitPath() })
+  else if (canVisitCrm.value) uni.navigateTo({ url: '/pages/customer-list/customer-list?kind=MINE' })
+  else if (canStartVisit.value) uni.navigateTo({ url: '/pages/visit/visit?view=select' })
 }
+function applySummary(data: UTSJSONObject | null): boolean {
+  const total = data?.getNumber('totalVisitCount'); const effective = data?.getNumber('effectiveVisitCount'); const first = data?.getNumber('firstVisitCount')
+  if (total == null || effective == null || first == null || !Number.isFinite(total!) || !Number.isFinite(effective!) || !Number.isFinite(first!) || total! < 0 || effective! < 0 || first! < 0) return false
+  visitsTotal.value = total!.toString(); effectiveTotal.value = effective!.toString(); firstTotal.value = first!.toString(); return true
+}
+function clearSummary(): void { visitsTotal.value = '—'; effectiveTotal.value = '—'; firstTotal.value = '—'; summaryCachedAt.value = 0 }
+function homeReadKey(): string { return visitReadKey() + ':' + homeReadRevision().toString() }
+function loadSummary(): void {
+  const owner = homeReadKey(); const key = (hasPermission('crm:store:history-read') ? 'crm-visits:' : 'visits:') + range.value.from + ':' + range.value.to
+  if (summaryLoading.value && summaryQuery == owner + key) return
+  const version = ++summaryRequest; summaryQuery = owner + key
+  clearSummary(); summaryError.value = ''; summaryLoading.value = false
+  if (!canReadSummary.value) return
+  const cached = readHomeSnapshot(key)
+  if (cached != null && applySummary(cached!.data)) summaryCachedAt.value = cached!.savedAt
+  summaryLoading.value = true
+  if (hasPermission('crm:store:history-read')) {
+    loadVisitBoard(range.value.from, range.value.to, 'all', 'ALL', '', 1).then((response: UTSJSONObject) => {
+      if (version != summaryRequest || owner != homeReadKey()) return
+      summaryLoading.value = false; summaryCachedAt.value = 0
+      const data = response.getJSON('summary')
+      if (!applySummary(data)) { clearSummary(); forgetHomeSnapshot(key); summaryError.value = '拜访统计暂不可用，请重试'; return }
+      writeHomeSnapshot(key, data!)
+    }).catch((e) => { if (version == summaryRequest && owner == homeReadKey()) { clearSummary(); forgetHomeSnapshot(key); summaryLoading.value = false; summaryError.value = e == null ? '拜访统计加载失败' : crmMessage(e!) } })
+    return
+  }
+  requestSalesApi('/sales/me/activity-summary?from=' + range.value.from + '&to=' + range.value.to, (response) => {
+    if (version != summaryRequest || owner != homeReadKey()) return
+    summaryLoading.value = false; summaryCachedAt.value = 0
+    const data = response.getJSON('data')
+    if (!applySummary(data)) { clearSummary(); forgetHomeSnapshot(key); summaryError.value = '拜访统计暂不可用，请重试'; return }
+    writeHomeSnapshot(key, { totalVisitCount: data!.getNumber('totalVisitCount'), effectiveVisitCount: data!.getNumber('effectiveVisitCount'), firstVisitCount: data!.getNumber('firstVisitCount') } as UTSJSONObject)
+  }, (message) => { if (version == summaryRequest && owner == homeReadKey()) { clearSummary(); forgetHomeSnapshot(key); summaryLoading.value = false; summaryError.value = message } })
+}
+async function loadWorkDay(): Promise<void> {
+  const owner = homeReadKey(); const query = owner + today.value
+  if (workDayLoading.value && workDayQuery == query) return
+  const version = ++workDayRequest; workDayQuery = query
+  workDayError.value = ''; workDayLoading.value = false
+  if (!canReadWorkDay.value) return
+  workDayLoading.value = true
+  try { const status = await attendanceStatus(); if (version == workDayRequest && owner == homeReadKey()) workDayStatus.value = status }
+  catch (e) { if (version == workDayRequest && owner == homeReadKey()) workDayError.value = crmMessage(e) }
+  finally { if (version == workDayRequest) workDayLoading.value = false }
+}
+function customers(): void { if (canReadCustomers.value) uni.switchTab({ url: '/pages/customers/customers' }) }
+function openMetric(kind: string): void {
+  if (!requireSession()) return
+  if (kind == 'wecom') { uni.showToast({ title: '企微建联尚未接入同步', icon: 'none' }); return }
+  const visit = kind == 'all' || kind == 'effective' || kind == 'first'
+  if (visit && !canReadSummary.value) return
+  if (!visit && ((kind == 'receipts' || kind == 'performance') ? !canReadReceipts.value : !canReadOrders.value)) return
+  const selected = kind == 'performance' ? performanceRange.value : range.value
+  if (visit && hasPermission('crm:store:history-read')) { showVisitRecords(selected.from, selected.to, kind); return }
+  uni.navigateTo({ url: '/pages/workbench-details/workbench-details?kind=' + kind + '&from=' + selected.from + '&to=' + selected.to })
+}
+function applyFinance(data: UTSJSONObject): boolean {
+  const trade = data.getNumber('tradeAmount'); const count = data.getNumber('orderCount'); const pending = data.getNumber('pendingAmount'); const pendingN = data.getNumber('pendingCount'); const outbound = data.getNumber('outboundCount')
+  if (trade == null || count == null || pending == null || pendingN == null || outbound == null) return false
+  if (![trade!, count!, pending!, pendingN!, outbound!].every((value: number): boolean => Number.isFinite(value))) return false
+  tradeAmount.value = workbenchMoney(trade); orderCount.value = count!.toString(); pendingAmount.value = workbenchMoney(pending); pendingCount.value = pendingN!.toString(); outboundCount.value = outbound!.toString(); return true
+}
+function applyPerformance(data: UTSJSONObject): boolean {
+  const amount = data.getNumber('completedAmount'); const target = data.getNumber('targetAmount'); const count = data.getNumber('orderCount')
+  if (target == null || !Number.isFinite(target!) || target! < 0 || count == null || (amount != null && (!Number.isFinite(amount!) || amount! < 0))) return false
+  completedAmount.value = amount; targetAmount.value = target; performanceLoaded.value = true; return true
+}
+function clearFinance(clearCurrent: boolean): void {
+  tradeAmount.value = '—'; orderCount.value = '—'; financeCachedAt.value = 0
+  if (clearCurrent) { pendingAmount.value = '—'; pendingCount.value = '—'; outboundCount.value = '—' }
+}
+function clearPerformance(): void { completedAmount.value = null; targetAmount.value = null; performanceLoaded.value = false; receiptCachedAt.value = 0 }
+function loadFinance(clearCurrent: boolean = true): void {
+  const owner = homeReadKey(); const key = 'orders:' + range.value.from + ':' + range.value.to
+  const performanceKey = 'performance:' + performanceRange.value.from + ':' + performanceRange.value.to
+  const query = owner + key + performanceKey
+  if ((financeLoading.value || receiptLoading.value) && financeQuery == query) return
+  const version = ++financeRequest; financeQuery = query
+  clearFinance(clearCurrent); clearPerformance()
+  financeError.value = ''; receiptError.value = ''; financeLoading.value = false; receiptLoading.value = false
+  if (canReadOrders.value) {
+    const cached = readHomeSnapshot(key)
+    if (cached != null && applyFinance(cached!.data)) financeCachedAt.value = cached!.savedAt
+    financeLoading.value = true
+    requestWorkbench('summary', range.value.from, range.value.to, '', (data) => {
+      if (version != financeRequest || owner != homeReadKey()) return
+      financeLoading.value = false; financeCachedAt.value = 0
+      if (!applyFinance(data)) { clearFinance(true); forgetHomeSnapshot(key); financeError.value = '经营数据暂不可用'; return }
+      writeHomeSnapshot(key, { tradeAmount: data.getNumber('tradeAmount'), orderCount: data.getNumber('orderCount'), pendingAmount: data.getNumber('pendingAmount'), pendingCount: data.getNumber('pendingCount'), outboundCount: data.getNumber('outboundCount') } as UTSJSONObject)
+    }, (message) => { if (version == financeRequest && owner == homeReadKey()) { clearFinance(true); forgetHomeSnapshot(key); financeLoading.value = false; financeError.value = message } })
+  }
+  if (canReadReceipts.value) {
+    const cached = readHomeSnapshot(performanceKey)
+    if (cached != null && applyPerformance(cached!.data)) receiptCachedAt.value = cached!.savedAt
+    receiptLoading.value = true
+    requestWorkbench('performance', performanceRange.value.from, performanceRange.value.to, '', (data) => {
+      if (version != financeRequest || owner != homeReadKey()) return
+      receiptLoading.value = false; receiptCachedAt.value = 0
+      if (!applyPerformance(data)) { clearPerformance(); forgetHomeSnapshot(performanceKey); receiptError.value = '业绩数据暂不可用'; return }
+      writeHomeSnapshot(performanceKey, { completedAmount: data.getNumber('completedAmount'), targetAmount: data.getNumber('targetAmount'), orderCount: data.getNumber('orderCount') } as UTSJSONObject)
+    }, (message) => { if (version == financeRequest && owner == homeReadKey()) { clearPerformance(); forgetHomeSnapshot(performanceKey); receiptLoading.value = false; receiptError.value = message } })
+  }
+}
+function loadPlanCount(): void {
+  const owner = homeReadKey(); const key = 'plans:' + today.value
+  if (planLoading.value && planQuery == owner + key) return
+  const version = ++planRequest; planQuery = owner + key
+  planCount.value = '—'; planError.value = ''; planCachedAt.value = 0; planLoading.value = false
+  if (!canReadPlan.value) return
+  const cached = readHomeSnapshot(key); const savedCount = cached?.data.getNumber('pendingCount')
+  if (savedCount != null && Number.isFinite(savedCount!) && savedCount! >= 0) { planCount.value = savedCount!.toString(); planCachedAt.value = cached!.savedAt }
+  planLoading.value = true
+  requestSalesApi('/sales/me/visit-plans?date=' + today.value, (response) => {
+    if (version != planRequest || owner != homeReadKey()) return
+    planLoading.value = false; planCachedAt.value = 0
+    const data = response.getJSON('data'); const items = data?.getArray<UTSJSONObject>('items')
+    if (items == null) { planCount.value = '—'; forgetHomeSnapshot(key); planError.value = '今日计划暂不可用'; return }
+    let pending = 0
+    items!.forEach((item: UTSJSONObject) => { const status = item.getString('status') ?? ''; if (status == 'PLANNED' || status == 'IN_PROGRESS') pending++ })
+    planCount.value = pending.toString(); writeHomeSnapshot(key, { pendingCount: pending } as UTSJSONObject)
+  }, (message) => { if (version == planRequest && owner == homeReadKey()) { planCount.value = '—'; planCachedAt.value = 0; planLoading.value = false; forgetHomeSnapshot(key); planError.value = message } })
+}
+function selectPeriod(value: string): void {
+  dateMenu.value = false
+  if (period.value == value) return
+  period.value = value; loadSummary(); loadFinance(false)
+}
+function chooseMonth(event: UniPickerChangeEvent): void {
+  const selected = (event.detail.value as string).substring(0, 7)
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(selected) || selected > today.value.substring(0, 7)) { uni.showToast({ title: '请选择当前或历史月份', icon: 'none' }); return }
+  customMonth.value = selected; period.value = 'custom'; dateMenu.value = false; loadSummary(); loadFinance(false)
+}
+function retry(): void {
+  if (workDayError.value.length > 0) {
+    loadWorkDay()
+  }
+  if (summaryError.value.length > 0) loadSummary()
+  if (financeError.value.length > 0 || receiptError.value.length > 0) loadFinance()
+  if (planError.value.length > 0) loadPlanCount()
+}
+function resetRemoteState(): void {
+  summaryRequest++; workDayRequest++; financeRequest++; planRequest++
+  summaryCachedAt.value = 0; financeCachedAt.value = 0; receiptCachedAt.value = 0; planCachedAt.value = 0; receiptLoading.value = false; planLoading.value = false
+  tradeAmount.value = '—'; orderCount.value = '—'; pendingAmount.value = '—'; pendingCount.value = '—'; outboundCount.value = '—'; completedAmount.value = null; targetAmount.value = null; performanceLoaded.value = false; planCount.value = '—'
+  financeError.value = ''; receiptError.value = ''; planError.value = ''; financeLoading.value = false
+  visitsTotal.value = '—'; effectiveTotal.value = '—'; firstTotal.value = '—'; summaryError.value = ''; summaryLoading.value = false
+  workDayStatus.value = ''; workDayError.value = ''; workDayLoading.value = false; resetAttendance()
+}
+function loadHome(): void {
+  if (!requireSession()) { resetRemoteState(); return }
+  const startedAt = Date.now()
+  today.value = visitToday()
+  loadDrafts(); loadLocalVisits(); loadSummary(); loadWorkDay(); loadFinance(); loadPlanCount()
+  if (appEnvironment.environment == 'development') console.log('[DEV HOME] snapshotSections=' + [summaryCachedAt.value, financeCachedAt.value, receiptCachedAt.value, planCachedAt.value].filter((value: number): boolean => value > 0).length.toString() + ' hydrateMs=' + (Date.now() - startedAt).toString())
+}
+watch((): number => homeReadRevision(), (_revision: number) => { if (visible) { loadSummary(); loadFinance(); loadPlanCount(); loadWorkDay() } })
 onShow(() => { visible = true; loadHome() })
+// Keep same-generation reads in flight across tab switches; mutations change homeReadKey.
 onHide(() => { visible = false })
-watch((): boolean => session.authenticated, (_: boolean) => { if (visible) loadHome() })
+onUnload(() => { visible = false; resetRemoteState() })
+watch((): string => visitReadKey(), (_key: string) => { resetRemoteState(); if (visible) loadHome() })
 </script>
 <style>
-.brand-row { margin-bottom: 28px; }
-.brand-logo { width: 30px; height: 30px; margin-right: 9px; }
-.brand-name { font-size: 15px; color: #21252b; font-weight: bold; }
-.avatar { width: 34px; height: 34px; border-radius: 17px; background-color: #f0eee9; color: #71675f; text-align: center; line-height: 34px; font-size: 14px; }
-.title-row { margin-top: 6px; }
-.period { font-size: 12px; color: #72777c; padding: 7px 12px; background-color: #f6f5f2; border-radius: 4px; }
-.metrics { flex-direction: row; padding-top: 23px; padding-bottom: 26px; }
-.metric { flex: 1; }
-.amount { color: #21252b; font-size: 29px; font-weight: bold; line-height: 46px; }
-.actions { flex-direction: row; margin-bottom: 23px; }
-.action { flex: 1; background-color: #fff1e8; border-radius: 6px; padding: 17px 12px; flex-direction: row; align-items: center; }
-.action-last { margin-left: 12px; background-color: #f5f4f0; }
-.action-icon { width: 24px; height: 24px; margin-right: 9px; }
-.action-label { font-size: 15px; color: #373330; font-weight: bold; flex: 1; }
-.arrow { color: #a5a6a5; font-size: 23px; margin-left: 6px; }
-.login-card { border-radius: 8px; padding: 20px; background-color: #f8f7f4; align-items: stretch; }
-.login-title { color: #21252b; font-weight: bold; font-size: 20px; line-height: 30px; margin-top: 16px; margin-bottom: 9px; }
-.task-row { flex-direction: row; align-items: center; padding: 20px 0; border-bottom-width: 1px; border-bottom-color: #ededea; }
-.task-icon { width: 24px; height: 24px; margin-right: 13px; }
-.summary { background-color: #f8f7f4; padding: 18px; border-radius: 6px; margin-top: 20px; }
-.summary-count { font-size: 25px; line-height: 40px; color: #21252b; font-weight: bold; }
+@import "../../styles/workbench-ui.css";
+.home-root { flex: 1; position: relative; }
+.home-attendance { flex-direction: row; align-items: center; }
+.home-attendance-face { width: 32px; height: 32px; margin-right: 5px; }
+.home-attendance-label { color: #626970; font-size: 14px; line-height: 22px; }
+.home-attendance-working { color: #c64c1c; }
+.home-attendance-finished { color: #2f7351; }
+.home-page { padding-top: var(--uni-safe-area-inset-top); }
+.home-content { max-width: 480px; padding: 20px; padding-bottom: 36px; }
+.home-header { margin-bottom: 20px; min-height: 44px; }
+.home-logo { width: 28px; height: 32px; margin-right: 10px; }
+.home-title { font-size: 23px; line-height: 32px; font-weight: bold; color: var(--sw-ink); }
+.home-checked { font-size: 14px; color: var(--sw-muted); padding: 10px 14px; }
+.home-period-row { margin-bottom: 16px; }
+.home-period-tabs { flex-direction: row; padding: 3px; border-radius: 14px; background-color: var(--sw-surface); }
+.home-period { padding: 8px 12px; min-height: 40px; margin: 0; border-width: 0; border-radius: 11px; background-color: transparent; color: var(--sw-muted); font-size: 14px; line-height: 24px; }
+.home-period-active { background-color: var(--sw-accent-soft); color: var(--sw-accent); font-weight: bold; }
+.home-date-select { flex-direction: row; align-items: center; min-height: 44px; }
+.home-date-chevron { width: 14px; height: 14px; margin-left: 4px; }
+.home-date-menu { flex-direction: row; background-color: var(--sw-surface); border-radius: 12px; padding: 6px; margin-bottom: 16px; }
+.home-date-option { flex: 1; margin: 0; border-width: 0; background-color: transparent; font-size: 14px; line-height: 24px; padding: 10px; color: var(--sw-ink); }
+.home-month-picker { flex: 1; }
+.home-date-option-view { padding: 10px; align-items: center; }
+.home-date-option-text { font-size: 14px; line-height: 24px; color: var(--sw-ink); }
+.home-date-range { color: var(--sw-muted); font-size: 12px; margin-left: 8px; }
+.home-snapshot-hint { color: var(--sw-muted); font-size: 12px; line-height: 20px; margin-bottom: 8px; }
+.home-finance { background-color: var(--sw-surface); border-radius: 18px; padding: 16px 16px 0; }
+.home-finance-main { flex-direction: row; padding-bottom: 12px; }
+.home-finance-cell { flex: 1; min-width: 0; }
+.home-finance-second { padding-left: 16px; border-left-width: 1px; border-left-style: solid; border-left-color: var(--sw-border); }
+.home-finance-label { color: var(--sw-muted); font-size: 13px; line-height: 22px; }
+.home-money-row { flex-direction: row; align-items: center; margin-top: 4px; min-height: 32px; }
+.home-currency { color: var(--sw-ink); font-size: 14px; line-height: 32px; font-weight: bold; margin-right: 1px; }
+.home-money { color: var(--sw-ink); font-size: 24px; line-height: 32px; font-weight: bold; flex-shrink: 1; }
+.home-order-count { color: var(--sw-muted); font-size: 12px; line-height: 24px; margin-left: 6px; flex-shrink: 0; }
+.home-metric-chevron { width: 12px; height: 16px; flex-shrink: 0; opacity: 0.65; }
+.home-orange { color: var(--sw-accent); }
+.home-chevron { width: 17px; height: 20px; margin-left: 7px; flex-shrink: 0; opacity: 0.7; }
+.home-performance { padding: 12px 0 16px; border-top-width: 1px; border-top-style: solid; border-top-color: var(--sw-border); }
+.home-performance-title { color: var(--sw-ink); font-size: 14px; font-weight: bold; line-height: 22px; }
+.home-progress-percent { color: var(--sw-accent); font-size: 15px; font-weight: bold; line-height: 22px; }
+.home-progress-track { height: 6px; border-radius: 3px; background-color: var(--sw-border); margin-top: 8px; overflow: hidden; }
+.home-progress-fill { height: 6px; border-radius: 3px; background-color: var(--sw-accent); }
+.home-performance-amounts { flex-direction: row; margin-top: 8px; }
+.home-performance-cell { flex: 1; min-width: 0; flex-direction: row; align-items: center; }
+.home-target { justify-content: flex-end; padding-left: 8px; }
+.home-performance-label { color: var(--sw-muted); font-size: 12px; line-height: 22px; margin-right: 6px; }
+.home-performance-value { color: var(--sw-ink); font-size: 14px; font-weight: bold; line-height: 22px; }
+.home-visits { margin-top: 24px; }
+.home-section-title { color: var(--sw-ink); font-size: 18px; font-weight: bold; line-height: 28px; margin-bottom: 4px; }
+.home-visits-title { margin-bottom: 8px; }
+.home-visit-row { flex-direction: row; }
+.home-visit-divider { border-bottom-width: 1px; border-bottom-style: solid; border-bottom-color: var(--sw-border); }
+.home-visit-cell { flex: 1; min-width: 0; flex-direction: row; align-items: center; min-height: 48px; padding-right: 16px; }
+.home-visit-second { padding-left: 18px; padding-right: 0; border-left-width: 1px; border-left-style: solid; border-left-color: var(--sw-border); }
+.home-visit-label { color: var(--sw-muted); font-size: 14px; line-height: 24px; margin-right: 10px; }
+.home-visit-value { color: var(--sw-ink); font-size: 20px; font-weight: bold; line-height: 28px; }
+.home-actions { flex-direction: row; align-items: center; margin-top: 20px; margin-bottom: 24px; }
+.home-start-control { position: relative; width: 124px; flex-shrink: 0; border-radius: 12px; background-color: var(--sw-accent); }
+.home-start-icon { position: absolute; left: 12px; top: 13px; width: 26px; height: 26px; }
+.home-start { width: 100%; padding: 14px 8px 14px 40px; margin: 0; min-height: 52px; border-width: 0; border-radius: 12px; background-color: transparent; color: var(--sw-canvas); font-size: 16px; line-height: 24px; }
+.home-start-pressed { background-color: rgba(255, 255, 255, 0.16); }
+.home-control-pressed { background-color: rgba(98, 105, 112, 0.08); }
+.home-tool { flex: 1; position: relative; align-items: center; min-width: 0; margin-left: 8px; }
+.home-tool-icon { position: absolute; width: 28px; height: 28px; top: 0; }
+.home-tool-button { width: 100%; padding: 32px 0 0; margin: 0; min-height: 52px; border-width: 0; border-radius: 8px; background-color: transparent; color: var(--sw-ink); font-size: 14px; line-height: 20px; }
+.home-task { flex-direction: row; align-items: center; min-height: 52px; padding: 0; }
+.home-task-border { border-bottom-width: 1px; border-bottom-style: solid; border-bottom-color: var(--sw-border); }
+.home-task-icon { width: 26px; height: 26px; margin-right: 16px; }
+.home-task-label { color: var(--sw-ink); font-size: 16px; font-weight: bold; line-height: 24px; }
+.home-task-count { color: var(--sw-muted); font-size: 20px; font-weight: bold; }
+.home-task-count.home-orange { color: var(--sw-accent); }
+.home-error { margin-top: 20px; }
+
+/* #ifdef APP-ANDROID */
+.home-title,
+.home-period-active,
+.home-currency,
+.home-money,
+.home-performance-title,
+.home-progress-percent,
+.home-performance-value,
+.home-section-title,
+.home-visit-value,
+.home-task-label,
+.home-task-count { font-family: sans-serif; }
+/* #endif */
 </style>

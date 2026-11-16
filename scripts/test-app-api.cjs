@@ -28,6 +28,7 @@ function moduleFixture(name, globals = {}) {
 function apiFixture() {
   const requests = [], errors = [], successes = [], tokenCalls = [], pendingTokens = []
   let holdTokens = false
+  let invalidations = 0
   const session = { authenticated: true, accessToken: 'test-access', expiresAt: 200000, revision: 1, tokenVersion: 1 }
   const config = moduleFixture('config.uts')
   // Simulate UTSJSONObject's accessors, while executing the actual text parser.
@@ -39,14 +40,14 @@ function apiFixture() {
     if (force || holdTokens || session.expiresAt <= 130000) pendingTokens.push({ success, fail })
     else success(session.accessToken)
   }
-  const modules = { './session.uts': { session }, './auth.uts': { ensureAccessToken, invalidateCompanySession }, './config.uts': config, './json.uts': json }
+  const modules = { './home-cache.uts': {invalidateHomeCache: () => invalidations++}, './session.uts': { session }, './auth.uts': { ensureAccessToken, invalidateCompanySession }, './config.uts': config, './json.uts': json }
   const api = moduleFixture('api.uts', {
     require: name => modules[name],
     Date: { now: () => 100000 },
     uni: { request: request => requests.push(request) },
   })
   return {
-    api, session, config, requests, errors, successes, tokenCalls, pendingTokens,
+    invalidations: () => invalidations, api, session, config, requests, errors, successes, tokenCalls, pendingTokens,
     holdTokens: value => { holdTokens = value },
     rotate: (token = 'renewed-access') => {
       session.accessToken = token; session.expiresAt = 300000; session.tokenVersion++
@@ -321,4 +322,25 @@ test('failed renewal never sends a business request with an expired token', () =
   assert.equal(f.requests.length, 0)
   assert.equal(f.errors.length, 1)
   assert.match(f.errors[0], /续期失败/)
+})
+
+test('CRM distance rejection gives a safe actionable message', () => {
+  const f = apiFixture(); f.request('/sales/work/store-visits')
+  f.requests[0].success({ statusCode: 409, data: '{"code":"CRM_STORE_VISIT_OUTSIDE_RADIUS","message":"private diagnostic"}' })
+  assert.equal(f.errors[0], '请到店后再开始拜访')
+  assert.doesNotMatch(f.errors[0], /private/)
+})
+
+
+test('only successful business mutations invalidate homepage snapshots and pending read generations', () => {
+  const f = apiFixture()
+  const send = (method, statusCode, data) => {
+    f.api.requestApi('/sales/me/visit-plans', method, null, () => {}, () => {})
+    f.requests.at(-1).success({statusCode, data: JSON.stringify(data)})
+  }
+  send('GET', 200, {code:'OK',data:{}}); assert.equal(f.invalidations(),0)
+  send('POST', 403, {code:'FORBIDDEN'}); assert.equal(f.invalidations(),0)
+  send('PUT', 200, {code:'CONFLICT'}); assert.equal(f.invalidations(),0)
+  for (const method of ['POST','PUT','PATCH','DELETE']) send(method,200,{code:'OK',data:{}})
+  assert.equal(f.invalidations(),4)
 })

@@ -1,0 +1,161 @@
+<template>
+  <view class="sw-page">
+  <scroll-view v-show="!mapFullscreen" class="sw-page" direction="vertical">
+    <view class="field-content">
+      <view class="field-date"><button class="field-date-step" aria-label="前一天" @click="moveDate(-1)">‹</button><picker mode="date" :value="date" :end="today" @change="selectDate"><view class="field-date-value"><text class="field-date-text">{{ dateLabel }}</text><image class="field-calendar" src="/static/home/calendar.svg" /></view></picker><button class="field-date-step" aria-label="后一天" :disabled="date == today" @click="moveDate(1)">›</button></view>
+      <view class="field-punches"><view class="field-punch"><text class="field-secondary">签到</text><text class="field-time">{{ checkInTime }}</text></view><view class="field-punch field-punch-divider"><text class="field-secondary">签退</text><text class="field-time">{{ checkOutTime }}</text></view></view>
+      <view class="field-fact"><text class="field-secondary sw-grow">作业时段</text><text class="field-value">{{ workDuration }}</text></view>
+      <view class="field-fact"><text class="field-secondary sw-grow">已记录里程</text><text class="field-value">{{ distance }}</text><text v-if="distanceAvailable" class="field-tag">估算</text></view>
+      <text v-if="error.length > 0" class="field-error">{{ error }}</text>
+      <button v-if="error.length > 0" class="sw-text-button" :disabled="loading" @click="load">重试</button>
+      <text v-if="loading" class="field-hint">正在更新…</text>
+      <view class="field-map-box">
+        <field-route-map v-if="mapPoints.length > 0 && !mapFullscreen" :key="mapOwner + date" :owner="mapOwner" :latitude="centerLatitude" :longitude="centerLongitude" :markers="markers" :lines="lines" :points="mapPoints" :fullscreen="false" @select="selectMarker" @fullscreen="toggleMapFullscreen" />
+        <view v-else class="field-map-empty"><image class="field-map-icon" src="/static/home/map-pin.svg" /><text class="field-secondary">{{ emptyMapLabel }}</text></view>
+      </view>
+      <view v-if="cases.length > 0" class="field-section"><text class="field-title">待核查事项</text></view>
+      <view v-for="item in cases" :key="item.id" class="field-case" @click="openStatement(item)"><text class="field-event-title sw-grow">{{ item.title }}</text><text class="field-warning">{{ item.statusLabel }}</text><image class="field-chevron" src="/static/home/chevron-right.svg" /></view>
+      <text v-if="caseError.length > 0" class="field-error">{{ caseError }}</text>
+      <view class="field-section"><text class="field-title">{{ date == today ? '今日记录' : '当日记录' }}</text><text v-if="gapCount > 0" class="field-warning">{{ gapCount }}处轨迹缺失</text></view>
+      <text v-if="events.length == 0 && !loading" class="field-empty">{{ day == null ? '当天暂无签到记录' : '当天暂无可展示的记录' }}</text>
+      <view v-for="event in events" :id="event.key" :key="event.key" :class="event.key == selected ? 'field-event field-event-selected' : 'field-event'" @click="selectEvent(event)">
+        <view :class="event.kind == 'gap' ? 'field-event-dot field-event-dot-warning' : event.kind == 'start' ? 'field-event-dot field-event-dot-start' : 'field-event-dot'" />
+        <text class="field-event-time">{{ event.time }}</text><view class="sw-grow"><text class="field-event-title">{{ event.title }}</text><text v-if="event.subtitle.length > 0" class="field-secondary">{{ event.subtitle }}</text></view><image v-if="event.captureId.length > 0" class="field-chevron" src="/static/home/chevron-right.svg" />
+      </view>
+    </view>
+  </scroll-view>
+  <view v-if="mapFullscreen" class="field-map-fullscreen">
+    <field-route-map :key="mapOwner + date + '-fullscreen'" :owner="mapOwner" :latitude="centerLatitude" :longitude="centerLongitude" :markers="markers" :lines="lines" :points="mapPoints" :fullscreen="true" @select="selectMarker" @fullscreen="toggleMapFullscreen" />
+  </view>
+  </view>
+</template>
+<script setup lang="uts">
+import { readOwnFieldCases, fieldCaseStatus } from '../../services/fieldwork-review.uts'
+import { session, hasPermission, requireSession } from '../../services/session.uts'
+import { appEnvironment } from '../../services/config.uts'
+import { crmToday, crmOwner, crmMessage } from '../../services/crm.uts'
+import { readWorkDay, attendanceClock, WorkDay } from '../../services/attendance.uts'
+import { readFieldTrack, FieldTrack, FieldEvent, FieldLine, FieldMarker, FieldPoint } from '../../services/fieldwork.uts'
+import { loadVisitBoard, parseVisitBoardRow, openVisitBoardRow } from '../../services/visit-workbench.uts'
+type CaseRow = { id: string, title: string, statusLabel: string }
+const cases = ref<CaseRow[]>([]); const caseError = ref('')
+const today = ref(crmToday()); const date = ref(today.value); const loading = ref(false); const error = ref('')
+const day = ref<WorkDay | null>(null); const track = ref<FieldTrack | null>(null); const selected = ref('')
+const centerLatitude = ref(0); const centerLongitude = ref(0)
+const mapFullscreen = ref(false)
+const mapOwner = computed((): string => session.authenticated ? appEnvironment.environment + '|' + appEnvironment.gatewayOrigin + '|' + session.tenantId + '|' + session.userId : '')
+let generation = 0; let opening = false; let visible = false
+function openStatement(item: CaseRow): void { uni.navigateTo({ url: '/pages/fieldwork-statement/fieldwork-statement?id=' + encodeURIComponent(item.id) + '&date=' + date.value }) }
+
+const dateLabel = computed((): string => date.value.substring(5, 7) + '月' + date.value.substring(8, 10) + '日')
+const checkInTime = computed((): string => attendanceClock(day.value?.checkedInAt ?? ''))
+const checkOutTime = computed((): string => day.value?.status == 'ACTIVE' ? (date.value == today.value ? '外勤中' : '缺签退') : attendanceClock(day.value?.checkedOutAt ?? ''))
+const workDuration = computed((): string => {
+  if (day.value == null) return '—'
+  const minutes = day.value!.workMinutes
+  return Math.floor(minutes / 60).toString() + '小时' + (minutes % 60).toString() + '分' + (day.value!.status == 'ACTIVE' ? ' · 已结束时段' : '')
+})
+const distance = computed((): string => track.value?.distance ?? '无法计算')
+const distanceAvailable = computed((): boolean => track.value?.available ?? false)
+const gapCount = computed((): number => track.value?.gaps ?? 0)
+const events = computed((): FieldEvent[] => track.value?.events ?? [] as FieldEvent[])
+const lines = computed((): FieldLine[] => track.value?.lines ?? [] as FieldLine[])
+const markers = computed((): FieldMarker[] => track.value?.markers ?? [] as FieldMarker[])
+const mapPoints = computed((): FieldPoint[] => track.value?.points ?? [] as FieldPoint[])
+const emptyMapLabel = computed((): string => loading.value ? '正在读取轨迹' : hasPermission('sales:track:own:read') ? '暂无可靠位置' : '暂无轨迹查看权限')
+function toggleMapFullscreen(): void { if (mapPoints.value.length > 0) mapFullscreen.value = !mapFullscreen.value }
+async function load(): Promise<void> {
+  if (!requireSession()) return
+  const version = ++generation; const owner = crmOwner(); const selectedDate = date.value
+  loading.value = true; error.value = ''; cases.value = []; caseError.value = ''; track.value = null; day.value = null; selected.value = ''; mapFullscreen.value = false
+  try {
+    const current = await readWorkDay(selectedDate)
+    if (version != generation || owner != crmOwner()) return
+    day.value = current
+    try {
+      const reviews = await readOwnFieldCases(selectedDate)
+      if (version != generation || owner != crmOwner()) return
+      cases.value = reviews.map((item): CaseRow => ({ id: item.id, title: item.title, statusLabel: fieldCaseStatus(item.status) } as CaseRow))
+    } catch (e) { if (version == generation && owner == crmOwner()) caseError.value = crmMessage(e) }
+    if (current == null || !hasPermission('sales:track:own:read')) return
+    const result = await readFieldTrack(selectedDate)
+    if (version != generation || owner != crmOwner()) return
+    track.value = result
+    if (result.points.length > 0) { centerLatitude.value = result.points[0].latitude; centerLongitude.value = result.points[0].longitude }
+  } catch (e) { if (version == generation && owner == crmOwner()) error.value = crmMessage(e) }
+  finally { if (version == generation) loading.value = false }
+}
+function moveDate(step: number): void {
+  const next = new Date(Date.parse(date.value + 'T00:00:00Z') + step * 86400000).toISOString().substring(0, 10)
+  if (next > today.value) return
+  date.value = next; load()
+}
+function selectDate(event: UniPickerChangeEvent): void { date.value = event.detail.value as string; load() }
+function selectMarker(markerId: number): void { const index = markerId - 1; if (index >= 0 && index < events.value.length) selected.value = events.value[index].key }
+async function selectEvent(event: FieldEvent): Promise<void> {
+  selected.value = event.key
+  if (event.latitude != null && event.longitude != null) { centerLatitude.value = event.latitude!; centerLongitude.value = event.longitude! }
+  if (event.captureId.length == 0 || opening) return
+  opening = true; const owner = crmOwner(); const selectedDate = date.value
+  try {
+    let page = 1
+    while (true) {
+      const result = await loadVisitBoard(selectedDate, selectedDate, 'all', '', '', page)
+      if (owner != crmOwner() || selectedDate != date.value) return
+      const rows = (result['items'] as UTSJSONObject[] | null) ?? [] as UTSJSONObject[]
+      const found = rows.find((row: UTSJSONObject): boolean => row.getString('captureId') == event.captureId)
+      if (found != null) { openVisitBoardRow(parseVisitBoardRow(found!)); return }
+      if (page * 20 >= (result.getNumber('total') ?? 0) || rows.length == 0) break
+      page++
+    }
+    uni.showToast({ title: '该记录暂无可查看的正式拜访', icon: 'none' })
+  } catch (e) { if (owner == crmOwner()) uni.showToast({ title: crmMessage(e), icon: 'none' }) }
+  finally { opening = false }
+}
+onLoad((options) => { const selectedDate = options?.getString('date') ?? ''; if (/^\d{4}-\d{2}-\d{2}$/.test(selectedDate) && selectedDate <= today.value) date.value = selectedDate })
+onShow(() => { visible = true; today.value = crmToday(); load() })
+onHide(() => { visible = false; generation++; loading.value = false })
+onUnload(() => { visible = false; generation++; track.value = null })
+onBackPress((): boolean => { if (!mapFullscreen.value) return false; mapFullscreen.value = false; return true })
+watch((): string => crmOwner(), (_owner: string) => {
+  generation++; loading.value = false; day.value = null; track.value = null; cases.value = []; selected.value = ''; error.value = ''; caseError.value = ''; mapFullscreen.value = false
+  if (!session.authenticated) { uni.reLaunch({ url: '/pages/login/login' }); return }
+  if (visible) load()
+})
+</script>
+<style>
+@import "../../styles/workbench-ui.css";
+.field-case { flex-direction: row; align-items: center; min-height: 52px; border-bottom-width: 1px; border-bottom-color: #e8eaec; }
+.field-content { padding: 8px 20px 32px; }
+.field-date { flex-direction: row; align-items: center; justify-content: center; margin-bottom: 12px; }
+.field-date-step { width: 48px; height: 48px; font-size: 24px; line-height: 48px; margin: 0 16px; padding: 0; border-width: 0; background-color: transparent; color: #24282d; }
+.field-date-value { flex-direction: row; align-items: center; min-height: 48px; }
+.field-date-text { font-size: 19px; font-weight: 600; color: #24282d; }
+.field-calendar { width: 19px; height: 19px; margin-left: 10px; }
+.field-punches { flex-direction: row; background-color: #f5f6f7; border-radius: 10px; padding: 14px 0; }
+.field-punch { flex: 1; padding: 0 20px; }
+.field-punch-divider { border-left-width: 1px; border-left-color: #dadddf; }
+.field-secondary { font-size: 13px; line-height: 20px; color: #626970; }
+.field-time { margin-top: 4px; color: #24282d; font-size: 25px; font-weight: 600; }
+.field-fact { flex-direction: row; min-height: 46px; align-items: center; border-bottom-width: 1px; border-bottom-color: #e8eaec; }
+.field-value { font-size: 15px; color: #24282d; font-weight: 600; }
+.field-tag { font-size: 11px; color: #626970; background-color: #f5f6f7; padding: 2px 5px; border-radius: 4px; margin-left: 6px; }
+.field-map-box { margin-top: 16px; height: 232px; border-radius: 12px; overflow: hidden; background-color: #f5f6f7; }
+.field-map-fullscreen { flex: 1; background-color: #f5f6f7; }
+.field-map-empty { flex: 1; align-items: center; justify-content: center; }
+.field-map-icon { width: 28px; height: 28px; margin-bottom: 10px; }
+.field-section { flex-direction: row; align-items: center; margin-top: 24px; margin-bottom: 8px; }
+.field-title { flex: 1; font-size: 18px; font-weight: 600; color: #24282d; }
+.field-warning { color: #b76b0e; font-size: 12px; }
+.field-event { flex-direction: row; align-items: center; min-height: 64px; border-bottom-width: 1px; border-bottom-color: #e8eaec; }
+.field-event-selected { background-color: #fff5ee; }
+.field-event-dot { width: 10px; height: 10px; border-radius: 5px; border-width: 2px; border-color: #377eee; background-color: #ffffff; margin-right: 12px; }
+.field-event-dot-start { border-color: #289c68; }
+.field-event-dot-warning { border-color: #d89519; }
+.field-event-time { width: 60px; font-size: 15px; color: #24282d; font-weight: 600; }
+.field-event-title { font-size: 15px; line-height: 24px; color: #24282d; }
+.field-chevron { width: 16px; height: 16px; }
+.field-empty { font-size: 14px; color: #626970; padding: 24px 0; }
+.field-error { font-size: 13px; color: #b54721; margin-top: 12px; }
+.field-hint { font-size: 12px; color: #626970; margin-top: 8px; }
+</style>

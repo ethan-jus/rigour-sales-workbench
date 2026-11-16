@@ -1,0 +1,56 @@
+import { crmCall, crmObject, crmOwner, crmMessage } from './crm.uts'
+import { ensureAccessToken } from './auth.uts'
+import { session } from './session.uts'
+import { appEnvironment } from './config.uts'
+import { apiErrorMessage } from './api.uts'
+export type TranscriptLine = { startMs: number, endMs: number, text: string, speaker: string, clock: string }
+export type ReviewClip = { id: string, index: number, durationMs: number, status: string, statusLabel: string, summary: string, transcript: string, lines: TranscriptLine[] }
+export type RecordingReview = { enabled: boolean, clips: ReviewClip[], analysisError: string }
+export function recordingClock(ms: number): string { const seconds = Math.floor(Math.max(0, ms) / 1000); return Math.floor(seconds / 60).toString().padStart(2, '0') + ':' + (seconds % 60).toString().padStart(2, '0') }
+function statusLabel(status: string): string { return status == 'SUCCEEDED' ? '已转写' : status == 'FAILED' ? '转写失败' : status == 'PROCESSING' ? '转写中' : status == 'PENDING' ? '待转写' : '暂无原文' }
+export async function readRecordingReview(visit: string): Promise<RecordingReview> {
+  const owner = crmOwner()
+  // Metadata failure is explicit. A failed ASR job is still a successful metadata response.
+  const recordings = crmObject(await crmCall('/sales/me/visits/' + visit + '/recordings'))
+  let analysis = {} as UTSJSONObject; let analysisError = ''
+  try { analysis = crmObject(await crmCall('/sales/me/visits/' + visit + '/recording-analysis')) } catch (e) { analysisError = crmMessage(e) }
+  if (owner != crmOwner()) throw new Error('账号已变更')
+  const rows = (recordings['clips'] as UTSJSONObject[] | null) ?? [] as UTSJSONObject[]
+  const transcripts = (analysis['clips'] as UTSJSONObject[] | null) ?? [] as UTSJSONObject[]
+  const clips = rows.map((row: UTSJSONObject): ReviewClip => {
+    const id = row.getString('clipId') ?? ''
+    if (id.length == 0) throw new Error('录音信息不完整')
+    const result = transcripts.find((item: UTSJSONObject): boolean => item.getString('clipId') == id)
+    const rawLines = result == null ? [] as UTSJSONObject[] : (result!['segments'] as UTSJSONObject[] | null) ?? [] as UTSJSONObject[]
+    const lines = rawLines.map((line: UTSJSONObject): TranscriptLine => {
+      const start = line.getNumber('startMs') ?? -1; const end = line.getNumber('endMs') ?? -1
+      if (start < 0 || end < start) throw new Error('原文时间信息不完整')
+      const speaker = line.getNumber('speakerId')
+      return { startMs: start, endMs: end, text: line.getString('text') ?? '', speaker: speaker == null ? '' : '说话人 ' + (speaker! + 1).toString(), clock: recordingClock(start) } as TranscriptLine
+    })
+    const status = result?.getString('status') ?? ''
+    return { id, index: row.getNumber('clipIndex') ?? 0, durationMs: row.getNumber('clientDurationMs') ?? 0, status, statusLabel: statusLabel(status), summary: result?.getString('summary') ?? '', transcript: result?.getString('transcript') ?? '', lines } as ReviewClip
+  })
+  return { enabled: analysis.getBoolean('processingEnabled') ?? false, clips, analysisError } as RecordingReview
+}
+export function removePlaybackFile(path: string): void {
+  if (path.length == 0) return
+  // #ifdef APP
+  uni.getFileSystemManager().unlink({ filePath: path, fail: (_) => {} })
+  // #endif
+}
+function download(visit: string, clip: string, revision: number, renewed: boolean): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    ensureAccessToken(renewed, (token) => {
+      if (session.revision != revision) { reject(new Error('账号已变更')); return }
+      uni.downloadFile({ url: appEnvironment.gatewayOrigin + '/api/v1/sales/me/visits/' + visit + '/recordings/clips/' + clip + '/content', header: { Authorization: 'Bearer ' + token } as UTSJSONObject, timeout: 60000,
+        success: (response) => {
+          if (session.revision != revision) { removePlaybackFile(response.tempFilePath); reject(new Error('账号已变更')); return }
+          if (response.statusCode == 401 && !renewed) { removePlaybackFile(response.tempFilePath); download(visit, clip, revision, true).then(resolve).catch(reject); return }
+          if (response.statusCode != 200) { removePlaybackFile(response.tempFilePath); reject(new Error(apiErrorMessage('', response.statusCode))); return }
+          resolve(response.tempFilePath)
+        }, fail: (_) => reject(new Error('录音读取失败，请检查网络后重试')) })
+    }, (message) => reject(new Error(message)))
+  })
+}
+export function downloadRecording(visit: string, clip: string): Promise<string> { return download(visit, clip, session.revision, false) }

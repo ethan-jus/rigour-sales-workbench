@@ -1,0 +1,25 @@
+Use case: ui-mockup
+Create a high-fidelity Chinese native mobile B2B field-sales CRM customer-page design board. Two equal flat phone artboards side by side: left is 我的客户 and right is 公海. This is ONE consistent design in two tab states, not competing styles. Each phone viewport is approximately 390 by 844 logical pixels. Render a large landscape board with crisp, perfectly legible Simplified Chinese. Above the panels only small captions 我的客户 / 公海, below the board only 设计预览 · 示例数据. No other explanatory copy outside or inside.
+
+Art direction: highly refined compact practical productivity app; perfectly flat pure-white surfaces, graphite #252A31 typography, secondary gray #626970, burnt orange #C64C1C only for selected items and actions, pale gray #F5F6F7 search field, subtle thin #D6DBDF divider rules. Chinese system sans-serif like PingFang SC, no decorative fonts, no shadows, no gradients, no avatars, no charts, no big cards, no promotional headlines. Calm precise compact row layout consistent with an efficient sales workbench. 20px screen gutters. 23px semibold page title, 16px semibold store names, 13px metadata, clear line heights. All names and figures must be sharp. Keep generous enough finger targets but avoid empty tall rows: each three-line store row about 94 logical pixels. Upper controls should occupy about 200 logical pixels including status bar, showing FIVE store rows on each screen before the fixed bottom navigation.
+
+Both artboards: small realistic Android-style top status bar at 9:41, dark icons on white, no notch covering content. Header 客户 at left and horizontal three-dot icon at right. Under it two inline text tabs 我的客户 / 公海 with only the selected label orange and a short orange underline. Under tabs a 44px high light-gray rounded search field with outline magnifier and placeholder 搜索门店名称或地址; a separate simple outlined filter/sliders icon in a 44px touch area on its right. Below the search a compact filter line, then the list. No boxed tab capsules. Fixed bottom navigation: five evenly spaced thin outline icons and labels 工作台 / 客户 / 拜访 / 订单 / 我的. Only 客户 and its people-outline icon orange. Status bar and bottom navigation never overlap content. Add a small system home indicator under the bottom navigation.
+
+LEFT screen: 我的客户 selected. Filter line 全部阶段⌄ and 保护状态⌄ at left, 36家 at right. The list is one continuous white plane, not cards. Every row has: first line store name with small subdued stage chip aligned right, second line address gray, third line recent-visit text left and clearly labeled protection deadline right. Tiny right chevron is allowed at the row edge. Do not add per-row action buttons. Five rows:
+1 星辰台球俱乐部 | 待首访 | 拱墅区 · 莫干山路88号 | 尚未拜访 | 保护至 今日18:00 (only this deadline burnt orange; stage chip pale orange).
+2 锐力台球（西湖店） | 跟进中 | 西湖区 · 文二西路126号 | 上次拜访11/10 | 保护至11/17.
+3 初见台球俱乐部 | 维护中 | 上城区 · 庆春路18号 | 上次拜访11/08 | 保护至12/18.
+4 八号台球（滨江店） | 跟进中 | 滨江区 · 江南大道368号 | 上次拜访11/09 | 保护至11/16.
+5 黑桃台球俱乐部 | 待首访 | 萧山区 · 金城路66号 | 尚未拜访 | 保护至 明日10:00.
+Use very subtle neutral stage chips for nonurgent rows. Dates have clear breathing space and no collision. Keep all names fully readable, reduce only name size slightly if needed, never cram columns.
+
+RIGHT screen: 公海 selected. Filter line 杭州市⌄ and 全部区县⌄ on left, 128家 on right. Same list row heights and typographic rhythm as left. Each row has name, address, small business/cooperation state on left and a restrained rounded outlined-orange 认领 action on right, aligned with the middle of the row. No giant solid orange buttons. Five rows:
+1 星耀台球俱乐部 | 拱墅区 · 湖墅南路86号 | 正常营业 · 未合作 | 认领.
+2 玖号台球（滨江店） | 滨江区 · 滨盛路200号 | 正常营业 · 曾合作 | 认领.
+3 来力台球俱乐部 | 西湖区 · 古墩路58号 | 明日09:30可认领 | disabled gray 冷却中 action, not orange.
+4 黑八台球（城西店） | 余杭区 · 文一西路168号 | 正常营业 · 未合作 | 认领.
+5 青禾台球空间 | 上城区 · 新塘路30号 | 正常营业 · 未合作 | 认领.
+
+No private phone numbers, no fake WeCom connection status, no KPI widgets, no distances or map controls, no create-customer plus button, no extra text about permissions or synchronization, no motivational copy. Design should look immediately implementable in the existing native business app, not an app-store marketing poster. All content remains within phone artboards, clean aligned baseline grids and precise consistent spacing. Output the finished design board only.
+
+Final image edit: preserve every detail of the generated board, and only replace the bottom navigation icon above 拜访 with a thin outline location pin and the icon above 订单 with a thin outline clipboard, in both phone screens. Other icons and all text remain unchanged. Built-in image_gen edit mode, opaque background.

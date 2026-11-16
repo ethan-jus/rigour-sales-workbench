@@ -37,17 +37,21 @@ export function syncSalesProfile(): void {
 }
 
 // 首次登录的拜访读取等待同一次身份同步，避免与自动建档竞争产生暂时性 403。
-export function requestSalesApi(path: string, success: (data: UTSJSONObject) => void, fail: (message: string) => void): void {
+export function withSalesProfile(ready: () => void, fail: (message: string) => void): void {
   alignOwner()
   if (!hasPermission('sales:context:read')) { fail('当前账号没有销售身份读取权限。'); return }
   const revision = session.revision
-  const ready = (): void => {
+  const run = (): void => {
     if (revision != session.revision) { fail('账号已变更，请重新加载。'); return }
-    requestApi(path, 'GET', null, success, fail)
+    ready()
   }
-  if (salesProfile.status == 'ACTIVE' && !salesProfile.busy) { ready(); return }
-  waiters.push({ ready, fail } as ProfileWaiter)
+  if (salesProfile.status == 'ACTIVE' && !salesProfile.busy) { run(); return }
+  waiters.push({ ready: run, fail } as ProfileWaiter)
   syncSalesProfile()
+}
+
+export function requestSalesApi(path: string, success: (data: UTSJSONObject) => void, fail: (message: string) => void): void {
+  withSalesProfile(() => { requestApi(path, 'GET', null, success, fail) }, fail)
 }
 
 export function startSalesProfileSync(): void {
@@ -57,19 +61,21 @@ export function startSalesProfileSync(): void {
   syncSalesProfile()
 }
 
-function requestProfile(): void {
+function requestProfile(register: boolean = false): void {
   const number = ++requestNumber
   const revision = session.revision
   const owner = ownerKey()
   salesProfile.busy = true; salesProfile.message = ''; salesProfile.status = ''
-  requestApi('/sales/me/profile', 'POST', null, (response) => {
+  requestApi('/sales/me/profile', register ? 'POST' : 'GET', null, (response) => {
     if (number != requestNumber || revision != session.revision || owner != ownerKey()) return
-    salesProfile.busy = false
     const data = response.getJSON('data')
     const status = data?.getString('status') ?? ''
     const employeeId = data?.getString('hrEmployeeId') ?? ''
     const code = data?.getString('employeeCode') ?? ''
     const profileId = data?.getString('salesProfileId') ?? ''
+    // Existing employees only need a live identity read; provision once for a verified new employee.
+    if (!register && status == 'UNREGISTERED' && employeeId.length > 0 && code.length > 0 && profileId.length == 0) { requestProfile(true); return }
+    salesProfile.busy = false
     if (employeeId.length == 0 || code.length == 0 || profileId.length == 0 || status != 'ACTIVE') {
       salesProfile.message = '未能确认销售档案状态，请重新查询。'; finishWaiters(salesProfile.message); return
     }

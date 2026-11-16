@@ -1,0 +1,55 @@
+import { requestApi } from './api.uts'
+import { withSalesProfile, salesProfile } from './sales-profile.uts'
+import { apiVisitTime } from './visits.uts'
+
+export type WorkbenchPeriod = { from: string, to: string, label: string, dateLabel: string }
+export type WorkbenchRow = { id: string, orderId: string, number: string, customerName: string, time: string, amount: string, status: string }
+
+export function workbenchPeriod(mode: string, today: string, month: string = ''): WorkbenchPeriod {
+  let from = today; let to = today; let label = '今日'
+  if (mode == 'month') { from = today.substring(0, 7) + '-01'; label = '本月' }
+  if (mode == 'year') { from = today.substring(0, 4) + '-01-01'; label = '本年' }
+  if (mode == 'lastMonth' || mode == 'custom') {
+    const year = parseInt(today.substring(0, 4)); const index = parseInt(today.substring(5, 7)) - 1
+    const last = new Date(Date.UTC(year, index, 0))
+    const prefix = mode == 'custom' ? month : last.getUTCFullYear().toString() + '-' + (last.getUTCMonth() + 1).toString().padStart(2, '0')
+    from = prefix + '-01'
+    const end = new Date(Date.UTC(parseInt(prefix.substring(0, 4)), parseInt(prefix.substring(5, 7)), 0))
+    to = prefix + '-' + end.getUTCDate().toString().padStart(2, '0')
+    if (to > today) to = today
+    label = mode == 'lastMonth' ? '上月' : parseInt(prefix.substring(5, 7)).toString() + '月'
+  }
+  const dateLabel = mode == 'today' ? parseInt(today.substring(5, 7)).toString() + '月' + parseInt(today.substring(8, 10)).toString() + '日' : mode == 'year' ? today.substring(0, 4) + '年' : from.substring(0, 7).replace('-', '年') + '月'
+  return { from, to, label, dateLabel } as WorkbenchPeriod
+}
+
+export function workbenchMoney(amount: number | null): string {
+  if (amount == null || !Number.isFinite(amount!)) return '—'
+  const parts = amount!.toFixed(2).split('.')
+  let digits = parts[0]; let grouped = ''
+  while (digits.length > 3) { grouped = ',' + digits.substring(digits.length - 3) + grouped; digits = digits.substring(0, digits.length - 3) }
+  return digits + grouped + (parts[1] == '00' ? '' : '.' + parts[1])
+}
+export function workbenchStatus(code: string): string {
+  if (code == 'UNPAID') return '待回款'
+  if (code == 'PARTIAL_PAID') return '部分回款'
+  if (code == 'PENDING_REVIEW') return '待核定'
+  if (code == 'PAID') return '已回款'
+  if (code == 'PENDING') return '待出库'
+  if (code == 'PARTIAL_OUT') return '部分出库'
+  if (code == 'RECEIVED' || code == 'CHECKED') return '已收款'
+  return code
+}
+export function parseWorkbenchRow(value: UTSJSONObject): WorkbenchRow {
+  const time = value.getString('occurredAt') ?? ''
+  return { id: value.getString('id') ?? '', orderId: value.getString('orderId') ?? '', number: value.getString('number') ?? '',
+    customerName: value.getString('customerName') ?? '未提供客户名称', time: time.length > 0 ? apiVisitTime(time) : '时间待确认',
+    amount: workbenchMoney(value.getNumber('amount')), status: workbenchStatus(value.getString('status') ?? '') } as WorkbenchRow
+}
+export function requestWorkbench(endpoint: string, from: string, to: string, suffix: string, success: (data: UTSJSONObject) => void, fail: (message: string) => void): void {
+  withSalesProfile(() => {
+    if (salesProfile.employeeCode.length == 0) { fail('未能确认本人员工身份'); return }
+    const path = '/orders/workbench/' + endpoint + '?ownerEmployeeCode=' + encodeURIComponent(salesProfile.employeeCode) + '&from=' + from + '&to=' + to + suffix
+    requestApi(path, 'GET', null, (response) => { const data = response.getJSON('data'); if (data == null) fail('工作台数据格式异常'); else success(data!) }, fail)
+  }, fail)
+}

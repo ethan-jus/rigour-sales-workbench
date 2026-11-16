@@ -1,83 +1,63 @@
 <template>
-  <list-view class="page" direction="vertical">
-    <list-item :type="1"><view class="content list-header">
-    <view class="heading-row"><text class="heading">客户</text><text class="count" v-if="session.authenticated">{{ commerce.customersTotal }} 位</text></view>
-      <text class="intro">客户信息与供应链平台同步，按账号权限展示。</text>
-      <view v-if="!session.authenticated" class="empty"><text class="empty-icon">◎</text><text class="empty-title">登录后查看客户</text><text class="empty-copy">使用供应链系统账号，继续客户跟进与下单。</text><button class="primary" @click="login">使用平台账号登录</button></view>
-      <view v-else>
-        <view class="search"><input class="search-input" v-model="query" placeholder="搜索客户名称" confirm-type="search" @confirm="search"/><button class="search-button" @click="search">搜索</button></view>
-        <view class="scope"><text class="scope-label">可查看客户</text><text class="scope-description">范围由平台授权</text></view>
-        <view v-if="commerce.customersError.length > 0" class="notice"><text class="notice-title">客户加载失败</text><text class="notice-copy">{{ commerce.customersError }}</text><button class="secondary" @click="search">重新加载</button></view>
-        <view v-if="commerce.customersLoading && commerce.customers.length == 0" class="empty"><text class="empty-copy">正在加载客户…</text></view>
-      </view>
-    </view></list-item>
-    <list-item v-for="customer in visibleCustomers" :key="customer.id" :type="0">
-      <view class="list-row"><view class="customer-row" @click="openCustomer(customer)">
-          <view class="avatar"><text class="avatar-text">客</text></view>
-          <view class="customer-copy"><view class="row"><text class="customer-name">{{ customer.name }}</text><text class="chevron">›</text></view><text class="meta">{{ customer.contact.length > 0 ? customer.contact : '未填写联系人' }}{{ customer.phone.length > 0 ? ' · ' + customer.phone : '' }}</text><text class="address">{{ customer.address.length > 0 ? customer.address : '未填写地址' }}</text></view>
-        </view></view>
-    </list-item>
-    <list-item v-if="session.authenticated" :type="2"><view class="content list-footer">
-        <view v-if="!commerce.customersLoading && commerce.customersError.length == 0 && commerce.customers.length == 0" class="empty"><text class="empty-icon">◎</text><text class="empty-title">{{ query.length > 0 ? '没有找到匹配客户' : '暂无可查看客户' }}</text><text class="empty-copy">{{ query.length > 0 ? '换个名称再搜索试试。' : '客户分配和数据权限由平台统一管理。' }}</text></view>
-        <button v-if="commerce.customers.length < commerce.customersTotal" class="load-more" :disabled="commerce.customersLoading" @click="loadMore">{{ commerce.customersLoading ? '加载中…' : '加载更多客户' }}</button>
-        <view v-if="drafts.length > 0" class="draft-section"><text class="section-title">继续购物草稿</text><view v-for="draft in drafts" :key="draft.customerId" class="draft-row" @click="openDraft(draft)"><view class="draft-copy"><text class="draft-name">{{ draft.customerName }}</text><text class="meta">{{ draft.lines.length }} 种商品 · 已保存在本机</text></view><text class="orange">继续 →</text></view></view>
-          </view></list-item>
-  </list-view>
+  <scroll-view class="sw-page c-overview" direction="vertical">
+    <view class="c-content">
+      <view class="c-header"><text class="c-title">客户</text><view class="c-control" @click="more"><text class="c-more">···</text></view></view>
+      <template v-if="session.authenticated">
+        <view v-if="error.length > 0" class="c-error"><text class="c-error-text">{{ error }}</text><button class="sw-text-button" :disabled="loading" @click="reload">重试</button></view>
+        <template v-if="canPrivate">
+          <view class="c-period-row"><view class="c-segment"><button :class="period == 'today' ? 'c-period c-period-active' : 'c-period'" @click="selectPeriod('today')">今日</button><button :class="period == 'month' ? 'c-period c-period-active' : 'c-period'" @click="selectPeriod('month')">本月</button><button :class="period == 'lastMonth' ? 'c-period c-period-active' : 'c-period'" @click="selectPeriod('lastMonth')">上月</button></view><view class="c-date" @click="dateMenu = !dateMenu"><text class="c-muted">{{ range.dateLabel }}</text><image class="c-arrow" src="/static/home/chevron-down.svg" /></view></view>
+          <view v-if="dateMenu" class="c-menu"><view class="c-menu-row" @click="selectPeriod('year')"><text class="c-text">本年</text></view><picker mode="date" fields="month" :value="range.from.substring(0, 7)" :end="today.substring(0, 7)" @change="chooseMonth"><view class="c-menu-row"><text class="c-text">选择月份</text></view></picker></view>
+          <view v-if="canOrders" class="c-stat-panel"><view class="c-stats"><view v-for="metric in metrics" :key="metric.key" :class="metric.key == 'PURCHASING' ? 'c-stat c-stat-top c-stat-left' : metric.key == 'NEW' ? 'c-stat c-stat-top' : metric.key == 'RETURNING' ? 'c-stat c-stat-left' : 'c-stat'" hover-class="sw-pressed" @click="openMetric(metric.key)"><view class="sw-row"><text class="c-muted">{{ metric.title }}</text><image class="c-arrow" src="/static/home/chevron-right.svg" /></view><text class="c-stat-value">{{ metric.value }}</text></view></view></view>
+          <view class="c-section"><view class="sw-between"><text class="c-heading">联系人</text><view class="c-control" @click="people(false)"><text class="c-muted">查看 ›</text></view></view><view class="c-contact-row"><view class="c-contact-stat" @click="people(true)"><text class="c-text sw-grow">新增联系人</text><text class="c-small-value">{{ contacts }}</text><image class="c-arrow" src="/static/home/chevron-right.svg" /></view><view class="c-contact-stat c-contact-right" @click="wecomInfo"><text class="c-text sw-grow">新增企微</text><text class="c-small-value">—</text><image class="c-arrow" src="/static/home/chevron-right.svg" /></view></view></view>
+        </template>
+        <view class="c-section"><view class="sw-between"><text class="c-heading">客户管理</text><text class="c-muted">当前</text></view><view class="c-manage"><view v-if="canPrivate" class="c-manage-item" @click="list('MINE')"><view class="sw-row"><text class="c-text sw-grow">我的客户</text><image class="c-arrow" src="/static/home/chevron-right.svg" /></view><text class="c-manage-number">{{ mine }}</text></view><view v-if="canPrivate && canOrders" class="c-manage-item c-manage-middle" @click="list('COOPERATED')"><view class="sw-row"><text class="c-text sw-grow">合作客户</text><image class="c-arrow" src="/static/home/chevron-right.svg" /></view><text class="c-manage-number">{{ cooperated }}</text></view><view v-if="canPublic" class="c-manage-item" @click="list('PUBLIC')"><view class="sw-row"><text class="c-text sw-grow">公海</text><image class="c-arrow" src="/static/home/chevron-right.svg" /></view><text class="c-manage-number">{{ publicCount }}</text></view></view></view>
+        <view v-if="canPrivate" class="c-section"><text class="c-heading">待关注</text><view v-for="task in tasks" :key="task.key" class="c-task" hover-class="sw-pressed" @click="openMetric(task.key)"><image class="c-icon" :src="task.key == 'DUE_SOON' ? '/static/customers/clock.svg' : task.key == 'DORMANT' ? '/static/customers/bag.svg' : '/static/home/contact-round.svg'" /><text class="c-task-label">{{ task.title }}</text><text :class="task.key == 'DUE_SOON' ? 'c-task-number c-orange' : 'c-task-number'">{{ task.value }}</text><image class="c-arrow" src="/static/home/chevron-right.svg" /></view></view>
+        <view v-if="canPrivate && canOrders && data != null" class="c-note" @click="scopeInfo"><text class="c-muted">已关联订单 · 统计范围 ›</text></view>
+        <text v-if="loading" class="c-muted c-section">{{ data != null || publicCount != '—' ? '正在更新…' : '加载中…' }}</text>
+      </template>
+      <view v-else class="c-empty"><button class="sw-text-button" @click="login">登录</button></view>
+    </view>
+  </scroll-view>
 </template>
 <script setup lang="uts">
-import { session, requireSession } from '../../services/session.uts'
-import { commerce, loadCustomers, loadDrafts } from '../../services/commerce.uts'
-import type { Customer, CartDraft } from '../../services/commerce.uts'
-const query = ref('')
-const visibleCustomers = computed((): Customer[] => session.authenticated ? commerce.customers : [] as Customer[])
-let owner = ''
-const drafts = computed((): CartDraft[] => commerce.drafts.filter((draft: CartDraft): boolean => draft.lines.length > 0))
-onShow(() => { loadDrafts(); const currentOwner = session.tenantId + ':' + session.userId; if (owner != currentOwner) { owner = currentOwner; query.value = '' }; if (session.authenticated) loadCustomers(query.value, false, false) })
+import { session, hasPermission, requireSession } from '../../services/session.uts'
+import { crmOwner, crmToday, crmMessage } from '../../services/crm.uts'
+import { customerSummary, customerSummarySnapshot, customerPublicCount, customerPublicCountSnapshot, customerCount, customerRatio, customerPeriodQuery, CustomerMetric } from '../../services/customer-workbench.uts'
+import { workbenchPeriod } from '../../services/workbench.uts'
+const period = ref('today'); const month = ref(''); const today = ref(crmToday()); const dateMenu = ref(false)
+const data = ref<UTSJSONObject | null>(null); const error = ref(''); const loading = ref(false); const publicCount = ref('—')
+const canPrivate = computed((): boolean => hasPermission('crm:pool:private-read')); const canPublic = computed((): boolean => hasPermission('crm:pool:public-read')); const canOrders = computed((): boolean => hasPermission('order:read'))
+const range = computed(() => workbenchPeriod(period.value, today.value, month.value))
+const mine = computed((): string => customerCount(data.value, 'mine')); const cooperated = computed((): string => customerCount(data.value, 'cooperated')); const contacts = computed((): string => customerCount(data.value, 'contacts'))
+const metrics = computed((): CustomerMetric[] => [ { key: 'PURCHASING', title: '成交客户', value: customerCount(data.value, 'purchasing') } as CustomerMetric, { key: 'NEW', title: '新增合作', value: customerCount(data.value, 'newCooperation') } as CustomerMetric, { key: 'RETURNING', title: '复购客户', value: customerCount(data.value, 'returning') } as CustomerMetric, { key: 'RATIO', title: '复购率', value: customerRatio(data.value) } as CustomerMetric ])
+const tasks = computed((): CustomerMetric[] => [ { key: 'DUE_SOON', title: '即将掉落', value: customerCount(data.value, 'dueSoon') } as CustomerMetric, { key: 'DORMANT', title: '60天未购', value: customerCount(data.value, 'dormant') } as CustomerMetric, { key: 'CONTACT_PENDING', title: '联系待完善', value: customerCount(data.value, 'contactPending') } as CustomerMetric ])
+let generation = 0; let owner = ''; let visible = false
+let pendingKey = ''
+async function reload(): Promise<void> {
+  const key = crmOwner() + (canPrivate.value ? ':' + range.value.from + ':' + range.value.to : ':public')
+  if (loading.value && pendingKey == key) return
+  pendingKey = key
+  const request = ++generation; loading.value = true; error.value = ''
+  data.value = canPrivate.value ? customerSummarySnapshot(range.value.from, range.value.to) : null
+  const publicSnapshot = canPrivate.value ? null : customerPublicCountSnapshot()
+  publicCount.value = data.value != null ? customerCount(data.value, 'publicPool') : customerCount(publicSnapshot, 'total')
+  try { if (canPrivate.value) { const response = await customerSummary(range.value.from, range.value.to); if (request != generation) return; data.value = response; publicCount.value = customerCount(response, 'publicPool') } else if (canPublic.value) { const response = await customerPublicCount(); if (request == generation) publicCount.value = customerCount(response, 'total') } }
+  catch (e) { if (request == generation) { error.value = crmMessage(e); data.value = null; publicCount.value = '—' } } finally { if (request == generation) loading.value = false }
+}
+function selectPeriod(next: string): void { if (next == period.value && next != 'custom') { dateMenu.value = false; return }; period.value = next; dateMenu.value = false; if (canPrivate.value) reload() }
+function chooseMonth(event: UniPickerChangeEvent): void { month.value = event.detail.value as string; selectPeriod('custom') }
+function list(kind: string): void { uni.navigateTo({ url: '/pages/customer-list/customer-list?kind=' + kind }) }
+function openMetric(kind: string): void { const selected = kind == 'RATIO' ? 'RETURNING' : kind; uni.navigateTo({ url: '/pages/customer-list/customer-list?kind=' + selected + '&' + customerPeriodQuery(range.value.from, range.value.to) + (kind == 'RATIO' ? '&denominator=' + customerCount(data.value, 'purchasing') : '') }) }
+function people(newly: boolean): void { uni.navigateTo({ url: '/pages/customer-contacts/customer-contacts?newly=' + (newly ? 'true' : 'false') + '&' + customerPeriodQuery(range.value.from, range.value.to) }) }
+function wecomInfo(): void { uni.showModal({ title: '新增企微', content: '官方企微关系尚未接入，暂不提供统计。手填微信线索不计入建联。', showCancel: false }) }
+function scopeInfo(): void { uni.showModal({ title: '统计范围', content: '按已关联统一门店的本人有效订单统计。新增合作为公司首单归属本人；复购为本期开始前已成交的老客。未关联历史订单尚未计入。首次时间待核对：' + customerCount(data.value, 'unknownHistory') + '家。联系人仅展示当前有权查看的本人新增联系人。', showCancel: false }) }
+function more(): void { uni.showActionSheet({ itemList: ['订货客户与购物草稿', '统计口径'], success: (result) => { if (result.tapIndex == 0) uni.navigateTo({ url: '/pages/ordering-customers/ordering-customers' }); else scopeInfo() } }) }
 function login(): void { requireSession() }
-function search(): void { loadCustomers(query.value.trim()) }
-function loadMore(): void { loadCustomers(query.value.trim(), true) }
-function openCustomer(customer: Customer): void { uni.navigateTo({ url: '/pages/commerce/commerce?view=customer&id=' + encodeURIComponent(customer.id) }) }
-function openDraft(draft: CartDraft): void { commerce.selectedCustomerId = draft.customerId; uni.navigateTo({ url: '/pages/commerce/commerce?view=cart' }) }
+function showPage(): void { const next = crmOwner(); if (owner != next) { owner = next; generation++; data.value = null; error.value = ''; publicCount.value = '—'; period.value = 'today'; month.value = '' }; today.value = crmToday(); if (session.authenticated) reload() }
+onShow(() => { visible = true; showPage() }); onHide(() => { visible = false; generation++; loading.value = false; pendingKey = '' }); onUnload(() => { generation++ })
+watch((): string => crmOwner(), (_value: string) => { generation++; data.value = null; publicCount.value = '—'; if (visible) showPage() })
 </script>
 <style>
-.list-header.content { padding-bottom: 0; }
-.list-footer.content { padding-top: 0; }
-.list-row { padding-left: 22px; padding-right: 22px; }
-.page { flex: 1; background-color: #fffdf9; }
-.content { padding: 22px; padding-bottom: 34px; }
-.heading-row { flex-direction: row; align-items: center; justify-content: space-between; }
-.heading { font-size: 28px; font-weight: bold; color: #21252b; }
-.count { font-size: 12px; color: #85868b; }
-.intro { font-size: 12px; color: #85868b; line-height: 20px; margin-top: 8px; margin-bottom: 22px; }
-.search { flex-direction: row; background-color: #f3f2ee; border-radius: 10px; padding: 6px; align-items: center; }
-.search-input { flex: 1; font-size: 14px; height: 40px; padding-left: 8px; color: #21252b; }
-.search-button { color: #ffffff; background-color: #e56335; font-size: 13px; margin: 0; width: 62px; height: 38px; line-height: 38px; border-radius: 7px; }
-.scope { flex-direction: row; justify-content: space-between; margin-top: 24px; padding-bottom: 12px; border-bottom-width: 1px; border-bottom-color: #ecebe7; }
-.scope-label { color: #e56335; font-size: 14px; font-weight: bold; }
-.scope-description { color: #989a9e; font-size: 11px; }
-.customer-row { flex-direction: row; padding-top: 22px; padding-bottom: 22px; border-bottom-width: 1px; border-bottom-color: #ecebe7; }
-.avatar { background-color: #f2eae0; width: 46px; height: 46px; border-radius: 12px; align-items: center; justify-content: center; margin-right: 13px; }
-.avatar-text { color: #8b7661; font-size: 17px; }
-.customer-copy { flex: 1; }
-.row { flex-direction: row; justify-content: space-between; align-items: center; }
-.customer-name { flex: 1; font-size: 16px; font-weight: bold; color: #21252b; line-height: 23px; }
-.chevron { color: #a0a1a4; font-size: 24px; margin-left: 10px; }
-.meta { font-size: 12px; color: #85868b; line-height: 20px; margin-top: 6px; }
-.address { font-size: 12px; color: #85868b; line-height: 19px; margin-top: 4px; }
-.empty { align-items: center; padding-top: 50px; padding-bottom: 38px; }
-.empty-icon { color: #cebea8; font-size: 42px; margin-bottom: 16px; }
-.empty-title { font-size: 18px; color: #34373d; font-weight: bold; margin-bottom: 10px; }
-.empty-copy { font-size: 13px; line-height: 22px; text-align: center; color: #85868b; }
-.primary { background-color: #e56335; color: #ffffff; border-radius: 9px; font-size: 15px; margin-top: 25px; width: 100%; }
-.secondary { background-color: #fffdf9; color: #e56335; border-radius: 9px; font-size: 13px; margin-top: 14px; }
-.notice { margin-top: 20px; background-color: #fff0e8; border-radius: 10px; padding: 16px; }
-.notice-title { color: #9b461f; font-size: 14px; font-weight: bold; }
-.notice-copy { color: #9b725d; font-size: 12px; line-height: 20px; margin-top: 7px; }
-.load-more { margin-top: 18px; color: #e56335; background-color: #f7f1e9; font-size: 13px; border-radius: 9px; }
-.draft-section { margin-top: 32px; }
-.section-title { font-size: 17px; font-weight: bold; color: #21252b; margin-bottom: 14px; }
-.draft-row { flex-direction: row; background-color: #f5f1e9; padding: 16px; margin-bottom: 10px; border-radius: 10px; align-items: center; }
-.draft-copy { flex: 1; }
-.draft-name { color: #34373d; font-size: 14px; font-weight: bold; }
-.orange { color: #e56335; font-size: 13px; margin-left: 10px; }
+@import '../../styles/customers.css';
+.c-overview { padding-top: var(--uni-safe-area-inset-top); }
 </style>

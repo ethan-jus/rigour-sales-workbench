@@ -1,0 +1,47 @@
+import { crmCall, crmObject } from './crm.uts'
+import { attendanceClock } from './attendance.uts'
+export type FieldEvent = { key: string, time: string, sortTime: string, title: string, subtitle: string, kind: string, captureId: string, longitude: number | null, latitude: number | null }
+export type FieldPoint = { latitude: number, longitude: number }
+export type FieldLine = { points: FieldPoint[], color: string, width: number }
+export type FieldMarker = { id: number, latitude: number, longitude: number, title: string, iconPath: string, width: number, height: number }
+export type FieldTrack = { distance: string, available: boolean, gaps: number, events: FieldEvent[], lines: FieldLine[], points: FieldPoint[], markers: FieldMarker[] }
+function rows(data: UTSJSONObject, key: string): UTSJSONObject[] { return (data[key] as UTSJSONObject[] | null) ?? [] as UTSJSONObject[] }
+function point(row: UTSJSONObject): FieldPoint | null {
+  const latitude = row.getNumber('latitude'); const longitude = row.getNumber('longitude')
+  if (latitude == null || longitude == null || !Number.isFinite(latitude!) || !Number.isFinite(longitude!)) return null
+  return { latitude: latitude!, longitude: longitude! } as FieldPoint
+}
+export function parseFieldTrack(data: UTSJSONObject): FieldTrack {
+  const events: FieldEvent[] = []; const lines: FieldLine[] = []; const points: FieldPoint[] = []; const markers: FieldMarker[] = []
+  for (const leg of rows(data, 'legs')) {
+    const path: FieldPoint[] = []
+    for (const row of rows(leg, 'points')) { const p = point(row); if (p != null) { path.push(p!); points.push(p!) } }
+    if (path.length > 1) lines.push({ points: path, color: '#377eee', width: 5 } as FieldLine)
+  }
+  for (const row of rows(data, 'punches')) {
+    const time = row.getString('clientOccurredAt') ?? row.getString('serverReceivedAt') ?? ''
+    const position = point(row); const incoming = row.getString('eventType') == 'CHECK_IN'
+    events.push({ key: 'punch-' + events.length.toString(), time: attendanceClock(time), sortTime: time, title: incoming ? '上班签到' : '下班签退', subtitle: '', kind: incoming ? 'start' : 'end', captureId: '', longitude: position?.longitude ?? null, latitude: position?.latitude ?? null } as FieldEvent)
+  }
+  for (const row of rows(data, 'visits')) {
+    const time = row.getString('checkedInAt') ?? ''; const position = point(row)
+    events.push({ key: row.getString('visitId') ?? '', time: attendanceClock(time), sortTime: time, title: row.getString('storeName') ?? '门店拜访', subtitle: (row.getNumber('dwellMinutes') ?? 0).toString() + '分钟', kind: 'visit', captureId: row.getString('visitId') ?? '', longitude: position?.longitude ?? null, latitude: position?.latitude ?? null } as FieldEvent)
+  }
+  for (const gap of rows(data, 'gaps')) {
+    const time = gap.getString('from') ?? ''
+    events.push({ key: 'gap-' + events.length.toString(), time: attendanceClock(time), sortTime: time, title: gap.getString('reason') == 'IMPLAUSIBLE_SPEED' ? '定位跳跃待核查' : '轨迹缺失', subtitle: '至 ' + attendanceClock(gap.getString('to') ?? ''), kind: 'gap', captureId: '', longitude: null, latitude: null } as FieldEvent)
+  }
+  events.sort((a: FieldEvent, b: FieldEvent): number => a.sortTime < b.sortTime ? -1 : a.sortTime > b.sortTime ? 1 : 0)
+  for (let i = 0; i < events.length; i++) {
+    const event = events[i]
+    if (event.longitude == null || event.latitude == null) continue
+    const location = { longitude: event.longitude!, latitude: event.latitude! } as FieldPoint
+    points.push(location)
+    const icon = event.kind == 'start' ? 'start' : event.kind == 'end' ? 'end' : 'visit'
+    markers.push({ id: i + 1, longitude: location.longitude, latitude: location.latitude, title: event.time + ' ' + event.title, iconPath: '/static/fieldwork/' + icon + '.png', width: 28, height: 34 } as FieldMarker)
+  }
+  const available = data.getBoolean('distanceAvailable') == true
+  const meters = data.getNumber('totalDistanceMeters') ?? 0
+  return { distance: available ? (meters / 1000).toFixed(1) + ' km' : '无法计算', available, gaps: rows(data, 'gaps').length, events, lines, points, markers } as FieldTrack
+}
+export async function readFieldTrack(date: string): Promise<FieldTrack> { return parseFieldTrack(crmObject(await crmCall('/sales/me/work-days/' + date + '/track'))) }

@@ -4,10 +4,12 @@ import { useRoute, useRouter } from 'vue-router';
 import { showToast } from 'vant';
 import type { NearbyStoreView, PoiTargetCommand, VisitPlanView, VisitTargetView } from '@/api/core/sales';
 import { useSalesStore } from '@/stores/sales';
+import { useAuthStore } from '@/stores/auth';
 import { createIdempotencyKey } from '@/utils/id';
 import { localDate } from '@/utils/datetime';
 
 const salesStore = useSalesStore();
+const authStore = useAuthStore();
 const router = useRouter();
 const route = useRoute();
 
@@ -183,7 +185,9 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="workbench-page targets-page">
-    <van-nav-bar title="客户与门店" left-arrow @click-left="$router.back()" />
+    <van-nav-bar
+title="客户与门店" left-arrow :right-text="authStore.hasPermission('crm:pool:private-read') ? 'CRM 私海' : ''"
+      @click-left="$router.back()" @click-right="router.push('/crm-customers')" />
     <van-tabs v-model:active="activeTab" sticky offset-top="46" @change="onTabChange">
       <van-tab title="今日计划">
         <div class="targets-heading plan-heading">

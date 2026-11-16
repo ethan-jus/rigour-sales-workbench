@@ -1,0 +1,36 @@
+export type BackgroundPoint = { longitude: number, latitude: number, accuracy: number }
+type LocationConsumer = { point: (value: BackgroundPoint) => void, error: (message: string) => void }
+// Fieldwork and auto-departure share one system location subscription.
+const consumers = new Map<string, LocationConsumer>()
+let active = false
+let starting: Promise<void> | null = null
+let listener: number | null = null
+let errorListener: number | null = null
+function subscribers(): LocationConsumer[] {
+  const result: LocationConsumer[] = []
+  consumers.forEach((value: LocationConsumer, _key: string) => { result.push(value) })
+  return result
+}
+function stopIfUnused(): void {
+  if (consumers.size > 0 || starting != null) return
+  if (listener != null) uni.offLocationChange(listener!)
+  if (errorListener != null) uni.offLocationChangeError(errorListener!)
+  listener = null; errorListener = null
+  if (active) uni.stopLocationUpdate({})
+  active = false
+}
+export function releaseBackgroundLocation(key: string): void { consumers.delete(key); stopIfUnused() }
+export function acquireBackgroundLocation(key: string, point: (value: BackgroundPoint) => void, error: (message: string) => void): Promise<void> {
+  consumers.set(key, { point, error } as LocationConsumer)
+  if (active) return Promise.resolve()
+  if (starting != null) return starting!
+  listener = uni.onLocationChange((location: OnLocationChangeResult) => {
+    const value = { longitude: location.longitude, latitude: location.latitude, accuracy: location.accuracy } as BackgroundPoint
+    subscribers().forEach((consumer: LocationConsumer) => consumer.point(value))
+  })
+  errorListener = uni.onLocationChangeError((failure: IGetLocationFail) => { subscribers().forEach((consumer: LocationConsumer) => consumer.error(failure.errMsg)) })
+  const request = new Promise<void>((resolve, reject) => {
+    uni.startLocationUpdateBackground({ provider: 'system', type: 'wgs84', success: (_) => { active = true; resolve() }, fail: (failure) => reject(new Error(failure.errMsg)) })
+  }).finally(() => { starting = null; stopIfUnused() })
+  starting = request; return request
+}

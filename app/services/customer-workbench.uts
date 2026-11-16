@@ -1,0 +1,81 @@
+import { crmCall, crmObject, crmDisplayRead, crmValidateCount, crmValidatePage, crmTime, CrmStore } from './crm.uts'
+import { readCustomerSnapshot } from './customer-cache.uts'
+import { workbenchMoney } from './workbench.uts'
+
+export type CustomerRow = { distanceText: string, nearLongitude: number | null, nearLatitude: number | null, nearCoordinateSystem: string, id: string, name: string, address: string, relation: string, tag: string, meta: string, deadline: string, blocked: string, claimLabel: string, revision: number, source: string }
+export type CustomerPage = { total: number, items: CustomerRow[], cursor: string }
+export type CustomerMetric = { key: string, title: string, value: string }
+export type CustomerContactStore = { id: string, name: string, role: string }
+export type CustomerPerson = { id: string, name: string, role: string, storeId: string, storeName: string, stores: CustomerContactStore[] }
+export type CustomerPeople = { total: number, items: CustomerPerson[], cursor: string }
+export type CustomerOrder = { id: string, time: string, amount: string }
+export type CustomerOrders = { total: number, amount: string, items: CustomerOrder[], cursor: string }
+
+export function customerCount(data: UTSJSONObject | null, key: string): string { const value = data?.getNumber(key); return value == null ? '—' : value!.toString() }
+export function customerRatio(data: UTSJSONObject | null): string {
+  const all = data?.getNumber('purchasing') ?? 0; const returning = data?.getNumber('returning')
+  if ((data?.getNumber('unknownHistory') ?? 0) > 0 || returning == null || all <= 0) return '—'
+  return parseFloat(((returning ?? 0) / all * 100).toFixed(1)).toString() + '%'
+}
+export function customerPeriodQuery(from: string, to: string): string { return 'from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to) }
+export function customerDate(value: string): string { const time = crmTime(value); return time == '暂无' ? '待核实' : time.substring(0, 5).replace('-', '/') }
+export function customerStoreRow(s: CrmStore): CustomerRow {
+  const privateStore = s.pool == 'PRIVATE'
+  const phase = s.phase == 'FIRST_VISIT' ? '待首访' : s.phase == 'FOLLOW_UP' ? '跟进中' : '维护中'
+  return { distanceText: '距离未知', nearLongitude: s.longitude, nearLatitude: s.latitude, nearCoordinateSystem: s.coordinateSystem, id: s.id, name: s.name, address: s.displayAddress, relation: privateStore ? 'MINE' : 'PUBLIC', tag: privateStore ? phase : '', meta: privateStore ? (s.lastVisit.length > 0 ? '有效拜访' + customerDate(s.lastVisit) : '暂无有效拜访') : (s.businessStatus == 'OPEN' ? '正常营业' : '经营待核实'), deadline: privateStore ? (s.holdReason.length > 0 ? '保护保留' : '保护至' + customerDate(s.deadline)) : '', blocked: privateStore ? '' : s.claimBlocked == '本人冷却中' && s.cooldown.length > 0 ? crmTime(s.cooldown) + '可认领' : s.claimBlocked, claimLabel: s.claimBlocked == '本人冷却中' ? '冷却中' : s.claimBlocked.length > 0 ? '不可认领' : '认领', revision: s.revision, source: privateStore ? 'MINE' : 'PUBLIC' } as CustomerRow
+}
+export function customerHistoryRow(row: UTSJSONObject): CustomerRow {
+  const relation = row.getString('relation') ?? ''
+  const last = row.getString('lastOrderAt') ?? ''
+  return { distanceText: '距离未知', nearLongitude: null, nearLatitude: null, nearCoordinateSystem: '', id: row.getString('id') ?? '', name: row.getString('name') ?? '', address: row.getString('address') ?? '', relation: relation, tag: relation == 'MINE' ? '我的私海' : relation == 'PUBLIC' ? '公海' : '已转交', meta: last.length == 0 ? '' : '上次下单' + customerDate(last) + ' · 向我下单' + customerCount(row, 'orderCount') + '笔', deadline: '', blocked: '', claimLabel: '', revision: 0, source: 'HISTORY' } as CustomerRow
+}
+function summaryPath(from: string, to: string): string { return '/crm/customer-workbench/overview?' + customerPeriodQuery(from, to) }
+export function customerSummarySnapshot(from: string, to: string): UTSJSONObject | null { return readCustomerSnapshot(summaryPath(from, to)) }
+function validateSummary(data: UTSJSONObject): void {
+  for (const key of ['contacts', 'mine', 'dueSoon', 'dormant', 'contactPending']) crmValidateCount(data, key)
+  // These counters are intentionally nullable when the corresponding authority/source is unavailable.
+  for (const key of ['purchasing', 'newCooperation', 'returning', 'unknownHistory', 'cooperated', 'publicPool', 'wecom']) crmValidateCount(data, key, true)
+}
+export function customerSummary(from: string, to: string): Promise<UTSJSONObject> { return crmDisplayRead(summaryPath(from, to), (data: UTSJSONObject) => { validateSummary(data) }) }
+const publicCountPath = '/crm/customer-workbench/public-count'
+export function customerPublicCountSnapshot(): UTSJSONObject | null { return readCustomerSnapshot(publicCountPath) }
+export function customerPublicCount(): Promise<UTSJSONObject> {
+  return crmDisplayRead(publicCountPath, (data: UTSJSONObject) => { crmValidateCount(data, 'total') })
+}
+function listPath(kind: string, from: string, to: string, keyword: string, relation: string, cursor: string): string {
+  return '/crm/customer-workbench?kind=' + encodeURIComponent(kind) + '&' + customerPeriodQuery(from, to) + '&keyword=' + encodeURIComponent(keyword) + '&relation=' + encodeURIComponent(relation) + '&cursor=' + encodeURIComponent(cursor)
+}
+function listPage(data: UTSJSONObject, kind: string): CustomerPage {
+  crmValidatePage(data)
+  const rows = data['items'] as UTSJSONObject[]
+  return { total: data.getNumber('total') ?? 0, items: rows.map((row: UTSJSONObject): CustomerRow => {
+    const item = customerHistoryRow(row)
+    if (kind == 'CONTACT_PENDING') item.source = 'MINE'
+    return item
+  }), cursor: data.getString('nextCursor') ?? '' } as CustomerPage
+}
+export function customerListSnapshot(kind: string, from: string, to: string, keyword: string, relation: string): CustomerPage | null {
+  const data = readCustomerSnapshot(listPath(kind, from, to, keyword, relation, ''))
+  return data == null ? null : listPage(data, kind)
+}
+export async function customerList(kind: string, from: string, to: string, keyword: string, relation: string, cursor: string): Promise<CustomerPage> {
+  return listPage(await crmDisplayRead(listPath(kind, from, to, keyword, relation, cursor), (data: UTSJSONObject) => { crmValidatePage(data) }), kind)
+}
+export async function customerPeople(newly: boolean, from: string, to: string, keyword: string, cursor: string): Promise<CustomerPeople> {
+  const data = crmObject(await crmCall('/crm/customer-workbench/contacts?newly=' + (newly ? 'true' : 'false') + '&' + customerPeriodQuery(from, to) + '&keyword=' + encodeURIComponent(keyword) + '&cursor=' + encodeURIComponent(cursor)))
+  crmValidatePage(data)
+  const rows = data['items'] as UTSJSONObject[]
+  return { total: data.getNumber('total') ?? 0, items: rows.map((row: UTSJSONObject): CustomerPerson => {
+    const stores = (row['stores'] as UTSJSONObject[] | null) ?? [] as UTSJSONObject[]
+    return { id: row.getString('id') ?? '', name: row.getString('name') ?? '', role: row.getString('role') ?? '', storeId: row.getString('storeId') ?? '', storeName: row.getString('storeName') ?? '', stores: stores.map((s: UTSJSONObject): CustomerContactStore => ({ id: s.getString('id') ?? '', name: s.getString('name') ?? '', role: s.getString('role') ?? '' } as CustomerContactStore)) } as CustomerPerson
+  }), cursor: data.getString('nextCursor') ?? '' } as CustomerPeople
+}
+export async function customerOrders(store: string, cursor: string = ''): Promise<CustomerOrders> {
+  const data = crmObject(await crmCall('/crm/customer-workbench/' + encodeURIComponent(store) + '/orders?cursor=' + encodeURIComponent(cursor)))
+  crmValidatePage(data)
+  const rows = data['items'] as UTSJSONObject[]
+  return { total: data.getNumber('total') ?? 0, amount: workbenchMoney(data.getNumber('amount')), items: rows.map((row: UTSJSONObject): CustomerOrder => ({ id: row.getString('id') ?? '', time: crmTime(row.getString('effectiveAt') ?? ''), amount: workbenchMoney(row.getNumber('amount')) } as CustomerOrder)), cursor: data.getString('nextCursor') ?? '' } as CustomerOrders
+}
+export function customerOpen(row: CustomerRow): void {
+  uni.navigateTo({ url: '/pages/customer-detail/customer-detail?id=' + encodeURIComponent(row.id) + '&source=' + row.source + '&relation=' + row.relation + '&name=' + encodeURIComponent(row.name) + '&address=' + encodeURIComponent(row.address) })
+}

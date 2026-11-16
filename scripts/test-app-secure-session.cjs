@@ -8,10 +8,10 @@ const assert = require('node:assert/strict')
 const test = require('node:test')
 const ts = require('typescript')
 
-function sourceFor(android) {
+function sourceFor(android, file = 'secure-session.uts') {
   let enabled = true
   const stack = []
-  return fs.readFileSync(path.join(__dirname, '../app/services/secure-session.uts'), 'utf8').split('\n').filter(line => {
+  return fs.readFileSync(path.join(__dirname, '../app/services', file), 'utf8').split('\n').filter(line => {
     const match = line.match(/\/\/ #(ifdef|ifndef) APP-ANDROID/)
     if (match) { stack.push(enabled); enabled = enabled && (match[1] === 'ifdef' ? android : !android); return false }
     if (line.includes('// #endif')) { enabled = stack.pop(); return false }
@@ -115,7 +115,7 @@ function fixture({ android = true, sdk = 35 } = {}) {
   assert.deepEqual(compiled.diagnostics, [])
   const context = vm.createContext({
     exports: {}, toNativeBytes: value => bytes(Buffer.from(value)),
-    require: name => name === './config.uts' ? { appEnvironment: env } : native[name],
+    require: name => name === './config.uts' ? { appEnvironment: env } : name === './secure-storage.uts' ? storageApi : native[name],
     setTimeout: action => main.push(action),
     UTSAndroid: {
       getAppContext: () => ({ getNoBackupFilesDir: () => '/private/no_backup' }),
@@ -123,13 +123,17 @@ function fixture({ android = true, sdk = 35 } = {}) {
     },
   })
   vm.runInContext(`String.prototype.toByteArray = function() { return toNativeBytes(String(this)) }; JSON.parseObject = function(text) { const value = JSON.parse(text); return { getString: function(key) { return typeof value[key] === 'string' ? value[key] : null } } }`, context)
+  const storageSource = ts.transpileModule(sourceFor(android, 'secure-storage.uts'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true } }).outputText
+  vm.runInContext(storageSource, context)
+  const storageApi = context.exports
+  context.exports = {}
   vm.runInContext(compiled.outputText, context)
   const runIO = () => { thread = 'io'; while (io.length) io.shift()(); thread = 'main' }
   const runMain = () => { assert.equal(thread, 'main'); while (main.length) main.shift()() }
   const fail = message => { assert.equal(thread, 'main'); errors.push(message) }
   const success = value => { assert.equal(thread, 'main'); results.push(value) }
   const value = overrides => ({ refreshToken: 'fixture-refresh-secret', issuer: env.issuer, clientId: env.clientId, userId: 'user-1', tenantId: 'tenant-1', ...overrides })
-  return { api: context.exports, env, files, keys, faults, errors, results, value, fail, success, io, main, runIO, runMain, drain() { runIO(); runMain() } }
+  return { api: context.exports, storageApi, env, files, keys, faults, errors, results, value, fail, success, io, main, runIO, runMain, drain() { runIO(); runMain() } }
 }
 
 test('absent file returns null asynchronously without creating a key', () => {
@@ -217,4 +221,12 @@ test('unsupported platforms and Android before API 23 have asynchronous explicit
     assert.equal(f.errors.length, 0); f.drain()
     assert.equal(f.errors.length, 3); assert.equal(f.results.length, 0); assert.equal(f.files.size, 0); assert.equal(f.keys.size, 0)
   }
+})
+
+ test('fieldwork payloads use the same encrypted primitive with independent scopes', () => {
+  const f = fixture(); f.storageApi.writeSecurePayload('field:tenant:user', '{"latitude":30,"request":"retry"}', f.success, f.fail); f.drain()
+  assert.equal([...f.files.values()][0].includes('latitude'), false)
+  f.storageApi.readSecurePayload('field:tenant:other', f.success, f.fail); f.drain(); assert.equal(f.results.at(-1), null)
+  f.api.clearSecureSession(f.success, f.fail); f.drain(); assert.equal(f.files.size, 1)
+  f.storageApi.readSecurePayload('field:tenant:user', f.success, f.fail); f.drain(); assert.equal(JSON.parse(f.results.at(-1)).request, 'retry')
 })

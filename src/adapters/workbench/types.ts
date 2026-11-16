@@ -20,6 +20,7 @@ export interface WorkbenchCapabilities {
     longitude: number;
     accuracy: number;
     timestamp: number;
+    coordinateSystem?: 'WGS84' | 'GCJ02';
   }>;
   startLocation(
     onPoint: (point: { latitude: number; longitude: number; accuracy: number; timestamp: number }) => void,

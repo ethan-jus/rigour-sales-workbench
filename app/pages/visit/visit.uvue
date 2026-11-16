@@ -25,7 +25,7 @@
       <view v-else-if="view == 'evidence' && hasDraft">
         <text class="eyebrow">{{ draft.storeName }}</text><text class="heading">留下到访记录</text><view class="split section-space"><text class="section-title">现场照片</text><text class="muted">{{ draft.photos.length }} / 9 张</text></view><text class="body">拍清门头，也可补充店内照片。</text>
         <view class="photos"><view v-for="(photo, index) in draft.photos" :key="photo.fileName" class="photo-item"><image class="photo" :src="photoSource(photo)" mode="aspectFill" @click="previewPhoto(index)" /><text class="photo-remove" @click="deletePhoto(index)">×</text></view></view>
-        <view class="button-row"><button class="secondary grow" @click="choosePhotos(true)">{{ draft.photos.length > 0 ? '继续拍照' : '拍摄照片' }}</button><button class="secondary grow last-button" @click="choosePhotos(false)">从相册添加</button></view>
+        <view class="button-row"><button class="secondary grow" @click="choosePhotos">{{ draft.photos.length > 0 ? '继续拍照' : '拍摄照片' }}</button></view>
         <text class="section-title section-space">现场录音</text><view v-if="captureHere && !canStart" class="notice"><text class="notice-text">{{ visitState.capture.message }}</text><button v-if="canStop" class="secondary" @click="stopRecording">停止并保存录音</button><button v-if="visitState.capture.phase == 'save-error'" class="secondary" @click="retryRecordingSave">重试保存录音</button></view><view v-for="clip in draft.clips" :key="clip.id" class="clip"><view class="grow"><text class="clip-title">现场录音 · {{ formatClock(clip.activeDurationEstimateMs) }}</text><text class="muted">已保存到手机 · 未上传</text></view><button class="small-button" @click="playClip(clip)">回放</button></view><text v-if="draft.clips.length == 0" class="body">本次暂无已保存录音</text>
         <view class="location section-space"><view class="grow"><text class="location-title">当前设备位置</text><text class="body">{{ draft.location != null ? '已采集位置 · 地址待解析' : '尚未获取当前位置' }}</text><text class="muted">距离未核验 · 需确认在门店 200 米内</text></view><button class="small-button" :disabled="visitState.locating" @click="relocate">重新定位</button></view>
         <view class="notice"><text class="notice-title">尚不能提交正式打卡</text><text class="notice-text">当前草稿未计入打卡。等待正式位置核验与材料上传接通后，再提交到平台。</text></view><button class="primary" @click="saveDraft">保存到本机草稿</button><button class="secondary" @click="toUploads">查看本机材料</button>
@@ -46,6 +46,7 @@ const canCreate = computed((): boolean => hasPermission('sales:visit-target:read
 const localDraftCount = computed((): number => visitDraftCount())
 
 const today = ref(visitToday())
+const pendingPlansOnly = ref(false)
 
 const view = ref('select')
 const recordId = ref('')
@@ -95,7 +96,7 @@ function resumeRecording(): void { resumeVisitRecording() }
 function stopRecording(): void { stopVisitRecording() }
 function retryRecordingSave(): void { retryVisitRecordingSave() }
 function deletePhoto(index: number): void { removeVisitPhoto(index) }
-function choosePhotos(camera: boolean): void { addVisitPhotos(camera) }
+function choosePhotos(): void { addVisitPhotos() }
 function relocate(): void { locateForVisit(view.value != 'select') }
 function login(): void { uni.navigateTo({ url: '/pages/login/login' }) }
 function openView(destination: string, targetId: string = ''): void {
@@ -155,7 +156,7 @@ function loadPlans(): void {
     loading.value = false
     const items = data['items'] as UTSJSONObject[] | null
     if (items == null) { error.value = '计划数据格式异常，请稍后重试。'; return }
-    plans.value = items; plansLoaded.value = true
+    plans.value = pendingPlansOnly.value ? items.filter((item: UTSJSONObject): boolean => { const status = item.getString('status') ?? ''; return status == 'PLANNED' || status == 'IN_PROGRESS' }) : items; plansLoaded.value = true
   }, (message) => { if (version == planVersion) { loading.value = false; error.value = message } })
 }
 function planLabel(status: string): string { if (status == 'COMPLETED') return '已完成'; if (status == 'IN_PROGRESS') return '进行中'; if (status == 'PLANNED') return '待拜访'; if (status == 'CANCELLED') return '已取消'; return '状态待确认' }
@@ -190,7 +191,7 @@ watch((): string => visitReadKey(), (next: string) => {
   readKey = next; resetRemoteState(); stopPlayback()
   if (visible) { readInitialized = true; reload() }
 })
-onLoad((options) => { view.value = options['view'] ?? 'select'; recordId.value = options['id'] ?? ''; loadLocalVisits(); if (recordId.value.startsWith('local-')) selectVisitDraft(recordId.value) })
+onLoad((options) => { pendingPlansOnly.value = options['pending'] == '1'; view.value = options['view'] ?? 'select'; recordId.value = options['id'] ?? ''; loadLocalVisits(); if (recordId.value.startsWith('local-')) selectVisitDraft(recordId.value) })
 onShow(() => {
   visible = true; loadLocalVisits()
   if (readKey != visitReadKey()) { readKey = visitReadKey(); resetRemoteState() }
@@ -263,4 +264,16 @@ onUnload(() => { visible = false; clearTimeout(searchTimer); searchVersion += 1;
 .empty-title { color: #6d5e4b; font-size: 17px; font-weight: bold; margin-bottom: 10px; }
 .loading { color: #a28e77; font-size: 13px; margin-top: 17px; }
 .dismiss { font-size: 12px; color: #b96938; margin-top: 10px; text-align: right; }
+
+/* #ifdef APP-ANDROID */
+.heading,
+.title,
+.location-title,
+.store-name,
+.notice-title,
+.clock,
+.section-title,
+.distance,
+.empty-title { font-family: sans-serif; }
+/* #endif */
 </style>

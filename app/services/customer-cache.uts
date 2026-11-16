@@ -1,0 +1,50 @@
+import { watch } from 'vue'
+import { session } from './session.uts'
+import { appEnvironment } from './config.uts'
+
+type CustomerSnapshot = { path: string, savedAt: number, data: UTSJSONObject }
+let owner = ''
+let revision = 0
+let snapshots: CustomerSnapshot[] = []
+const pending = new Map<string, Promise<UTSJSONObject>>()
+
+function ownerKey(): string {
+  if (!session.authenticated) return ''
+  return JSON.stringify([appEnvironment.environment, appEnvironment.gatewayOrigin, appEnvironment.issuer,
+    session.tenantId, session.userId, session.revision, session.permissions.slice().sort().join(',')])
+}
+export function invalidateCustomerCache(): void { revision++; snapshots = [] as CustomerSnapshot[]; pending.clear() }
+function alignOwner(): string {
+  const next = ownerKey()
+  if (next != owner) { invalidateCustomerCache(); owner = next }
+  return next
+}
+export function readCustomerSnapshot(path: string, maxAgeMs: number = 120000): UTSJSONObject | null {
+  if (alignOwner().length == 0) return null
+  const now = Date.now()
+  const entry = snapshots.find((item: CustomerSnapshot): boolean => item.path == path && now >= item.savedAt && now - item.savedAt < maxAgeMs)
+  return entry?.data ?? null
+}
+async function loadSnapshot(path: string, snapshotPath: string, currentOwner: string, currentRevision: number, load: () => Promise<UTSJSONObject>): Promise<UTSJSONObject> {
+  try {
+    const data = await load()
+    if (alignOwner() != currentOwner || revision != currentRevision) throw new Error('客户资料已变化，请重新加载')
+    snapshots = snapshots.filter((item: CustomerSnapshot): boolean => item.path != snapshotPath).slice(-11)
+    snapshots.push({ path: snapshotPath, savedAt: Date.now(), data } as CustomerSnapshot)
+    return data
+  } catch (error) {
+    if (alignOwner() == currentOwner && revision == currentRevision) snapshots = snapshots.filter((item: CustomerSnapshot): boolean => item.path != snapshotPath)
+    throw error
+  } finally { if (alignOwner() == currentOwner && revision == currentRevision) pending.delete(path) }
+}
+// Memory only: bounded display snapshots. Every visit still revalidates with the server.
+export function refreshCustomerSnapshot(path: string, load: () => Promise<UTSJSONObject>, snapshotPath: string = ''): Promise<UTSJSONObject> {
+  const currentOwner = alignOwner(); const currentRevision = revision
+  if (currentOwner.length == 0) return new Promise<UTSJSONObject>((resolve, reject) => { reject(new Error('请先登录公司账号')) })
+  const running = pending.get(path)
+  if (running != null) return running
+  const request = loadSnapshot(path, snapshotPath.length == 0 ? path : snapshotPath, currentOwner, currentRevision, load)
+  pending.set(path, request)
+  return request
+}
+watch((): string => ownerKey(), (_value: string) => { alignOwner() })

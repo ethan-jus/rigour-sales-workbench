@@ -22,3 +22,10 @@
 .error-text { color: #a94c2a; font-size: 13px; line-height: 21px; }
 .badge { color: #bc481f; background-color: #ffe8d9; border-radius: 4px; padding: 4px 8px; font-size: 11px; align-self: flex-start; }
 .field { height: 48px; border-radius: 6px; border-width: 1px; border-color: #e0e1df; padding: 12px; color: #21252b; font-size: 15px; margin-top: 9px; }
+
+/* #ifdef APP-ANDROID */
+.h1,
+.h2,
+.h3,
+.primary { font-family: sans-serif; }
+/* #endif */

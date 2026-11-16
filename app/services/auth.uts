@@ -18,6 +18,7 @@ let loginInFlight = false
 let refreshInFlight = false
 let restoreStarted = false
 let refreshToken = ''
+let keepSignedIn = true
 let waiters: TokenWaiter[] = []
 
 function logoutMarkerKey(): string {
@@ -125,7 +126,7 @@ function verifyAndPublish(tokens: TokenPair, expected: StoredSession | null, cur
       }
       const stored: StoredSession = { refreshToken: tokens.refreshToken, issuer: appEnvironment.issuer,
         clientId: appEnvironment.clientId, userId, tenantId }
-      writeSecureSession(stored, () => {
+      const publish = (): void => {
         if (generation != current) return
         if (expected == null) {
           try {
@@ -138,9 +139,11 @@ function verifyAndPublish(tokens: TokenPair, expected: StoredSession | null, cur
         refreshToken = tokens.refreshToken
         session.userId = userId
         session.tenantId = tenantId
+        session.tenantName = profile.getString('tenantName') ?? ''
         session.username = profile.getString('username') ?? ''
         session.displayName = profile.getString('displayName') ?? session.username
         session.permissions = profile.getArray<string>('permissions') ?? [] as string[]
+        session.roles = profile.getArray<string>('roles') ?? [] as string[]
         session.accessToken = tokens.accessToken
         session.expiresAt = tokens.expiresAt
         session.tokenVersion += 1
@@ -148,13 +151,16 @@ function verifyAndPublish(tokens: TokenPair, expected: StoredSession | null, cur
         session.restoring = false
         session.loginError = ''
         success()
-      }, (_) => { if (generation == current) fail('无法安全保存登录凭据，本次登录未完成。') })
+      }
+      if (keepSignedIn) {
+        writeSecureSession(stored, publish, (_) => { if (generation == current) fail('无法安全保存登录凭据，本次登录未完成。') })
+      } else publish()
     },
     fail: (_) => { if (generation == current) fail('无法校验公司账号，请检查网络后重新登录。') }
   })
 }
 
-export function beginCompanyLogin(username: string, password: string, success: () => void, fail: (message: string) => void): void {
+export function beginCompanyLogin(username: string, password: string, success: () => void, fail: (message: string) => void, rememberLogin: boolean = true): void {
   if (!environmentReady()) { fail('公司登录服务尚未配置，暂不能登录。'); return }
   if (!secureSessionSupported()) { fail('此系统的安全登录仍在接入中，请先使用 Android 内部测试版。'); return }
   if (username.trim().length == 0 || password.length == 0) { fail('请输入公司账号和密码。'); return }
@@ -166,6 +172,7 @@ export function beginCompanyLogin(username: string, password: string, success: (
   generation += 1
   const current = generation
   loginInFlight = true
+  keepSignedIn = rememberLogin
   refreshToken = ''
   clearSession()
   finishWaiters('账号已变更，请重新加载。')
@@ -266,12 +273,12 @@ export function restoreCompanySession(): void {
     if (logoutState == 'done') { session.logoutState = 'done'; return }
     if (logoutState.length > 0) {
       session.logoutState = 'failed'
-      session.logoutError = '上次退出尚待确认，请在账号与设置中重试退出。'
+      session.logoutError = '上次退出尚待确认，请重试退出。'
       return
     }
   } catch (_) {
     session.logoutState = 'failed'
-    session.logoutError = '无法读取本机退出状态，请在账号与设置中重试退出。'
+    session.logoutError = '无法读取本机退出状态，请重试退出。'
     return
   }
   session.restoring = true
@@ -283,6 +290,7 @@ export function restoreCompanySession(): void {
       || saved.userId.length == 0 || saved.tenantId.length == 0 || saved.refreshToken.length == 0) {
       invalidateCompanySession('本机登录凭据已失效，请重新登录。'); return
     }
+    keepSignedIn = true
     rotateSession(saved, current)
   }, (_) => { if (generation == current) invalidateCompanySession('无法读取安全登录凭据，请重新登录。') })
 }

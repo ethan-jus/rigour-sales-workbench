@@ -38,6 +38,12 @@ const router = createRouter({
       meta: { title: '客户与门店', feature: 'sales.targets' },
     },
     {
+      path: '/crm-customers',
+      name: 'crm-customers',
+      component: () => import('@/pages/CrmCustomersPage.vue'),
+      meta: { title: 'CRM 私海', feature: 'sales.visit' },
+    },
+    {
       path: '/visit',
       name: 'visit',
       component: () => import('@/pages/VisitPage.vue'),

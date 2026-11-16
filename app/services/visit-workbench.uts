@@ -1,0 +1,42 @@
+import { reactive } from 'vue'
+import { crmCall, crmObject } from './crm.uts'
+import { apiVisitTime } from './visits.uts'
+
+export type VisitBoardRow = { id: string, storeId: string, captureId: string, name: string, address: string, state: string, label: string, tone: string, time: string, reason: string }
+export type VisitPlanRow = { id: string, storeId: string, name: string, address: string, objective: string, status: string, visitId: string }
+type VisitNavigation = { revision: number, tab: string, date: string }
+export const visitNavigation = reactive({ revision: 0, tab: 'plans', date: '' } as VisitNavigation)
+export function showVisitPlans(date: string): void { visitNavigation.revision++; visitNavigation.tab = 'plans'; visitNavigation.date = date; uni.switchTab({ url: '/pages/visits/visits' }) }
+export function showVisitRecords(from: string, to: string, kind: string): void { uni.navigateTo({ url: '/pages/visit-history/visit-history?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to) + '&kind=' + encodeURIComponent(kind) }) }
+export function visitBoardLabel(status: string): string {
+  if (status == 'IN_PROGRESS') return '进行中'
+  if (status == 'PENDING_SUBMIT') return '待提交'
+  if (status == 'SUBMITTED') return '待核验'
+  if (status == 'EFFECTIVE') return '有效'
+  if (status == 'INVALID') return '未通过'
+  if (status == 'VOID') return '已撤销'
+  return '状态待确认'
+}
+export function visitBoardTime(start: string, end: string): string {
+  if (start.length == 0) return '时间待确认'
+  const startText = apiVisitTime(start)
+  if (end.length == 0) return startText
+  const milliseconds = Date.parse(end) - Date.parse(start)
+  const endText = apiVisitTime(end)
+  const sameDay = startText.substring(0, 10) == endText.substring(0, 10)
+  return startText + '–' + (sameDay ? endText.substring(11) : endText) + (Number.isFinite(milliseconds) && milliseconds >= 0 ? ' · ' + Math.floor(milliseconds / 60000).toString() + '分钟' : '')
+}
+export function parseVisitBoardRow(row: UTSJSONObject): VisitBoardRow {
+  const state = row.getString('status') ?? ''
+  return { id: row.getString('id') ?? '', storeId: row.getString('storeId') ?? '', captureId: row.getString('captureId') ?? '', name: row.getString('name') ?? '未提供门店名称', address: row.getString('address') ?? '', state: state, label: visitBoardLabel(state), tone: state == 'INVALID' || state == 'VOID' ? 'danger' : state == 'IN_PROGRESS' || state == 'PENDING_SUBMIT' ? 'accent' : 'neutral', time: visitBoardTime(row.getString('visitedAt') ?? '', row.getString('checkedOutAt') ?? ''), reason: row.getString('reviewReason') ?? '' } as VisitBoardRow
+}
+export function visitBoardQuery(from: string, to: string, kind: string, status: string, keyword: string, page: number): string {
+  return '/sales/me/visit-workbench?from=' + from + '&to=' + to + '&kind=' + kind + '&status=' + status + '&keyword=' + encodeURIComponent(keyword.trim()) + '&page=' + page.toString() + '&size=20'
+}
+export async function loadVisitBoard(from: string, to: string, kind: string, status: string, keyword: string, page: number): Promise<UTSJSONObject> {
+  return crmObject(await crmCall(visitBoardQuery(from, to, kind, status, keyword, page)))
+}
+export function openVisitBoardRow(row: VisitBoardRow): void {
+  if (row.captureId.length > 0) uni.navigateTo({ url: '/pages/crm-visit/crm-visit?store=' + row.storeId + '&visit=' + row.id + '&capture=' + row.captureId })
+  else uni.navigateTo({ url: '/pages/crm-visit/crm-visit?store=' + row.storeId + '&visit=' + row.id })
+}

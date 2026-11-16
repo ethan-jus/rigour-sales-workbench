@@ -1,0 +1,125 @@
+import { reactive } from 'vue'
+import { crmCall, crmObject, crmOwner, crmToday, crmId, crmLocation, crmSalesReady, crmMessage } from './crm.uts'
+import { apiErrorMessage } from './api.uts'
+import { session, hasPermission } from './session.uts'
+import { fieldStorageScope, readFieldValue, writeFieldValue, clearFieldValue, fieldStorageDurable } from './field-storage.uts'
+
+export type WorkDay = { id: string, date: string, status: string, checkedInAt: string, checkedOutAt: string, sessionId: string, pointCount: number, interruptionCount: number, workMinutes: number }
+type AttendanceState = { businessDate: string, captureUntil: number, serverOffset: number, locationEnabled: boolean, locationInterval: number, offlineDeadline: number, busy: boolean, phase: string, day: WorkDay | null, pending: boolean, error: string, revision: number }
+export const attendance = reactive({ businessDate: '', captureUntil: 0, serverOffset: 0, locationEnabled: false, locationInterval: 60, offlineDeadline: 0, busy: false, phase: '', day: null, pending: false, error: '', revision: 0 } as AttendanceState)
+let readOwner = ''
+let readAt = 0
+let readPromise: Promise<WorkDay | null> | null = null
+let actionOwner = ''
+let generation = 0
+function assertOwner(owner: string): void { if (owner.length == 0 || owner != crmOwner()) throw new Error('账号已变更，请重新进入作业') }
+function parseDay(data: UTSJSONObject): WorkDay {
+  const id = data.getString('id') ?? ''; const status = data.getString('status') ?? ''
+  if (id.length == 0 || !['ACTIVE', 'FINISHED'].includes(status)) throw new Error('签到状态不完整，请刷新')
+  return { id, date: data.getString('businessDate') ?? '', status, checkedInAt: data.getString('checkedInAt') ?? '', checkedOutAt: data.getString('checkedOutAt') ?? '', sessionId: data.getString('locationSessionId') ?? '', pointCount: data.getNumber('locationPointCount') ?? 0, interruptionCount: data.getNumber('interruptionCount') ?? 0, workMinutes: data.getNumber('verifiedWorkMinutes') ?? 0 } as WorkDay
+}
+export function attendanceClock(value: string): string {
+  if (value.length == 0) return '—'
+  const time = Date.parse(value)
+  if (!Number.isFinite(time)) return '—'
+  const d = new Date(time + 8 * 3600000)
+  return d.getUTCHours().toString().padStart(2, '0') + ':' + d.getUTCMinutes().toString().padStart(2, '0')
+}
+export function resetAttendance(): void {
+  generation++; readOwner = ''; readAt = 0; readPromise = null
+  attendance.businessDate = ''; attendance.captureUntil = 0; attendance.locationEnabled = false
+  attendance.day = null; attendance.pending = false; attendance.error = ''; attendance.phase = ''
+  // An in-flight mutation keeps its lock until its own finally, even on logout.
+}
+export async function readWorkDay(date: string = crmToday()): Promise<WorkDay | null> {
+  try { return parseDay(crmObject(await crmCall('/sales/me/work-days/' + date))) }
+  catch (e) { if (crmMessage(e) == apiErrorMessage('SALES_WORK_DAY_NOT_FOUND', 404)) return null; throw e }
+}
+export function refreshAttendance(force: boolean = false): Promise<WorkDay | null> {
+  const owner = crmOwner() + '|' + crmToday()
+  if (readOwner != owner) { resetAttendance(); readOwner = owner }
+  if (readPromise != null) return readPromise!
+  if (!force && readAt > 0 && Date.now() - readAt < 15000) return Promise.resolve(attendance.day)
+  const identity = crmOwner(); const version = generation
+  const pending = crmCall('/sales/me/attendance-context').then(async (response: UTSJSONObject): Promise<WorkDay | null> => {
+    assertOwner(identity)
+    if (version != generation) throw new Error('签到状态已更新，请重试')
+    const data = crmObject(response)
+    const date = data.getString('businessDate') ?? ''
+    const until = Date.parse(data.getString('captureUntil') ?? '')
+    const serverTime = Date.parse(data.getString('serverTime') ?? '')
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(until) || !Number.isFinite(serverTime)) throw new Error('作业日期不完整，请刷新')
+    const raw = data.getJSON('workDay'); const day = raw == null ? null : parseDay(raw!)
+    if (day != null && day!.date != date) throw new Error('作业日期不一致，请刷新')
+    const scope = fieldStorageScope()
+    const pendingIn = await readFieldValue(scope, 'punch:' + date + ':in')
+    const pendingOut = await readFieldValue(scope, 'punch:' + date + ':out')
+    const signInPending = pendingIn != null && (day == null || (day!.status != 'ACTIVE' && day!.sessionId == (pendingIn!.getString('priorSessionId') ?? '')))
+    const signOutPending = pendingOut != null && day?.status == 'ACTIVE' && day!.sessionId == (pendingOut!.getString('priorSessionId') ?? '')
+    // A command from an earlier segment cannot be replayed against a reopened segment.
+    try {
+      if (pendingIn != null && !signInPending) await clearFieldValue(scope, 'punch:' + date + ':in')
+      if (pendingOut != null && !signOutPending) await clearFieldValue(scope, 'punch:' + date + ':out')
+    } catch (_) {}
+    assertOwner(identity)
+    if (readOwner == owner && version == generation) {
+      attendance.day = day; attendance.businessDate = date; attendance.captureUntil = until
+      attendance.serverOffset = serverTime - Date.now(); attendance.locationEnabled = data.getBoolean('locationEnabled') ?? false
+      attendance.locationInterval = Math.max(15, (data.getNumber('locationIntervalMinutes') ?? 1) * 60)
+      attendance.offlineDeadline = Math.max(0, data.getNumber('offlineUploadDeadlineMinutes') ?? 0)
+      attendance.pending = signInPending || signOutPending
+      readAt = Date.now()
+    }
+    return day
+  }).finally(() => { if (readOwner == owner && version == generation) readPromise = null })
+  readPromise = pending
+  return pending
+}
+function installInstanceId(): string {
+  // An install identifier is correlation evidence, not verified device attestation.
+  const key = 'rigour.field.install.v1'; const raw = uni.getStorageSync(key)
+  if (typeof raw == 'string' && (raw as string).length > 0) return raw as string
+  const id = 'app-' + crmId(); uni.setStorageSync(key, id); return id
+}
+export async function punchAttendance(checkOut: boolean): Promise<WorkDay> {
+  if (!hasPermission('sales:work-day:write')) throw new Error('当前账号无打卡权限')
+  if (attendance.busy) throw new Error('正在处理打卡，请稍候')
+  const owner = crmOwner(); const scope = fieldStorageScope()
+  actionOwner = owner; attendance.busy = true; attendance.error = ''; attendance.phase = '确认状态…'
+  try {
+    await crmSalesReady(); assertOwner(owner)
+    const day = await refreshAttendance(true); assertOwner(owner)
+    const key = 'punch:' + attendance.businessDate + ':' + (checkOut ? 'out' : 'in')
+    let saved = await readFieldValue(scope, key); assertOwner(owner)
+    if ((!checkOut && day?.status == 'ACTIVE') || (checkOut && day?.status == 'FINISHED')) {
+      if (saved != null) await clearFieldValue(scope, key)
+      attendance.pending = false; return day!
+    }
+    if (checkOut && day == null) throw new Error('当天尚未签到')
+    if (saved == null) {
+      attendance.phase = '定位中…'
+      const location = await crmLocation(null, 5000); assertOwner(owner)
+      const command = { idempotencyKey: crmId(), clientOccurredAt: new Date().toISOString(), location } as UTSJSONObject
+      if (!checkOut) command['clientInstanceId'] = installInstanceId()
+      saved = { priorSessionId: day?.sessionId ?? '', path: checkOut ? '/sales/work-days/' + day!.id + '/check-out' : '/sales/work-days/check-in', command } as UTSJSONObject
+      await writeFieldValue(scope, key, saved!); assertOwner(owner)
+    }
+    attendance.phase = '提交中…'; attendance.pending = true
+    const result = parseDay(crmObject(await crmCall(saved!.getString('path')!, 'POST', saved!.getJSON('command'))))
+    assertOwner(owner)
+    // Commit the server receipt before cleaning the local retry envelope.
+    attendance.day = result; readAt = Date.now(); attendance.pending = false; attendance.revision++
+    try { await clearFieldValue(scope, key) } catch (_) { attendance.error = '打卡已完成，本机同步记录待清理' }
+    return result
+  } catch (e) {
+    if (owner == crmOwner()) {
+      attendance.error = crmMessage(e)
+      if (attendance.pending && !fieldStorageDurable()) attendance.error += '；请保持 App 打开后重试'
+    }
+    throw e
+  } finally {
+    if (actionOwner == owner) { attendance.busy = false; attendance.phase = ''; actionOwner = '' }
+  }
+}
+export async function attendanceStatus(): Promise<string> { const day = await refreshAttendance(true); return day == null ? 'NOT_STARTED' : day.status }
+export async function checkInAttendance(): Promise<void> { await punchAttendance(false) }

@@ -86,4 +86,14 @@ function orderStatus(value: string): string { return orderStatusLabel(value) }
 .notice-title { color: #9b461f; font-size: 14px; font-weight: bold; }
 .notice-copy { color: #9b725d; font-size: 12px; line-height: 20px; margin-top: 7px; }
 .load-more { margin-top: 18px; color: #e56335; background-color: #f7f1e9; font-size: 13px; border-radius: 9px; }
+
+/* #ifdef APP-ANDROID */
+.heading,
+.active-text,
+.filter-label,
+.customer-name,
+.amount,
+.empty-title,
+.notice-title { font-family: sans-serif; }
+/* #endif */
 </style>

@@ -27,6 +27,7 @@ function normalizePosition(position: Position) {
     longitude: position.coords.longitude,
     accuracy: Math.max(0, position.coords.accuracy || 0),
     timestamp: position.timestamp || Date.now(),
+    coordinateSystem: 'WGS84' as const,
   };
 }
 

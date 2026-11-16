@@ -1,0 +1,42 @@
+import { crmCall, crmId, crmOwner, crmObject } from './crm.uts'
+import { fieldStorageScope, readFieldValue, writeFieldValue, clearFieldValue } from './field-storage.uts'
+
+export type FieldCaseEvent = { id: string, type: string, note: string, decision: string, employee: boolean, createdAt: string }
+export type FieldCase = { id: string, title: string, kind: string, status: string, visitId: string, evidence: string, events: FieldCaseEvent[] }
+export function fieldCaseStatus(status: string): string {
+  if (status == 'AWAITING_STATEMENT') return '待说明'
+  if (status == 'EXPLAINED') return '已说明'
+  if (status == 'RESOLVED') return '已排除'
+  if (status == 'CONFIRMED') return '已确认异常'
+  return '待核查'
+}
+export function parseFieldCase(row: UTSJSONObject): FieldCase {
+  const id = row.getString('id') ?? ''
+  if (id.length == 0) throw new Error('核查事项不完整，请重试')
+  const events = (row['events'] as UTSJSONObject[] | null) ?? [] as UTSJSONObject[]
+  return { id, title: row.getString('title') ?? '', kind: row.getString('kind') ?? '', status: row.getString('status') ?? '', visitId: row.getString('visitId') ?? '', evidence: row.getString('evidenceJson') ?? '{}', events: events.map((event: UTSJSONObject): FieldCaseEvent => ({ id: event.getString('id') ?? '', type: event.getString('type') ?? '', note: event.getString('note') ?? '', decision: event.getString('decision') ?? '', employee: event.getBoolean('employeeStatement') ?? false, createdAt: event.getString('createdAt') ?? '' } as FieldCaseEvent)) } as FieldCase
+}
+export async function readOwnFieldCases(date: string): Promise<FieldCase[]> {
+  const result = await crmCall('/sales/me/fieldwork/cases?date=' + encodeURIComponent(date))
+  const rows = result['data'] as UTSJSONObject[] | null
+  if (rows == null) throw new Error('核查事项读取失败，请重试')
+  return rows!.map((row: UTSJSONObject): FieldCase => parseFieldCase(row))
+}
+export async function readStatementDraft(id: string): Promise<string> {
+  const saved = await readFieldValue(fieldStorageScope(), 'statement:' + id)
+  return saved?.getString('note') ?? ''
+}
+export async function submitFieldStatement(id: string, note: string): Promise<FieldCase> {
+  const owner = crmOwner(); const scope = fieldStorageScope(); const key = 'statement:' + id
+  if (note.trim().length == 0 || note.length > 2000) throw new Error('请填写2000字以内的说明')
+  let command = await readFieldValue(scope, key)
+  if (owner != crmOwner()) throw new Error('账号已变更')
+  if (command == null || command!.getString('note') != note.trim()) command = { requestId: crmId(), note: note.trim() } as UTSJSONObject
+  await writeFieldValue(scope, key, command!)
+  if (owner != crmOwner()) throw new Error('账号已变更')
+  const result = parseFieldCase(crmObject(await crmCall('/sales/me/fieldwork/cases/' + id + '/statements', 'POST', command)))
+  // The server receipt is authoritative; local cleanup cannot turn success into another submission.
+  try { await clearFieldValue(scope, key) } catch (_) {}
+  if (owner != crmOwner()) throw new Error('账号已变更')
+  return result
+}

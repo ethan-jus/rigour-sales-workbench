@@ -5,6 +5,8 @@ import type { CapturedPhoto } from '@/adapters/feishu/types';
 import { buildUploadRequest } from '@/api/core/client';
 import { normalizeError } from '@/api/core/error';
 import { createIdempotencyKey } from '@/utils/id';
+import { localDate } from '@/utils/datetime';
+import { crmCustomersApi, type CrmCustomer, type CrmCustomerQuery } from '@/api/core/crm-customers';
 import type { CapabilityStatus } from '@/types';
 import {
   salesApi,
@@ -38,6 +40,98 @@ export const useSalesStore = defineStore('sales', () => {
   const visits = ref<VisitPageView | null>(null);
   const visitPlans = ref<VisitPlanListView | null>(null);
   const activeVisit = ref<VisitView | null>(null);
+  const crmCustomers = ref<CrmCustomer[]>([]);
+  const crmCustomerTotal = ref(0);
+  const crmCustomerCursor = ref<string | null>(null);
+  const crmCustomerContext = ref<{ employeeId: string | null; permissions: string[] } | null>(null);
+  const crmCustomersLoading = ref(false);
+  const crmCustomersError = ref<string | null>(null);
+  const crmVisitStage = ref('');
+  let crmRequestGeneration = 0;
+  const crmVisitRequests = new Map<string, Parameters<typeof crmCustomersApi.startVisit>[0]>();
+
+  async function loadCrmCustomers(query: CrmCustomerQuery, append = false) {
+    const generation = ++crmRequestGeneration;
+    crmCustomersLoading.value = true;
+    crmCustomersError.value = null;
+    if (!append) { crmCustomers.value = []; crmCustomerTotal.value = 0; crmCustomerCursor.value = null; }
+    try {
+      const [scope, page] = await Promise.all([crmCustomersApi.context(query.view), crmCustomersApi.list(query)]);
+      if (generation !== crmRequestGeneration) return;
+      crmCustomerContext.value = scope.data;
+      crmCustomers.value = append ? [...crmCustomers.value, ...page.data.items] : page.data.items;
+      crmCustomerTotal.value = page.data.total;
+      crmCustomerCursor.value = page.data.nextCursor;
+    } catch (error) {
+      if (generation === crmRequestGeneration) {
+        crmCustomersError.value = normalizeError(error).message;
+        if (!append) crmCustomerContext.value = null;
+      }
+    } finally {
+      if (generation === crmRequestGeneration) crmCustomersLoading.value = false;
+    }
+  }
+
+  async function startCrmVisit(storeId: string): Promise<{ captureId: string; storeId?: string; crmVisitId?: string } | { attendanceRequired: true } | null> {
+    if (visitLoading.value) return null;
+    visitLoading.value = true;
+    visitError.value = null;
+    try {
+      crmVisitStage.value = '正在核实当前归属';
+      const scope = (await crmCustomersApi.context()).data;
+      const customer = (await crmCustomersApi.detail(storeId)).data;
+      if (!scope.permissions.includes('crm:store:visit-write') || !scope.employeeId ||
+          customer.ownerEmployeeId !== scope.employeeId || customer.poolType !== 'PRIVATE' ||
+          customer.recordStatus !== 'ACTIVE' || !customer.currentOwnershipId) {
+        throw new Error('仅当前负责人可以拜访正常状态的私海门店，请刷新归属');
+      }
+      // 结果提交后，CRM 可能已进入核验，但采集工作区仍需要完成离店。
+      let partialCapture = false;
+      if (scope.permissions.includes('crm:store:history-read')) {
+        const records = (await crmCustomersApi.visits(storeId)).data;
+        const latest = records.find((v) => v.ownershipId === customer.currentOwnershipId &&
+          v.salespersonId === scope.employeeId && v.captureRef);
+        if (latest?.captureRef) {
+          try {
+            const capture = (await salesApi.visit(latest.captureRef)).data;
+            if (capture.status === 'CHECKED_IN') {
+              crmVisitRequests.delete(`${customer.currentOwnershipId}:${capture.workDayId}`);
+              return { captureId: capture.id, storeId, crmVisitId: latest.id };
+            }
+          } catch (error) { if (normalizeError(error).code !== 'SALES_VISIT_NOT_FOUND') throw error; partialCapture = true; }
+        }
+      }
+      crmVisitStage.value = '正在确认今日工作状态';
+      const day = await loadWorkDay(localDate());
+      if (!day || day.status !== 'ACTIVE') {
+        if (attendanceError.value) throw new Error(attendanceError.value);
+        return { attendanceRequired: true };
+      }
+      const key = `${customer.currentOwnershipId}:${day.id}`;
+      let command = crmVisitRequests.get(key);
+      if (!command && partialCapture) throw new Error('原签到尚未完成采集创建，请从原页面重试或联系管理员核实');
+      if (!command) {
+        crmVisitStage.value = '正在获取到店位置';
+        const location = await getCurrentLocation(0);
+        command = {
+          requestId: createIdempotencyKey('crm-visit'), storeId: customer.id, ownershipId: customer.currentOwnershipId, workDayId: day.id,
+          location: { longitude: location.longitude, latitude: location.latitude, accuracyMeters: location.accuracy, source: 'APP_NATIVE' },
+        };
+        crmVisitRequests.set(key, command);
+      }
+      crmVisitStage.value = '正在创建拜访';
+      const result = (await crmCustomersApi.startVisit(command)).data;
+      crmVisitRequests.delete(key);
+      recordingSession.value = null;
+      return { captureId: result.captureId, storeId, crmVisitId: result.visitId };
+    } catch (error) {
+      visitError.value = normalizeError(error).message;
+      return null;
+    } finally {
+      visitLoading.value = false;
+      crmVisitStage.value = '';
+    }
+  }
   const recordingSession = ref<RecordingSessionView | null>(null);
   const visitEvidence = ref<VisitEvidenceSummaryView | null>(null);
   const todaySummary = ref<VisitActivitySummaryView | null>(null);
@@ -185,7 +279,10 @@ export const useSalesStore = defineStore('sales', () => {
     currentLocationLoading.value = true;
     const generation = locationRequestGeneration;
     const request = getWorkbenchCapabilities().getCurrentLocation()
-      .then((point) => {
+      .then(async (raw) => {
+        const point = raw.coordinateSystem === 'WGS84'
+          ? { ...raw, ...(await salesApi.normalizeLocation({ longitude: raw.longitude, latitude: raw.latitude, coordinateSystem: 'WGS84' })).data }
+          : raw;
         if (generation === locationRequestGeneration) lastCurrentLocation.value = point;
         return point;
       })
@@ -650,6 +747,15 @@ export const useSalesStore = defineStore('sales', () => {
   }
 
   function clear() {
+    crmRequestGeneration++;
+    crmVisitRequests.clear();
+    crmCustomers.value = [];
+    crmCustomerTotal.value = 0;
+    crmCustomerCursor.value = null;
+    crmCustomerContext.value = null;
+    crmCustomersLoading.value = false;
+    crmCustomersError.value = null;
+    crmVisitStage.value = '';
     void stopLocationTracking();
     context.value = null;
     targets.value = null;
@@ -711,6 +817,8 @@ export const useSalesStore = defineStore('sales', () => {
     visits,
     visitPlans,
     activeVisit,
+    crmCustomers, crmCustomerTotal, crmCustomerCursor, crmCustomerContext,
+    crmCustomersLoading, crmCustomersError, crmVisitStage, loadCrmCustomers, startCrmVisit,
     recordingSession,
     visitEvidence,
     todaySummary,

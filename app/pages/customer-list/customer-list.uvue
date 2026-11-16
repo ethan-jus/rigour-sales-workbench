@@ -1,0 +1,185 @@
+<template>
+  <view class="sw-page">
+    <view class="c-content c-list-header">
+      <view v-if="!cohort" class="c-tabs"><view v-if="canPrivate" class="c-tab" @click="switchView('MINE')"><text :class="kind == 'MINE' ? 'c-tab-text c-tab-active' : 'c-tab-text'">我的客户</text><view v-if="kind == 'MINE'" class="c-tab-line" /></view><view v-if="canPrivate && canOrders" class="c-tab" @click="switchView('COOPERATED')"><text :class="kind == 'COOPERATED' ? 'c-tab-text c-tab-active' : 'c-tab-text'">合作客户</text><view v-if="kind == 'COOPERATED'" class="c-tab-line" /></view><view v-if="canPublic" class="c-tab" @click="switchView('PUBLIC')"><text :class="kind == 'PUBLIC' ? 'c-tab-text c-tab-active' : 'c-tab-text'">公海</text><view v-if="kind == 'PUBLIC'" class="c-tab-line" /></view></view>
+      <view v-else class="c-header"><text class="c-heading">{{ title }}</text><text class="c-muted">{{ periodLabel }}</text></view>
+      <view class="sw-row"><view class="c-search sw-grow"><image class="c-icon" src="/static/customers/search.svg" /><input class="c-input" v-model="keyword" placeholder="搜索门店名称或地址" confirm-type="search" @confirm="search" /><button class="c-search-button" @click="search">搜索</button></view><view v-if="kind == 'PUBLIC'" class="c-filter-control" hover-class="c-pressed" @click="chooseBusiness"><image class="c-icon" :src="business.length > 0 ? '/static/customers/filter-active.svg' : '/static/customers/filter.svg'" /></view></view>
+      <view class="c-filters"><view class="sw-row sw-grow"><view v-if="kind == 'MINE'" class="c-filter" @click="choosePhase"><text class="c-muted">{{ phaseTitle }}</text><image class="c-arrow" src="/static/home/chevron-down.svg" /></view><view v-if="kind == 'MINE'" class="c-filter" @click="chooseProtection"><text class="c-muted">{{ protectionTitle }}</text><image class="c-arrow" src="/static/home/chevron-down.svg" /></view><view v-if="kind == 'COOPERATED'" class="c-filter" @click="chooseRelation"><text class="c-muted">{{ relationTitle }}</text><image class="c-arrow" src="/static/home/chevron-down.svg" /></view><view v-if="kind == 'PUBLIC'" class="c-region-bar"><view class="c-region-filter" @click="openArea(0)"><text class="c-region-label">{{ provinceTitle }}</text><image class="c-arrow" src="/static/home/chevron-down.svg" /></view><view class="c-region-filter" @click="openArea(1)"><text class="c-region-label">{{ cityTitle }}</text><image class="c-arrow" src="/static/home/chevron-down.svg" /></view><view class="c-region-filter" @click="openArea(2)"><text class="c-region-label">{{ countyTitle }}</text><image class="c-arrow" src="/static/home/chevron-down.svg" /></view></view><view v-if="cohort" class="c-filter" @click="explain"><text class="c-muted">统计口径 ⓘ</text></view></view><text class="c-muted">{{ countLabel }}</text></view>
+      <view v-if="!cohort" class="c-nearby-bar"><view class="sw-grow"><text class="c-nearby-title">{{ nearDisplayed ? '离我最近 · 直线距离' : '默认顺序 · 定位后按距离排序' }}</text><text class="c-nearby-hint">{{ locationError.length > 0 ? locationError : loading && nearAnchor != null ? '正在更新附近排序，保留当前列表' : nearChanged ? '位置已变化，刷新后重新排序' : locationTime.length > 0 ? '距离更新于 ' + locationTime : nearAnchor != null ? '按上次位置显示，后台更新中' : '正在后台获取位置，可先查看客户' }}</text></view><button class="c-nearby-refresh" :disabled="locationBusy || busy || loading" @click="refreshNearby">{{ locationBusy ? '更新距离…' : '刷新附近' }}</button></view>
+      
+    </view>
+    <list-view :key="listRevision" class="c-native-list" direction="vertical" @scrolltolower="more">
+      <list-item v-for="row in rows" :key="row.id" type="customer"><view class="c-list-row c-list-content"><view class="sw-row"><view class="sw-grow" @click="open(row)"><view class="sw-row"><text class="c-name c-list-name">{{ row.name }}</text><text v-if="row.tag.length > 0" class="c-tag">{{ row.tag }}</text><image v-if="kind != 'PUBLIC'" class="c-arrow" src="/static/home/chevron-right.svg" /></view><text class="c-address">{{ row.address }}</text><text v-if="!cohort" class="c-nearby-distance">{{ row.distanceText }}</text><view class="c-metadata"><text class="c-muted">{{ row.meta }}</text><text class="c-muted">{{ row.deadline }}</text></view><text v-if="row.blocked.length > 0" class="c-muted">{{ row.blocked }}</text></view><view v-if="kind == 'PUBLIC' && canClaim" class="c-claim-hit" hover-class="c-pressed" @click="claim(row)"><view :class="busy || loading || row.blocked.length > 0 ? 'c-claim c-claim-disabled' : 'c-claim'"><text :class="busy || loading || row.blocked.length > 0 ? 'c-claim-text c-claim-text-disabled' : 'c-claim-text'">{{ row.claimLabel }}</text></view></view></view></view></list-item>
+      <list-item type="status"><view class="c-list-content">
+      <view v-if="error.length > 0" class="c-error"><text class="c-error-text">{{ error }}</text><button class="sw-text-button" :disabled="loading" @click="search">重试</button></view>
+      <view v-if="(!loading || total != null) && error.length == 0 && rows.length == 0" class="c-empty"><text class="c-muted">暂无符合条件的客户</text><button v-if="keyword.length > 0" class="sw-text-button" @click="clearSearch">清空搜索</button></view>
+      <button v-if="cursor.length > 0" class="sw-text-button" :disabled="loading" @click="more">{{ loading ? '加载中…' : '加载更多' }}</button><text v-else-if="loading && total == null && rows.length == 0" class="c-muted c-section">正在加载客户…</text>
+      </view></list-item>
+    </list-view>
+  <view v-if="areaOpen" class="c-area-overlay">
+    <view class="c-area-scrim" @click="areaOpen = false" />
+    <view class="c-area-sheet">
+      <view class="c-area-header"><text class="c-heading">选择地区</text><view class="c-control" @click="areaOpen = false"><text class="c-muted">取消</text></view></view>
+      <view class="c-tabs"><view class="c-tab" @click="areaStep = 0"><text :class="areaStep == 0 ? 'c-tab-text c-tab-active' : 'c-tab-text'">省份</text></view><view v-if="draftProvince.length > 0" class="c-tab" @click="areaStep = 1"><text :class="areaStep == 1 ? 'c-tab-text c-tab-active' : 'c-tab-text'">城市</text></view><view v-if="draftCity.length > 0" class="c-tab" @click="areaStep = 2"><text :class="areaStep == 2 ? 'c-tab-text c-tab-active' : 'c-tab-text'">区县</text></view></view>
+      <text v-if="areaLoading" class="c-muted c-section">加载中…</text>
+      <view v-else-if="areaError.length > 0" class="c-error"><text class="c-error-text">{{ areaError }}</text><button class="sw-text-button" @click="loadAreas">重试</button></view>
+      <scroll-view v-else class="sw-grow" direction="vertical"><view class="c-area-option" hover-class="c-pressed" @click="selectAllArea"><text class="c-text c-orange">{{ allAreaTitle }}</text></view><view v-for="area in areaOptions" :key="area.code" class="c-area-option" hover-class="c-pressed" @click="selectArea(area)"><text class="c-text sw-grow">{{ area.name }}</text><image v-if="areaStep < 2" class="c-arrow" src="/static/home/chevron-right.svg" /></view></scroll-view>
+    </view>
+  </view>
+</view>
+</template>
+<script setup lang="uts">
+import { appEnvironment } from '../../services/config.uts'
+import { session, hasPermission } from '../../services/session.uts'
+import { crmList, crmListSnapshot, crmMessage, crmMutation, crmOwner, crmToday, crmPublicAreas, crmAreaChildren, CrmArea, CrmStore } from '../../services/crm.uts'
+import { customerList, customerListSnapshot, customerStoreRow, customerOpen, CustomerRow } from '../../services/customer-workbench.uts'
+import { NearbyOrigin, customerNearbyLocation, customerNearbyList, customerNearbySnapshot, customerNearbyOriginSnapshot, nearbyDistance, nearbyUpdateDistances } from '../../services/customer-nearby.uts'
+const kind = ref('MINE'); const from = ref(crmToday()); const to = ref(crmToday()); const denominator = ref(''); const cohort = ref(false)
+const keyword = ref(''); const rows = ref<CustomerRow[]>([]); const total = ref<number | null>(null); const cursor = ref(''); const error = ref(''); const loading = ref(false); const busy = ref(false)
+const phase = ref(''); const protection = ref(''); const relation = ref(''); const business = ref(''); const phaseTitle = ref('全部阶段'); const protectionTitle = ref('保护状态'); const relationTitle = ref('归属状态')
+const canPrivate = computed((): boolean => hasPermission('crm:pool:private-read')); const canPublic = computed((): boolean => hasPermission('crm:pool:public-read')); const canOrders = computed((): boolean => hasPermission('order:read')); const canClaim = computed((): boolean => hasPermission('crm:pool:claim'))
+const title = computed((): string => kind.value == 'PURCHASING' ? '成交客户' : kind.value == 'NEW' ? '新增合作' : kind.value == 'RETURNING' ? '复购客户' : kind.value == 'DUE_SOON' ? '即将掉落' : kind.value == 'DORMANT' ? '60天未购' : '联系待完善')
+const periodLabel = computed((): string => ['DUE_SOON', 'DORMANT', 'CONTACT_PENDING'].includes(kind.value) ? '当前' : from.value == to.value ? from.value : from.value.substring(0, 7) == to.value.substring(0, 7) ? from.value.substring(0, 7) : from.value + ' — ' + to.value)
+const countLabel = computed((): string => (total.value == null ? '—' : total.value!.toString()) + (denominator.value.length > 0 && denominator.value != '—' ? ' / ' + denominator.value : '') + '家')
+const areas = ref<CrmArea[]>([]); const areaOpen = ref(false); const areaLoading = ref(false); const areaError = ref(''); const areaStep = ref(0)
+const province = ref(''); const city = ref(''); const county = ref(''); const draftProvince = ref(''); const draftCity = ref(''); const draftCounty = ref('')
+function areaName(code: string, fallback: string): string { return areas.value.find((a: CrmArea): boolean => a.code == code)?.name ?? fallback }
+function singleAreaTitle(level: string, fallback: string): string { const options = crmAreaChildren(areas.value, level, ''); return options.length == 1 ? options[0].name : fallback }
+const provinceTitle = computed((): string => areaName(province.value, singleAreaTitle('PROVINCE', '全部省份')))
+const cityTitle = computed((): string => areaName(city.value, singleAreaTitle('PREFECTURE', '全部城市')))
+const countyTitle = computed((): string => areaName(county.value, '全部区县'))
+const allAreaTitle = computed((): string => areaStep.value == 0 ? '全部授权地区' : areaStep.value == 1 ? '全部城市' : '全部区县')
+const areaOptions = computed((): CrmArea[] => crmAreaChildren(areas.value, areaStep.value == 0 ? 'PROVINCE' : areaStep.value == 1 ? 'PREFECTURE' : 'COUNTY', areaStep.value == 0 ? '' : areaStep.value == 1 ? draftProvince.value : draftCity.value))
+let generation = 0; let owner = ''; const listRevision = ref(0); let areaGeneration = 0
+const nearDisplayed = ref(false); const nearAnchor = ref<NearbyOrigin | null>(null); const nearCurrent = ref<NearbyOrigin | null>(null)
+const locationBusy = ref(false); const locationError = ref(''); const nearChanged = ref(false); const locationTime = ref('')
+let visible = false; let locationGeneration = 0; let locationTimer = 0
+async function loadAreas(): Promise<void> {
+  const request = ++areaGeneration; areaLoading.value = true; areaError.value = ''
+  try {
+    const result = await crmPublicAreas(); if (request != areaGeneration) return
+    areas.value = result
+    // Authorized defaults are labels only; late area metadata must not change an active query/cursor.
+  }
+  catch (e) { if (request == areaGeneration) areaError.value = crmMessage(e) }
+  finally { if (request == areaGeneration) areaLoading.value = false }
+}
+function filters(): string { return '&phase=' + phase.value + '&protection=' + (kind.value == 'DUE_SOON' ? 'DUE_SOON' : protection.value) + '&activity=' + (kind.value == 'DORMANT' ? 'DORMANT' : '') + '&businessStatus=' + business.value + (kind.value == 'PUBLIC' ? '&province=' + province.value + '&city=' + city.value + '&county=' + county.value : '') }
+async function load(append: boolean, preserveRows: boolean = false): Promise<void> {
+  const startedAt = Date.now(); const request = ++generation; loading.value = true; error.value = ''
+  const pool = ['MINE', 'PUBLIC', 'DUE_SOON', 'DORMANT'].includes(kind.value)
+  const scope = kind.value == 'PUBLIC' ? 'PUBLIC' : 'MINE'
+  const selection = filters(); const term = keyword.value.trim(); let anchor = cohort.value ? null : nearAnchor.value
+  if (!append && !preserveRows) {
+    nearDisplayed.value = false
+    const nearby = cohort.value ? null : customerNearbySnapshot(kind.value, from.value, to.value, term, relation.value, selection)
+    if (nearby != null) {
+      nearDisplayed.value = true; rows.value = nearby.items; total.value = nearby.total; cursor.value = nearby.cursor
+      if (anchor == null) { anchor = nearby.origin; nearAnchor.value = anchor; nearCurrent.value = anchor }
+    } else if (anchor != null) { rows.value = []; total.value = null; cursor.value = '' }
+    else if (pool) {
+      const cached = crmListSnapshot(scope, term, selection)
+      rows.value = cached == null ? [] as CustomerRow[] : cached.items.map((s: CrmStore): CustomerRow => customerStoreRow(s))
+      total.value = cached?.total ?? null; cursor.value = cached?.cursor ?? ''
+    } else {
+      const cached = customerListSnapshot(kind.value, from.value, to.value, term, relation.value)
+      rows.value = cached?.items ?? [] as CustomerRow[]; total.value = cached?.total ?? null; cursor.value = cached?.cursor ?? ''
+    }
+  }
+  if (appEnvironment.environment == 'development' && !append) console.log('[DEV CUSTOMER LIST] kind=' + kind.value + ' snapshotRows=' + rows.value.length.toString() + ' hydrateMs=' + (Date.now() - startedAt).toString())
+  try {
+    if (anchor != null) {
+      const result = await customerNearbyList(kind.value, from.value, to.value, term, relation.value, selection, anchor!, append ? cursor.value : '')
+      if (request != generation) return
+      nearDisplayed.value = true; rows.value = append ? rows.value.concat(result.items) : result.items; total.value = result.total; cursor.value = result.cursor
+      if (nearCurrent.value != null) nearbyUpdateDistances(rows.value, nearCurrent.value!)
+    } else if (pool) {
+      const result = await crmList(scope, term, append ? cursor.value : '', selection)
+      if (request != generation) return
+      const items = result.items.map((s: CrmStore): CustomerRow => customerStoreRow(s)); rows.value = append ? rows.value.concat(items) : items; total.value = result.total; cursor.value = result.cursor
+    } else { const result = await customerList(kind.value, from.value, to.value, term, relation.value, append ? cursor.value : ''); if (request != generation) return; rows.value = append ? rows.value.concat(result.items) : result.items; total.value = result.total; cursor.value = result.cursor }
+    if (appEnvironment.environment == 'development') console.log('[DEV CUSTOMER LIST] kind=' + kind.value + ' rows=' + rows.value.length.toString() + ' loadMs=' + (Date.now() - startedAt).toString())
+  } catch (e) {
+    if (request == generation) {
+      const message = crmMessage(e)
+      const transient = message.startsWith('无法连接公司服务') || message.startsWith('服务暂时不可用（5')
+      error.value = transient && rows.value.length > 0 ? '更新失败，显示上次资料。' + message : message
+      if (!transient) { nearDisplayed.value = false; rows.value = []; total.value = null }
+      cursor.value = ''
+    }
+  } finally { if (request == generation) loading.value = false }
+}
+function search(): void { if (!cohort.value && nearCurrent.value != null) { nearAnchor.value = nearCurrent.value; nearChanged.value = false }; listRevision.value++; load(false) }
+async function refreshLocation(reorder: boolean): Promise<void> {
+  if (!visible || cohort.value || locationBusy.value || busy.value) return
+  const version = ++locationGeneration; const account = crmOwner(); locationBusy.value = true
+  try {
+    const point = await customerNearbyLocation(kind.value, reorder)
+    if (version != locationGeneration || !visible || account != crmOwner()) return
+    nearCurrent.value = point; locationError.value = ''
+    const now = new Date(); locationTime.value = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0') + ':' + now.getSeconds().toString().padStart(2, '0')
+    nearbyUpdateDistances(rows.value, point)
+    if (reorder || nearAnchor.value == null) { nearAnchor.value = point; nearChanged.value = false; load(false, true) }
+    else nearChanged.value = nearbyDistance(nearAnchor.value!.gpsLongitude, nearAnchor.value!.gpsLatitude, point.gpsLongitude, point.gpsLatitude) >= 100
+  } catch (e) {
+    if (version != locationGeneration || !visible || account != crmOwner()) return
+    locationError.value = (nearAnchor.value == null ? '未获取当前位置，暂按默认顺序。' : '定位暂不可用，显示上次位置距离。') + crmMessage(e)
+    if (reorder) load(false, true)
+  } finally { if (version == locationGeneration) locationBusy.value = false }
+}
+function refreshNearby(): void { refreshLocation(true) }
+function stopNearby(): void { locationGeneration++; locationBusy.value = false; clearInterval(locationTimer) }
+function resetNearby(): void { stopNearby(); nearDisplayed.value = false; nearAnchor.value = null; nearCurrent.value = null; nearChanged.value = false; locationError.value = ''; locationTime.value = '' }
+
+function more(): void { if (!loading.value && cursor.value.length > 0) load(true) }
+function clearSearch(): void { keyword.value = ''; search() }
+async function switchView(value: string): Promise<void> { if (busy.value || value == kind.value) return; generation++; loading.value = false; rows.value = []; total.value = null; cursor.value = ''; error.value = ''; locationGeneration++; locationBusy.value = false; kind.value = value; keyword.value = ''; phase.value = ''; protection.value = ''; relation.value = ''; business.value = ''; phaseTitle.value = '全部阶段'; protectionTitle.value = '保护状态'; relationTitle.value = '归属状态'; if (value == 'PUBLIC') loadAreas(); if (!visible || kind.value != value) return; if (nearCurrent.value == null) nearCurrent.value = customerNearbyOriginSnapshot(); search(); refreshLocation(false) }
+function openArea(step: number): void {
+  draftProvince.value = province.value; draftCity.value = city.value; draftCounty.value = county.value
+  areaStep.value = step > 0 && draftProvince.value.length == 0 ? 0 : step > 1 && draftCity.value.length == 0 ? 1 : step
+  areaOpen.value = true; if (areas.value.length == 0) loadAreas()
+}
+function applyArea(): void { province.value = draftProvince.value; city.value = draftCity.value; county.value = draftCounty.value; areaOpen.value = false; search() }
+function selectAllArea(): void {
+  if (areaStep.value == 0) { draftProvince.value = ''; draftCity.value = '' }
+  if (areaStep.value == 1) draftCity.value = ''
+  draftCounty.value = ''; applyArea()
+}
+function selectArea(area: CrmArea): void {
+  if (areaStep.value == 0) { draftProvince.value = area.code; draftCity.value = ''; draftCounty.value = ''; areaStep.value = 1 }
+  else if (areaStep.value == 1) { draftCity.value = area.code; draftCounty.value = ''; areaStep.value = 2 }
+  else { draftCounty.value = area.code; applyArea(); return }
+  if (areaOptions.value.length == 0) applyArea()
+}
+function choosePhase(): void { const names = ['全部阶段', '待首访', '跟进中', '维护中']; const codes = ['', 'FIRST_VISIT', 'FOLLOW_UP', 'COOPERATING']; uni.showActionSheet({ itemList: names, success: (r) => { phase.value = codes[r.tapIndex]; phaseTitle.value = names[r.tapIndex]; search() } }) }
+function chooseProtection(): void { const names = ['保护状态', '即将到期', '已到期', '保护保留']; const codes = ['', 'DUE_SOON', 'OVERDUE', 'HELD']; uni.showActionSheet({ itemList: names, success: (r) => { protection.value = codes[r.tapIndex]; protectionTitle.value = names[r.tapIndex]; search() } }) }
+function chooseRelation(): void { const names = ['归属状态', '我的私海', '公海', '已转交']; const codes = ['', 'MINE', 'PUBLIC', 'TRANSFERRED']; uni.showActionSheet({ itemList: names, success: (r) => { relation.value = codes[r.tapIndex]; relationTitle.value = names[r.tapIndex]; search() } }) }
+function chooseBusiness(): void { const names = ['全部经营状态', '正常营业', '待核实']; const codes = ['', 'OPEN', 'UNKNOWN']; uni.showActionSheet({ itemList: names, success: (r) => { business.value = codes[r.tapIndex]; search() } }) }
+function explain(): void { const message = kind.value == 'NEW' ? '公司首次有效成交且首笔订单归属本人。首次时间不明的客户不算新增。' : kind.value == 'RETURNING' ? '本期本人交易客户中，本期开始前已与公司成交的客户。本期新客买两次不算跨期复购。' : kind.value == 'DUE_SOON' ? '当前本人私海中24小时内到期的门店，排除保护保留。' : kind.value == 'DORMANT' ? '当前本人私海、历史合作且60天没有有效公司订单；历史完整性待核对的不猜为沉睡。' : kind.value == 'CONTACT_PENDING' ? '当前本人私海中尚无已核实电话或已确认企微的门店，进入客户详情补充或核实联系人。' : '按已关联统一门店的本期本人有效订单去重；未关联历史订单暂未计入。'; uni.showModal({ title: title.value, content: message, showCancel: false }) }
+function open(row: CustomerRow): void { customerOpen(row) }
+async function claim(row: CustomerRow): Promise<void> {
+  if (busy.value || loading.value || row.blocked.length > 0) return
+  const account = crmOwner(); busy.value = true
+  const confirmed = await new Promise<boolean>((resolve) => { uni.showModal({ title: '认领' + row.name, content: '认领后需在24小时内完成首访。', confirmText: '认领', success: (r) => resolve(r.confirm), fail: (_) => resolve(false) }) })
+  if (!confirmed || !visible || account != crmOwner()) { busy.value = false; return }
+  error.value = ''
+  try { await crmMutation('/crm/stores/' + row.id + '/claim', 'POST', { revision: row.revision } as UTSJSONObject); rows.value = rows.value.filter((item: CustomerRow): boolean => item.id != row.id); if (total.value != null) total.value = Math.max(0, total.value! - 1); uni.navigateTo({ url: '/pages/customer-detail/customer-detail?id=' + row.id + '&source=MINE' }) }
+  catch (e) { error.value = crmMessage(e) } finally { busy.value = false }
+}
+onLoad((options) => { kind.value = options['kind'] ?? 'MINE'; keyword.value = options['keyword'] ?? ''; from.value = options['from'] ?? crmToday(); to.value = options['to'] ?? crmToday(); denominator.value = options['denominator'] ?? ''; cohort.value = !['MINE', 'PUBLIC', 'COOPERATED'].includes(kind.value) })
+onShow(async () => { visible = true; const next = crmOwner(); if (owner != next) { resetNearby(); owner = next; generation++; areaGeneration++; areas.value = []; province.value = ''; city.value = ''; county.value = ''; areaOpen.value = false; rows.value = []; total.value = null; cursor.value = '' }; if (session.authenticated) { if (kind.value == 'PUBLIC') loadAreas(); if (!visible || next != crmOwner()) return; if (cohort.value) load(false); else { if (nearCurrent.value == null) nearCurrent.value = customerNearbyOriginSnapshot(); if (nearAnchor.value == null) nearAnchor.value = nearCurrent.value; load(false); refreshLocation(false); clearInterval(locationTimer); locationTimer = setInterval(() => { refreshLocation(false) }, 30000) } } })
+onHide(() => { visible = false; stopNearby(); generation++; loading.value = false; areaGeneration++; areaLoading.value = false })
+onUnload(() => { visible = false; stopNearby(); generation++; areaGeneration++ })
+watch((): string => crmOwner(), (_value: string) => { resetNearby(); generation++; areaGeneration++; areas.value = []; province.value = ''; city.value = ''; county.value = ''; areaOpen.value = false; rows.value = []; total.value = null; cursor.value = '' })
+</script>
+<style>
+@import '../../styles/customers.css';
+.c-nearby-bar { flex-direction: row; align-items: center; padding-bottom: 10px; }
+.c-nearby-title { color: #626970; font-size: 13px; line-height: 20px; }
+.c-nearby-hint { color: #8a9096; font-size: 11px; line-height: 17px; }
+.c-nearby-distance { color: #c64c1c; font-size: 13px; line-height: 22px; margin-top: 4px; }
+.c-nearby-refresh { color: #c64c1c; background-color: transparent; border-width: 0; font-size: 13px; padding: 0 0 0 12px; margin: 0; min-height: 44px; line-height: 44px; }
+.c-native-list { flex: 1; }
+.c-list-header { padding-bottom: 0; }
+.c-list-content { padding-left: 20px; padding-right: 20px; max-width: 560px; width: 100%; align-self: center; }
+</style>

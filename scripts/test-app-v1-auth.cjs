@@ -39,6 +39,7 @@ class Obj {
   constructor(data) { this.data = data }
   getString(key) { return typeof this.data[key] === 'string' ? this.data[key] : null }
   getNumber(key) { return typeof this.data[key] === 'number' ? this.data[key] : null }
+  getBoolean(key) { return typeof this.data[key] === 'boolean' ? this.data[key] : null }
   getArray(key) { return Array.isArray(this.data[key]) ? this.data[key] : null }
   getJSON(key) { const value = this.data[key]; return value && typeof value === 'object' && !Array.isArray(value) ? new Obj(value) : null }
 }
@@ -111,7 +112,7 @@ function fixture({ android = true, supported = android, metadata = new Map(), va
     }
     return operation
   }
-  const begin = (username = '  sales-user  ', password = 'fixture password') => api.beginCompanyLogin(username, password, () => completed++, message => errors.push(message))
+  const begin = (username = '  sales-user  ', password = 'fixture password', rememberLogin = true) => api.beginCompanyLogin(username, password, () => completed++, message => errors.push(message), rememberLogin)
   const start = () => { begin(); performSecure('clear'); return last('/native-app/login') }
   const authorize = (overrides = {}) => {
     const request = last('/native-app/login')
@@ -140,14 +141,102 @@ function fixture({ android = true, supported = android, metadata = new Map(), va
 check('native lifecycle restores the company session on launch', () => {
   const app = fs.readFileSync(path.join(__dirname, '../app/App.uvue'), 'utf8')
   const nativeScript = app.split('// #ifdef APP')[1].split('// #endif')[0]
-  const hooks = {}; const calls = []
+  const hooks = {}; const calls = []; const redirects = []
   runModule(nativeScript, {
-    require: name => name === './services/auth.uts'
-      ? { restoreCompanySession: () => calls.push('restore') }
-      : { startSalesProfileSync: () => calls.push('watch-sales-identity') },
-    onLaunch: hook => { hooks.launch = hook },
+    require: name => ({
+      './services/auth.uts': { restoreCompanySession: () => calls.push('restore') },
+      './services/sales-profile.uts': { startSalesProfileSync: () => calls.push('watch-sales-identity') },
+      vue: { watch: (_getter, callback) => { hooks.authChanged = callback } },
+      './services/session.uts': { session: { authenticated: false } },
+      './services/field-tracking.uts': { startFieldTracking: () => {}, resumeFieldTracking: () => {} },
+      './services/visit-policy.uts': { startVisitPolicyPreload: () => {}, resumeVisitPolicyPreload: () => {}, pauseVisitPolicyPreload: () => {} },
+      './services/crm-departure.uts': { startCrmDeparture: () => {}, resumeCrmDeparture: () => {} },
+    './services/crm-media.uts': { startCrmUploadQueue: () => calls.push('queue'), resumeCrmUploadQueue: () => calls.push('resume-queue') },
+    })[name],
+    onLaunch: hook => { hooks.launch = hook }, onShow: hook => { hooks.show = hook }, onHide: hook => { hooks.hide = hook },
+    uni: { reLaunch: options => redirects.push(options.url) },
   })
-  assert.deepEqual(calls, []); hooks.launch(); assert.deepEqual(calls, ['watch-sales-identity', 'restore'])
+  assert.deepEqual(calls, []); hooks.launch(); assert.deepEqual(calls, ['queue', 'watch-sales-identity', 'restore'])
+  hooks.show(); assert.deepEqual(calls.slice(-1), ['resume-queue'])
+  hooks.authChanged(false, false); hooks.authChanged(true, false); assert.deepEqual(redirects, [])
+  hooks.authChanged(false, true); assert.deepEqual(redirects, ['/pages/login/login'])
+})
+
+function loginPageFixture(initial = {}) {
+  const session = { authenticated: false, restoring: false, loginError: '', logoutError: '', logoutState: 'idle', ...initial }
+  const hooks = {}, watches = [], navigations = []
+  let loginCount = 0, logoutCount = 0
+  const source = fs.readFileSync(path.join(__dirname, '../app/pages/login/login.uvue'), 'utf8').split('<script setup lang="uts">')[1].split('</script>')[0]
+  const page = runModule(source + '\nexports.view = { launching, logoutPending, errorText, passwordVisible, username, password }; exports.signIn = signIn; exports.home = home; exports.retryLogout = retryLogout;', {
+    require: name => ({
+      '../../services/session.uts': { session },
+      '../../services/auth.uts': { beginCompanyLogin: (_username, _password, success) => { loginCount++; session.authenticated = true; success() }, cancelCompanyLogin: () => {}, logoutCompany: () => { logoutCount++ } },
+      '../../services/login-preferences.uts': { readLoginPreference: () => ({ username: '', rememberLogin: true }), saveLoginPreference: () => {} },
+    })[name],
+    ref: value => ({ value }), computed: getter => ({ get value() { return getter() } }),
+    watch: (getter, callback) => watches.push({ getter, callback, previous: getter() }),
+    onReady: hook => { hooks.ready = hook }, onShow: hook => { hooks.show = hook }, onUnload: hook => { hooks.unload = hook },
+    uni: { switchTab: options => navigations.push(options), setNavigationBarTitle: () => {} },
+  })
+  const flush = () => { for (const watcher of watches) { const next = watcher.getter(); if (next !== watcher.previous) { const previous = watcher.previous; watcher.previous = next; watcher.callback(next, previous) } } }
+  return { page, session, hooks, navigations, flush, loginCount: () => loginCount, logoutCount: () => logoutCount }
+}
+
+check('cold launch opens the login route without exposing business pages', () => {
+  const routes = JSON.parse(fs.readFileSync(path.join(__dirname, '../app/pages.json'), 'utf8'))
+  assert.equal(routes.pages[0].path, 'pages/login/login')
+  const f = loginPageFixture(); f.hooks.show(); f.hooks.ready()
+  assert.equal(f.page.view.launching.value, false); assert.equal(f.page.view.passwordVisible.value, false)
+  assert.equal(f.navigations.length, 0)
+})
+
+check('restoration shows only the launch state and enters home once the page and session are ready', () => {
+  for (const restoreBeforeReady of [true, false]) {
+    const f = loginPageFixture({ restoring: true })
+    f.hooks.show(); assert.equal(f.page.view.launching.value, true)
+    if (!restoreBeforeReady) f.hooks.ready()
+    assert.equal(f.navigations.length, 0)
+    f.session.authenticated = true; f.session.restoring = false; f.flush()
+    if (restoreBeforeReady) { assert.equal(f.navigations.length, 0); f.hooks.ready() }
+    f.hooks.show(); f.flush()
+    assert.deepEqual(f.navigations.map(item => item.url), ['/pages/home/home'])
+  }
+})
+
+check('missing or expired remembered sessions reveal login and preserve the failure reason', () => {
+  for (const error of ['', '登录已失效，请重新登录']) {
+    const f = loginPageFixture({ restoring: true }); f.hooks.ready()
+    f.session.restoring = false; f.session.loginError = error; f.flush()
+    assert.equal(f.page.view.launching.value, false); assert.equal(f.page.view.errorText.value, error)
+    assert.equal(f.navigations.length, 0)
+  }
+})
+
+check('successful password login goes directly home and clears the submitted password', () => {
+  const f = loginPageFixture(); f.hooks.ready()
+  f.page.view.username.value = 'fixture-user'; f.page.view.password.value = 'fixture-only'
+  f.page.signIn(); f.flush(); f.hooks.show()
+  assert.equal(f.loginCount(), 1); assert.equal(f.page.view.password.value, '')
+  assert.deepEqual(f.navigations.map(item => item.url), ['/pages/home/home'])
+})
+
+check('failed home navigation can be retried without showing login inputs for an authenticated user', () => {
+  const f = loginPageFixture({ authenticated: true }); f.hooks.ready()
+  f.navigations[0].fail({}); assert.equal(f.page.view.launching.value, true)
+  assert.match(f.page.view.errorText.value, /无法打开首页/)
+  f.page.home(); assert.equal(f.navigations.length, 2)
+})
+
+check('unfinished logout can be retried on login and blocks password submission until cleared', () => {
+  const f = loginPageFixture({ logoutState: 'failed', logoutError: '退出未完成' }); f.hooks.ready()
+  f.page.view.username.value = 'fixture-user'; f.page.view.password.value = 'fixture-only'
+  assert.equal(f.page.view.logoutPending.value, true); assert.equal(f.page.view.errorText.value, '退出未完成')
+  f.page.signIn(); assert.equal(f.loginCount(), 0)
+  f.page.retryLogout(); assert.equal(f.logoutCount(), 1)
+  f.session.logoutState = 'clearing'; f.page.retryLogout(); assert.equal(f.logoutCount(), 1)
+  f.session.logoutState = 'done'; f.session.logoutError = ''
+  assert.equal(f.page.view.logoutPending.value, false); assert.equal(f.page.view.errorText.value, '')
+  f.page.signIn(); assert.equal(f.loginCount(), 1)
 })
 
 check('config validates official HTTPS and the exact isolated Android DEV combination', () => {
@@ -206,6 +295,74 @@ check('login is single flight and secure clearing completes before credentials a
   assert.equal(f.requests.length, 0); assert.equal(f.secure.length, 1); assert.match(f.errors[0], /正在处理登录/)
   f.performSecure('clear'); assert.equal(f.requests.length, 1)
   f.begin(); assert.equal(f.requests.length, 1); assert.equal(f.secure.length, 0)
+})
+
+check('keeping login restores after restart without asking for a password', () => {
+  const f = fixture(); f.login()
+  const restarted = fixture({ metadata: f.metadata, vault: f.vault })
+  restarted.api.restoreCompanySession(); restarted.performSecure('read'); restarted.performSecure('clear')
+  restarted.exchange({ refresh_token: 'restarted-refresh' }); restarted.profile(); restarted.performSecure('write')
+  assert.equal(restarted.session.authenticated, true)
+  assert.equal(restarted.last('/native-app/login'), undefined)
+  assert.equal(restarted.persisted.refreshToken, 'restarted-refresh')
+})
+
+check('unchecked login removes an older saved session and keeps refreshes in memory only', () => {
+  const f = fixture(); f.persisted = f.saved()
+  f.begin('sales-user', 'fixture password', false); f.performSecure('clear')
+  f.authorize(); f.exchange(); f.profile()
+  assert.equal(f.completed, 1); assert.equal(f.session.authenticated, true); assert.equal(f.persisted, null)
+  const tokens = []
+  f.api.ensureAccessToken(true, token => tokens.push(token), message => assert.fail(message)); f.performSecure('clear')
+  f.exchange({ access_token: 'memory-access', refresh_token: 'memory-refresh' }); f.profile()
+  assert.deepEqual(tokens, ['memory-access']); assert.equal(f.secure.length, 0)
+  assert.equal(f.secureHistory.some(operation => operation.kind === 'write'), false)
+  const restarted = fixture({ metadata: f.metadata, vault: f.vault })
+  restarted.api.restoreCompanySession(); restarted.performSecure('read')
+  assert.equal(restarted.session.authenticated, false); assert.equal(restarted.requests.length, 0)
+})
+
+check('a rejected concurrent login cannot change the active persistence choice', () => {
+  for (const remember of [false, true]) {
+    const f = fixture(); f.begin('sales-user', 'fixture password', remember)
+    f.begin('another-user', 'another password', !remember)
+    f.performSecure('clear'); f.authorize(); f.exchange(); f.profile()
+    if (remember) f.performSecure('write')
+    assert.equal(f.completed, 1); assert.equal(f.persisted != null, remember)
+  }
+})
+
+function preferenceFixture() {
+  const config = configFixture({}), storage = new Map()
+  const parser = runModule(fs.readFileSync(path.join(services, 'json.uts'), 'utf8'), { JSON: { parse: text => new Obj(JSON.parse(text)) } })
+  const api = runModule(fs.readFileSync(path.join(services, 'login-preferences.uts'), 'utf8'), {
+    require: name => ({ './config.uts': config, './json.uts': parser })[name],
+    uni: { getStorageSync: key => storage.get(key) ?? '', setStorageSync: (key, value) => storage.set(key, value) },
+  })
+  return { api, storage, env: config.appEnvironment }
+}
+
+check('login preferences default on, prefill the account, and clear it when unchecked', () => {
+  const f = preferenceFixture()
+  assert.equal(f.api.readLoginPreference().rememberLogin, true)
+  f.api.saveLoginPreference(' sales-user ', true)
+  assert.equal(f.api.readLoginPreference().username, 'sales-user')
+  assert.deepEqual(Object.keys(JSON.parse([...f.storage.values()][0])).sort(), ['rememberLogin', 'username'])
+  f.api.saveLoginPreference('sales-user', false)
+  assert.equal(f.api.readLoginPreference().rememberLogin, false); assert.equal(f.api.readLoginPreference().username, '')
+  assert.equal(JSON.stringify([...f.storage]).includes('sales-user'), false)
+})
+
+check('account preferences are isolated by environment, issuer, and client', () => {
+  for (const field of ['environment', 'issuer', 'clientId']) {
+    const f = preferenceFixture(); f.api.saveLoginPreference('sales-user', true)
+    const original = f.env[field]; f.env[field] = 'other'
+    assert.equal(f.api.readLoginPreference().username, '')
+    f.env[field] = original; assert.equal(f.api.readLoginPreference().username, 'sales-user')
+  }
+  const f = preferenceFixture(); f.api.saveLoginPreference('sales-user', true)
+  f.storage.set([...f.storage.keys()][0], 'broken-json')
+  assert.equal(f.api.readLoginPreference().username, '')
 })
 
 check('cryptographic preparation and prior-credential clearing failures abort login safely', () => {
@@ -570,4 +727,22 @@ check('failed completion-marker persistence is retryable and never claims confir
     assert.equal(f.session.logoutState, 'done')
     assert.equal(f.metadata.get(f.markerKey()), 'done')
   }
+})
+
+check('verified user and tenant display information belong to the in-memory session and clear on invalidation', () => {
+  const f = fixture(); f.start(); f.authorize(); f.exchange()
+  f.profile({tenantName: '测试企业', roles: ['SALES'], permissions: ['order:read']}); f.performSecure('write')
+  assert.equal(f.session.tenantName, '测试企业'); assert.deepEqual(Array.from(f.session.roles), ['SALES'])
+  assert.equal(f.session.displayName, '销售'); assert.equal(f.session.userId, 'u1')
+  assert.equal('roles' in f.persisted, false); assert.equal('permissions' in f.persisted, false)
+  f.api.invalidateCompanySession('会话失效')
+  assert.equal(f.session.tenantName, ''); assert.equal(f.session.roles.length, 0); assert.equal(f.session.displayName, '')
+})
+
+check('refresh replaces session roles and tenant display information with current IAM values', () => {
+  const f = fixture(); f.login(); f.advance(1000000)
+  f.api.ensureAccessToken(false, () => {}, message => assert.fail(message))
+  f.performSecure('clear'); f.exchange({access_token: 'access-2', refresh_token: 'refresh-2'})
+  f.profile({tenantName: '企业新名称', roles: [], permissions: []}); f.performSecure('write')
+  assert.equal(f.session.tenantName, '企业新名称'); assert.equal(f.session.roles.length, 0); assert.equal(f.session.permissions.length, 0)
 })

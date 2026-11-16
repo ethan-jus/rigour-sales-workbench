@@ -1,0 +1,59 @@
+Create a polished high fidelity Chinese mobile sales CRM app DESIGN BOARD. Use the attached approved V1 only as the visual style reference (white canvas, graphite typography, understated rust-orange accents, compact density, fine dividers). Redesign the content into THREE equally sized fully visible phone screens arranged left to right, with narrow spaces between. Landscape 3:2 board, large enough Chinese text to read clearly. No perspective, no glossy device hardware, no decoration. Flat white screen surfaces and a subtle thin rounded outline. Each screen has logical 390 x 844 proportions. Outside each phone at top, tiny plain labels: 客户概览 / 客户名单 / 客户详情. Bottom outside phones: 设计预览 · 示例数据. These are one connected flow, not alternative themes.
+
+Typography: crisp Chinese sans, typography aligned on pixel grid, headers 23px, store names 16px, metadata 13px, number values 25px bold, standard controls14px. Left-right content margins20px. Main text #252A31, muted #626970, rust-orange #C64C1C, secondary panel #F5F6F7, fine line #D6DBDF. Restrained orange only for selection, action and important count. No dense explaining paragraphs. Compact 48-52px rows, limited decorative empty space. All Chinese strings below must be spelled correctly. Do not add English.
+
+SCREEN 1 CUSTOMER OVERVIEW:
+iOS status bar9:41. Header 客户 with ellipsis at right.
+A compact segmented time control 今日 / 本月 / 上月, 今日 selected pale orange; right aligned 11月12日 with chevron down.
+One compact light-gray panel about128px high. 2 columns by2 rows, subtle divider. Top left 成交客户 value5 with tiny chevron. Top right 新增合作 value2 with tiny chevron. Bottom left 复购客户 value3 with tiny chevron. Bottom right 复购率 value60% with tiny chevron. Values are graphite, not four colorful cards.
+Then section 联系人, right small 查看 ›. Under it one inline two-column row: 新增联系人 6 › | 新增企微 3 ›; labels and numbers horizontally arranged, not large vertical cards. Fine separator.
+Then section 客户管理 with tiny 当前 at right. Three equal compact flat gray tiles about62px tall side-by-side: 我的客户 with36, 合作客户 with28, 公海 with128. Small arrows, no giant icon. Clear touch entries.
+Then section 待关注, three compact rows each48px high:
+small outline clock icon, 即将掉落, right value4 in rust-orange and chevron.
+small outline shopping bag icon, 60天未购, right value6 in graphite and chevron.
+small outline contact card icon, 联系待完善, right value9 in graphite and chevron.
+Thin dividers. This is the whole functional content, no motivational slogans, no instructions.
+Fixed bottom navigation only on this overview phone, 5 equal items: outlined house 工作台; outlined two people 客户 selected ORANGE; outlined map-pin 拜访; outlined clipboard 订单; outlined person 我的. Exact icon mapping, NOT reversed. Native home indicator at bottom. Content does not collide with bar.
+
+SCREEN 2 COOPERATING CUSTOMER LIST:
+Status9:41. Standard nested-page navbar with back chevron, centered 客户列表, ellipsis.
+Three tabs 我的客户 / 合作客户 / 公海, middle 合作客户 orange selected with small underline.
+Compact search field 搜索门店名称或地址 plus separate small line filter icon.
+Single filter row 全部合作⌄ / 归属状态⌄ / right28家.
+5 tidy separated store rows, each about94px:
+1 星辰台球俱乐部, right small neutral pill 我的私海 plus arrow.
+second line 拱墅区 · 莫干山路88号
+third line 上次下单11/10 · 向我下单6笔
+2 锐力台球（西湖店）, neutral pill 公海, arrow
+西湖区 · 文二西路126号
+上次下单10/28 · 向我下单3笔
+3 初见台球俱乐部, neutral pill 已转交, arrow
+上城区 · 庆春路18号
+上次下单09/16 · 向我下单2笔
+4 八号台球（滨江店）, neutral pill 我的私海, arrow
+滨江区 · 江南大道368号
+上次下单11/08 · 向我下单8笔
+5 黑桃台球俱乐部, neutral pill 我的私海, arrow
+萧山区 · 金城路66号
+上次下单11/09 · 向我下单4笔
+No row-level action buttons in this cooperation view, row itself navigates.
+NO root bottom navigation on this nested phone, just native home indicator. Allow clean natural whitespace under last row; no fake footer slogans.
+
+SCREEN 3 OWNED CUSTOMER DETAIL:
+Status9:41. Standard navbar: back chevron, centered 客户详情, right 编辑 in rust-orange.
+Store title 星辰台球俱乐部 at21px bold; small neutral tags 我的私海 and 维护中 below.
+Line with outline location pin and 杭州市拱墅区莫干山路88号, trailing subtle navigation arrow.
+Small muted line 保护至11月30日.
+One compact gray transaction-summary panel with two columns: 累计成交 ¥18,600 and 待回款 ¥2,400. Subtle vertical divider, numbers22px bold. Small chevron on each. This is not a full dashboard.
+Content tabs 联系人 / 拜访 / 订单, 联系人 selected with orange underline. Right below this row: compact + 联系人 right aligned, not a large add card.
+Two carefully detailed contact rows with separators:
+王先生 · 老板, small badge 主要, edit icon at right
+138 **** 0826, outlined phone action at right
+tiny neutral verified check 电话已核实   small orange WeCom relationship symbol 企微已建联
+second contact:
+李女士 · 店长, edit icon at right
+139 **** 3615, outlined phone action at right
+tiny neutral verified check 电话已核实
+No photos, no portrait circles, no illustration, no placeholder paragraphs.
+Fixed bottom action area: wide orange filled 去拜访 button with small map pin icon, outlined 下单 button with small bag icon. Both same48px height, balanced proportions, above safe area. NO bottom 5-tab app nav in detail, only home indicator below action row.
+Result must be polished, refined, restrained, professional and use the compact spacing of approved reference. Do not produce wireframes; produce finished app screen visuals.

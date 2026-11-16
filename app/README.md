@@ -1,4 +1,4 @@
-# 瑞盖销售工作台 · uni-app x
+# 销售工作台 · uni-app x
 
 这是 `rigour-sales-workbench` 的 uni-app x 迁移工程，面向 Android、iOS 和纯 HarmonyOS。当前实施了五个主导航与业务页面，真实接口客户端、本机购物与拜访草稿已落地；公司登录配置及写入接口仍需完成，不能用于正式下单或打卡。旧 `src/` 和临时打卡服务保持现状；真机验收通过后再替换旧移动端实现。
 
@@ -8,7 +8,7 @@
 
 1. 用 HBuilderX 的“文件 → 导入 → 从本地目录导入”打开本目录 `app/`，不要把旧 Vue 项目根目录当作 uni-app x 工程。
 2. 查看页面：选择“运行 → 运行到浏览器”。这是 Web 预览，定位/录音按钮明确提示改用原生测试包。
-3. 安卓：打开手机开发者选项及 USB 调试，连接电脑，从“运行到手机或模拟器”选择 Android 设备。原生调试辅助工具为 Android Studio。
+3. 安卓：打开手机开发者选项及 USB／无线调试，连接电脑，从“运行到手机或模拟器”选择 Android 设备，并选择“自定义基座 → 本地基座”。当前包名为 `com.rigour.workbench`；不要选择旧的 `io.dcloud.uniappx` 标准基座。名称与图标约定见 [应用标识](../docs/app-branding.md)。原生调试辅助工具为 Android Studio。
 4. iOS：使用 macOS + Xcode，连接 iPhone 或启动模拟器。真机安装涉及 Apple 签名及设备配置。
 5. 纯鸿蒙：安装 DevEco Studio 和相应 SDK，配置开发者签名、设备，再从 HBuilderX 的 HarmonyOS 运行入口选择设备。
 
@@ -22,6 +22,9 @@
 
 ```bash
 pnpm app:g0:open          # 打开 HBuilderX 并导入 app/
+pnpm app:dev:android      # Android 自定义基座调试，自动维护本地业务转发
+pnpm app:dev:bridge       # 已在 HBuilderX 调试时，单独维护手机到 Gateway/IAM 的通道
+pnpm app:dev:test         # 开发通道断连、转发丢失和设备选择回归
 pnpm app:g0:web           # Web 开发预览，不发布
 pnpm app:g0:check:android # Android 仅编译，不上传/打包/安装
 pnpm app:g0:check:ios     # iOS 仅编译
@@ -31,6 +34,14 @@ pnpm app:v1:test          # 登录、API、购物和拜访状态测试；不是�
 ```
 
 macOS 默认 CLI 路径为 `/Applications/HBuilderX.app/Contents/MacOS/cli`。其他安装位置通过 `HBUILDERX_CLI` 指定。首次运行会下载编译器插件；HBuilderX 部分发行功能要求先登录，命令退出码为 0 也不一定表示编译成功，必须检查控制台与生成物。
+
+### 开发版反复提示无法连接公司服务
+
+当前 DEV 配置通过手机 `localhost:26880/26881` 访问电脑现有 IDEA Gateway/IAM。ADB 断开重连或调试工具重建通道后，业务 reverse 可能丢失，即使手机显示已连接、电脑服务正常，App 仍无法登录。
+
+日常使用 `pnpm app:dev:android [deviceId]` 启动；脚本保持运行时，每 2 秒检查同一手机的两个业务转发，缺失时恢复。已有 HBuilderX 调试会话可另开 `pnpm app:dev:bridge [deviceId]`，不用重新安装或重启 App。多台设备必须指定 ID。`Ctrl+C` 停止维护，已建立转发保留；这是当前开发会话工具，不是系统常驻服务。
+
+该工具不启动或重启后端，不更换手机、不清空其他端口，不绕过鉴权；仅接受当前本地 development 配置。手机真正断开、电脑休眠或 IDEA 服务停止时仍不可用。脱离电脑的移动测试需另行配置稳定 DEV HTTPS 地址及匹配登录 issuer，不能只把 localhost 随意换成局域网 IP。ADB 默认优先使用 Android SDK，可用 `ADB` 指定现有路径。
 
 ## 本轮实现
 

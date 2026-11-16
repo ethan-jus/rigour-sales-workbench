@@ -1,0 +1,29 @@
+import { appEnvironment } from './config.uts'
+import { parseApiJson } from './json.uts'
+
+export type LoginPreference = { username: string, rememberLogin: boolean }
+
+function preferenceKey(): string {
+  return 'rigour-sales-login-preference:' + appEnvironment.environment + ':' + encodeURIComponent(appEnvironment.issuer)
+    + ':' + encodeURIComponent(appEnvironment.clientId)
+}
+
+export function readLoginPreference(): LoginPreference {
+  try {
+    const value = uni.getStorageSync(preferenceKey())
+    if (typeof value == 'string' && value.length > 0) {
+      const body = parseApiJson(value)
+      const rememberLogin = body?.getBoolean('rememberLogin') ?? true
+      return { username: rememberLogin ? (body?.getString('username') ?? '') : '', rememberLogin }
+    }
+  } catch (_) {}
+  return { username: '', rememberLogin: true }
+}
+
+// Only the account name and preference belong in ordinary storage; credentials stay in auth.uts.
+export function saveLoginPreference(username: string, rememberLogin: boolean): void {
+  const preference: LoginPreference = { username: rememberLogin ? username.trim() : '', rememberLogin }
+  const value = JSON.stringify(preference)
+  uni.setStorageSync(preferenceKey(), value)
+  if (uni.getStorageSync(preferenceKey()) != value) throw new Error('login preference unavailable')
+}

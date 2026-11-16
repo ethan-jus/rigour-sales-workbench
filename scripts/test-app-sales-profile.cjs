@@ -26,7 +26,7 @@ function harness() {
 }
 test('login automatically synchronizes identity without client supplied employee fields', () => {
   const h = harness(); h.service.startSalesProfileSync(); h.service.startSalesProfileSync()
-  assert.deepEqual(h.network[0].slice(0, 3), ['/sales/me/profile', 'POST', null])
+  assert.deepEqual(h.network[0].slice(0, 3), ['/sales/me/profile', 'GET', null])
   assert.equal(h.network.length, 1)
   h.reply(0, 'ACTIVE', 'profile-1')
   assert.equal(h.service.salesProfile.status, 'ACTIVE')
@@ -61,7 +61,7 @@ test('failed identity synchronization blocks waiting business reads and permits 
   assert.deepEqual(errors, ['无法核验'])
   assert.equal(h.network.length, 1)
   h.service.syncSalesProfile()
-  assert.equal(h.network[1][1], 'POST')
+  assert.equal(h.network[1][1], 'GET')
 })
 test('late response after account change does not restore old employee or send queued reads', () => {
   const h = harness(); h.service.startSalesProfileSync(); const errors = []
@@ -89,6 +89,20 @@ test('malformed active response does not confirm identity', () => {
   assert.match(h.service.salesProfile.message, /未能确认/)
 })
 test('POST returning unregistered is not success', () => {
-  const h = harness(); h.service.startSalesProfileSync(); h.reply(0, 'UNREGISTERED')
+  const h = harness(); h.service.startSalesProfileSync(); h.reply(0, 'UNREGISTERED'); h.reply(1, 'UNREGISTERED')
   assert.equal(h.service.salesProfile.status, '')
+})
+
+
+test('only a verified unregistered employee is provisioned once and releases queued reads', () => {
+  const h = harness(); h.service.startSalesProfileSync()
+  h.service.requestSalesApi('/sales/me/visits', () => {}, () => assert.fail())
+  h.reply(0, 'UNREGISTERED'); assert.equal(h.service.salesProfile.busy, true)
+  assert.equal(h.network[1][1], 'POST'); assert.equal(h.network.length, 2)
+  h.reply(1, 'ACTIVE', 'new-profile'); assert.equal(h.network.length, 3)
+  assert.equal(h.network[2][0], '/sales/me/visits')
+})
+test('failed identity lookup never falls back to a registration write', () => {
+  const h = harness(); h.service.startSalesProfileSync(); h.network[0][4]('无权限')
+  assert.equal(h.network.length, 1); assert.equal(h.service.salesProfile.status, '')
 })

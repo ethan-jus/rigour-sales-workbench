@@ -1,0 +1,294 @@
+import { reactive, watch } from 'vue'
+import { session } from './session.uts'
+import { ensureAccessToken } from './auth.uts'
+import { appEnvironment } from './config.uts'
+import { parseApiJson } from './json.uts'
+import { crmOwner, crmLocation, crmId, crmCall } from './crm.uts'
+import { visitCaptureRules } from './visit-policy.uts'
+import { createCaptureSession, loadSavedClips, savedClipPath, CaptureSession, CaptureState, SavedClip, CaptureBinding } from './capture.uts'
+
+export type CrmPhoto = { id: string, fileName: string, capturedAt: string, longitude: number, latitude: number, accuracyMeters: number, uploaded: boolean, captureSource?: string }
+export type CrmAudio = { clip: SavedClip, uploaded: boolean, captureSource?: string, discarded?: boolean }
+export type CrmMedia = { photos: CrmPhoto[], recordings: CrmAudio[] }
+type Recorder = { captureId: string, owner: string, phase: string, message: string, durationMs: number, mediaRevision: number }
+type UploadState = { busy: boolean, pending: number, message: string }
+export const crmRecorder = reactive({ captureId: '', owner: '', phase: 'idle', message: '', durationMs: 0, mediaRevision: 0 } as Recorder)
+export const crmUploadState = reactive({ busy: false, pending: 0, message: '' } as UploadState)
+let recorder: CaptureSession | null = null
+let timer = 0
+let indexedFile = ''
+let indexed = false
+let automaticCapture = ''
+let automaticOwner = ''
+let nextSegment: (() => void) | null = null
+let queueStarted = false
+let queueRunning = false
+let uploadPromise: Promise<void> | null = null
+let uploadOwner = ''
+let uploadCapture = ''
+export function crmMediaOwner(): string { return session.authenticated ? session.tenantId + ':' + session.userId : '' }
+function key(owner: string, capture: string): string { return 'rigour.crm.media.v1.' + encodeURIComponent(owner) + '.' + capture }
+export function crmMedia(capture: string): CrmMedia { return readMedia(crmMediaOwner(), capture) }
+function readMedia(owner: string, capture: string): CrmMedia {
+  const empty = { photos: [] as CrmPhoto[], recordings: [] as CrmAudio[] } as CrmMedia
+  if (owner.length == 0) return empty
+  const raw = uni.getStorageSync(key(owner, capture))
+  if (raw == null || (raw as string).length == 0) return empty
+  const parsed = JSON.parse<CrmMedia>(raw as string)
+  if (parsed == null) throw new Error('本机材料索引暂时无法读取，请保留原始文件')
+  return parsed
+}
+function saveMedia(owner: string, capture: string, media: CrmMedia): void { uni.setStorageSync(key(owner, capture), JSON.stringify(media)) }
+export function crmRecording(): boolean { return ['starting', 'recording', 'paused', 'interrupted', 'stopping', 'saving', 'save-error'].includes(crmRecorder.phase) }
+export function crmPhotoPath(photo: CrmPhoto): string {
+  // #ifdef APP
+  return uni.env.USER_DATA_PATH + '/rigour-crm-evidence/' + photo.fileName
+  // #endif
+  // #ifndef APP
+  return ''
+  // #endif
+}
+
+function upload(path: string, file: string, form: UTSJSONObject, retry: boolean = false): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const revision = crmOwner()
+      ensureAccessToken(retry, (token) => {
+        if (revision != crmOwner()) { reject(new Error('账号已变更')); return }
+        uni.uploadFile({ url: appEnvironment.gatewayOrigin + '/api/v1' + path, filePath: file, name: 'file', header: { 'Authorization': 'Bearer ' + token } as UTSJSONObject, formData: form, timeout: 120000,
+          success: (result) => {
+            if (revision != crmOwner()) { reject(new Error('账号已变更')); return }
+            if (result.statusCode == 401 && !retry) { upload(path, file, form, true).then((status: string) => resolve(status)).catch((e) => reject(e)); return }
+            const body = parseApiJson(result.data)
+            if (result.statusCode >= 200 && result.statusCode < 300 && body?.getString('code') == 'OK') { resolve(body?.getJSON('data')?.getString('uploadStatus') ?? ''); return }
+            reject(new Error(body?.getString('message') ?? '材料上传失败，已保留本机文件，可重试'))
+          }, fail: (_) => reject(new Error('材料上传中断，本机文件已保留，请重试')) })
+      }, (message) => reject(new Error(message)))
+  })
+}
+
+async function discardConfirmedShortFile(clip: SavedClip): Promise<void> {
+  // #ifdef APP
+  const fs = uni.getFileSystemManager()
+  const paths = [uni.env.USER_DATA_PATH + '/rigour-capture/' + clip.id + '.json', savedClipPath(clip)]
+  for (let i = 0; i < paths.length; i++) {
+    const file = paths[i]
+    await new Promise<void>((resolve, reject) => { fs.access({ path: file, fail: (_) => resolve(), success: () => {
+      fs.unlink({ filePath: file, success: () => resolve(), fail: (_) => reject(new Error('短录音清理未完成，请重试')) })
+    } }) })
+  }
+  clip.fileName = ''
+  // #endif
+}
+async function uploadMedia(capture: string, minimumClipSeconds: number): Promise<void> {
+  const owner = crmMediaOwner(); const revision = crmOwner(); const media = readMedia(owner, capture)
+  for (let i = 0; i < media.photos.length; i++) {
+    const photo = media.photos[i]
+    if (photo.uploaded) continue
+    if (photo.captureSource == 'FILE_IMPORT') continue // Preserve historical files without submitting them as on-site evidence.
+    const form = { clientEvidenceId: photo.id, captureSource: photo.captureSource ?? 'APP_CAMERA', longitude: photo.longitude.toString(), latitude: photo.latitude.toString(), accuracyMeters: photo.accuracyMeters.toString() } as UTSJSONObject
+    if (photo.capturedAt.length > 0) form['capturedAt'] = photo.capturedAt
+    await upload('/sales/me/visits/' + capture + '/evidence/photos', crmPhotoPath(photo), form)
+    if (revision != crmOwner()) throw new Error('账号已变更')
+    const latest = readMedia(owner, capture); const saved = latest.photos.find((p: CrmPhoto): boolean => p.id == photo.id); if (saved != null) saved.uploaded = true; saveMedia(owner, capture, latest)
+  }
+  for (let i = 0; i < media.recordings.length; i++) {
+    const audio = media.recordings[i]; const clip = audio.clip
+    if (audio.uploaded || audio.captureSource == 'FILE_IMPORT') continue
+    const source = audio.captureSource ?? 'APP_RECORDER'
+    if (audio.discarded == true) {
+      await discardConfirmedShortFile(clip)
+
+    } else if (clip.activeDurationEstimateMs < minimumClipSeconds * 1000) {
+      await crmCall('/sales/me/visits/' + capture + '/recordings/discarded-clips', 'POST', { clientClipId: clip.id, durationMs: clip.activeDurationEstimateMs, recordedFrom: new Date(clip.createdAt).toISOString(), recordedTo: new Date(clip.savedAt).toISOString(), reason: 'TOO_SHORT' } as UTSJSONObject)
+    } else {
+      const disposition = await upload('/sales/me/visits/' + capture + '/recordings/clips', savedClipPath(clip), { clientClipId: clip.id, captureSource: source, recordedFrom: new Date(clip.createdAt).toISOString(), recordedTo: new Date(clip.savedAt).toISOString() } as UTSJSONObject)
+      if (disposition == 'DISCARDED_NOT_STORED' && clip.shortDiscardEnabled == true) {
+        const latest = readMedia(owner, capture); const saved = latest.recordings.find((r: CrmAudio): boolean => r.clip.id == clip.id)
+        if (saved != null) { saved.discarded = true; saveMedia(owner, capture, latest) }
+        await discardConfirmedShortFile(clip)
+      }
+    }
+    if (revision != crmOwner()) throw new Error('账号已变更')
+    const latest = readMedia(owner, capture); const saved = latest.recordings.find((r: CrmAudio): boolean => r.clip.id == clip.id); if (saved != null) { saved.uploaded = true; saved.clip.fileName = clip.fileName }; saveMedia(owner, capture, latest)
+  }
+}
+export async function crmUpload(capture: string, minimumClipSeconds: number = 30): Promise<void> {
+  const owner = crmMediaOwner()
+  if (uploadPromise != null) {
+    if (uploadOwner == owner && uploadCapture == capture) { await uploadPromise!; return }
+    try { await uploadPromise! } catch (_error) { /* The next visit retains its independent upload. */ }
+  }
+  if (owner.length == 0 || owner != crmMediaOwner()) throw new Error('账号已变更')
+  uploadOwner = owner; uploadCapture = capture; uploadPromise = uploadMedia(capture, minimumClipSeconds)
+  try { await uploadPromise! } finally { uploadPromise = null; uploadOwner = ''; uploadCapture = '' }
+}
+function queueKey(owner: string): string { return 'rigour.crm.upload.v1.' + encodeURIComponent(owner) }
+function readQueue(owner: string): string[] {
+  if (owner.length == 0) return [] as string[]
+  const raw = uni.getStorageSync(queueKey(owner))
+  if (raw == null || (raw as string).length == 0) return [] as string[]
+  const result = JSON.parse<string[]>(raw as string)
+  if (result == null) throw new Error('上传队列索引读取失败，原文件已保留')
+  return result
+}
+function writeQueue(owner: string, queue: string[]): void { uni.setStorageSync(queueKey(owner), JSON.stringify(queue)) }
+export async function crmRunUploadQueue(): Promise<void> {
+  const owner = crmMediaOwner()
+  if (queueRunning || owner.length == 0) return
+  queueRunning = true; crmUploadState.busy = true
+  try {
+    const queue = readQueue(owner); crmUploadState.pending = queue.length
+    for (let i = 0; i < queue.length; i++) {
+      if (owner != crmMediaOwner()) return
+      const capture = queue[i]
+      try {
+        await crmUpload(capture)
+        if (owner != crmMediaOwner()) return
+        const media = readMedia(owner, capture)
+        if (media.photos.every((p: CrmPhoto): boolean => p.uploaded || p.captureSource == 'FILE_IMPORT') && media.recordings.every((a: CrmAudio): boolean => a.uploaded || a.captureSource == 'FILE_IMPORT')) writeQueue(owner, readQueue(owner).filter((id: string): boolean => id != capture))
+        crmRecorder.mediaRevision++
+      } catch (e) { if (owner == crmMediaOwner()) crmUploadState.message = e instanceof Error ? e.message : '上传未完成，本机材料已保留' }
+    }
+    if (owner == crmMediaOwner()) { crmUploadState.pending = readQueue(owner).length; if (crmUploadState.pending == 0) crmUploadState.message = '材料已上传，本机原文件保留' }
+  } catch (e) { if (owner == crmMediaOwner()) crmUploadState.message = e instanceof Error ? e.message : '上传队列读取失败' }
+  finally { queueRunning = false; crmUploadState.busy = false }
+}
+export function crmQueueUpload(capture: string, owner: string = crmMediaOwner()): void {
+  if (owner.length == 0 || capture.length == 0) return
+  const queue = readQueue(owner); if (!queue.includes(capture)) { queue.push(capture); writeQueue(owner, queue) }
+  if (owner == crmMediaOwner()) { crmUploadState.pending = queue.length; crmUploadState.message = '已保存本机，正在等待自动上传'; crmRunUploadQueue() }
+}
+function endingKey(owner: string, capture: string): string { return 'rigour.crm.ending.v1.' + encodeURIComponent(owner) + '.' + capture }
+export function crmEndingVisit(capture: string): boolean { return uni.getStorageSync(endingKey(crmMediaOwner(), capture)) == '1' }
+function updateRecorder(state: CaptureState): void {
+  crmRecorder.phase = state.phase; crmRecorder.message = state.phase == 'saved' ? '录音已保存到本机' : state.message; crmRecorder.durationMs = state.activeDurationEstimateMs
+  if (!crmRecording()) { clearInterval(timer); timer = 0 }
+  if (state.phase == 'discarded' && state.discardedClip != null) {
+    const owner = crmRecorder.owner; const capture = crmRecorder.captureId; const clip = state.discardedClip!
+    try {
+      const media = readMedia(owner, capture)
+      if (!media.recordings.some((item: CrmAudio): boolean => item.clip.id == clip.id)) { media.recordings.push({ clip: clip, uploaded: false, captureSource: 'APP_RECORDER' } as CrmAudio); saveMedia(owner, capture, media) }
+      indexed = true; crmRecorder.mediaRevision++; crmQueueUpload(capture, owner)
+      if (automaticCapture == capture && owner == crmMediaOwner() && !crmEndingVisit(capture)) setTimeout(() => { nextSegment?.() }, 0)
+    } catch (e) { crmRecorder.message = '短录音已丢弃，登记失败，请重试关联' }
+    return
+  }
+  if (state.phase != 'saved' || state.savedPath.length == 0 || indexedFile == state.savedPath) return
+  const path = state.savedPath; const owner = crmRecorder.owner; const capture = crmRecorder.captureId
+  indexedFile = path
+  loadSavedClips((clips) => {
+    const clip = clips.find((item: SavedClip): boolean => path.endsWith('/' + item.fileName))
+    if (clip == null) { indexedFile = ''; crmRecorder.message = '录音已保存，但尚未找到索引，请重试关联'; return }
+    try {
+      const media = readMedia(owner, capture)
+      if (!media.recordings.some((r: CrmAudio): boolean => r.clip.id == clip.id)) { media.recordings.push({ clip: clip, uploaded: false, captureSource: 'APP_RECORDER' } as CrmAudio); saveMedia(owner, capture, media) }
+      indexed = true; crmRecorder.mediaRevision++; crmQueueUpload(capture, owner)
+      if (automaticCapture == capture && automaticOwner == owner && owner == crmMediaOwner() && !crmEndingVisit(capture)) setTimeout(() => { nextSegment?.() }, 0)
+    } catch (e) { indexedFile = ''; crmRecorder.message = '录音原文件已保留，索引保存失败，请重试关联' }
+  }, (_) => { indexedFile = ''; crmRecorder.message = '录音已保留，索引读取失败，请重试关联' })
+}
+export function crmStartRecording(capture: string, automatic: boolean = false): void {
+  if (crmRecording()) throw new Error('请先停止并保存当前录音')
+  if (crmRecorder.phase == 'saved' && !indexed) throw new Error('上一段录音尚未关联，请先重试保存 / 关联录音')
+  const owner = crmMediaOwner()
+  if (owner.length == 0) throw new Error('请先登录')
+  recorder?.dispose()
+  crmRecorder.captureId = capture; crmRecorder.owner = owner; indexedFile = ''; indexed = false
+  automaticCapture = capture; automaticOwner = owner
+  nextSegment = () => { if (automaticCapture == capture && owner == crmMediaOwner() && !crmEndingVisit(capture)) { try { crmStartRecording(capture, true) } catch (e) { crmRecorder.message = e instanceof Error ? e.message : '自动录音未能继续，请恢复录音' } } }
+  recorder = createCaptureSession((state: CaptureState): void => updateRecorder(state), { owner: owner, captureId: capture } as CaptureBinding, 300000, 30000)
+  recorder!.start(); updateRecorder(recorder!.snapshot())
+  if (timer == 0 && crmRecording()) timer = setInterval(() => { if (recorder != null) updateRecorder(recorder!.snapshot()) }, 1000)
+}
+export function crmEnsureAutomaticRecording(capture: string): void {
+  if (crmEndingVisit(capture)) return
+  if (crmRecording()) { if (crmRecorder.captureId != capture || crmRecorder.owner != crmMediaOwner()) throw new Error('另一段录音尚未保存'); return }
+  if (crmRecorder.captureId == capture && crmRecorder.phase == 'error') throw new Error('录音已中断，请恢复录音后继续')
+  crmStartRecording(capture, true)
+}
+export function crmStopRecording(): void { if (crmRecorder.owner == crmMediaOwner()) { automaticCapture = ''; automaticOwner = ''; recorder?.stop() } }
+export function crmRetryRecording(): void {
+  if (crmRecorder.owner != crmMediaOwner()) return
+  if (crmRecorder.phase == 'save-error') recorder?.retrySave()
+  else if (crmRecorder.phase == 'paused' || crmRecorder.phase == 'interrupted') recorder?.resume()
+  else if (recorder != null) updateRecorder(recorder!.snapshot())
+}
+export function crmResumeAutomaticRecording(capture: string): void {
+  uni.removeStorageSync(endingKey(crmMediaOwner(), capture))
+  if (crmRecorder.captureId == capture && crmRecording()) { crmRetryRecording(); return }
+  crmStartRecording(capture, true)
+}
+export async function crmFinishRecording(capture: string): Promise<void> {
+  const owner = crmMediaOwner()
+  uni.setStorageSync(endingKey(owner, capture), '1')
+  automaticCapture = ''; automaticOwner = ''
+  if (crmRecorder.captureId != capture || crmRecorder.owner != owner || recorder == null) return
+  if (crmRecorder.phase == 'save-error') throw new Error('请先重试保存录音，原文件不会删除')
+  if ((crmRecorder.phase == 'saved' || crmRecorder.phase == 'discarded') && indexed) return
+  recorder!.stop()
+  const started = Date.now()
+  await new Promise<void>((resolve, reject) => {
+    let completionTimer = 0
+    completionTimer = setInterval(() => {
+      if (owner != crmMediaOwner()) { clearInterval(completionTimer); reject(new Error('账号已变更，录音保留在原账号')); return }
+      if ((crmRecorder.phase == 'saved' || crmRecorder.phase == 'discarded') && indexed) { clearInterval(completionTimer); resolve(); return }
+      if (crmRecorder.phase == 'save-error' || Date.now() - started > 15000) { clearInterval(completionTimer); reject(new Error('录音尚未确认保存，请保留页面并重试保存')); return }
+    }, 100)
+  })
+}
+export function crmCompleteRecording(capture: string): void { uni.removeStorageSync(endingKey(crmMediaOwner(), capture)); crmQueueUpload(capture) }
+function recoverUploadQueue(): void {
+  const owner = crmMediaOwner(); if (owner.length == 0) return
+  try {
+    const prefix = 'rigour.crm.media.v1.' + encodeURIComponent(owner) + '.'
+    // Android storage enumeration also includes uni-storage's type metadata keys.
+    uni.getStorageInfoSync().keys.filter((name: string): boolean => name.startsWith(prefix) && !name.endsWith('__TYPE')).forEach((name: string) => {
+      const capture = name.substring(prefix.length); const media = readMedia(owner, capture)
+      if (media.photos.some((p: CrmPhoto): boolean => !p.uploaded) || media.recordings.some((a: CrmAudio): boolean => !a.uploaded)) crmQueueUpload(capture, owner)
+    })
+  } catch (e) { crmUploadState.message = '本机上传索引读取失败，请保留材料并重试' }
+  loadSavedClips((clips) => {
+    if (owner != crmMediaOwner()) return
+    clips.forEach((clip: SavedClip) => {
+      const capture = clip.captureId ?? ''
+      if ((clip.owner ?? '') != owner || capture.length == 0) return
+      try { const media = readMedia(owner, capture); if (!media.recordings.some((a: CrmAudio): boolean => a.clip.id == clip.id)) { media.recordings.push({ clip: clip, uploaded: false, captureSource: 'APP_RECORDER' } as CrmAudio); saveMedia(owner, capture, media); crmQueueUpload(capture, owner) } }
+      catch (e) { crmUploadState.message = '录音文件已保留，关联恢复失败，请重试' }
+    })
+    crmRunUploadQueue()
+  }, (message) => { if (owner == crmMediaOwner()) crmUploadState.message = message })
+}
+export function startCrmUploadQueue(): void {
+  if (queueStarted) return
+  queueStarted = true
+  watch((): string => crmMediaOwner(), (owner: string) => {
+    if (crmRecorder.owner.length > 0 && owner != crmRecorder.owner) { automaticCapture = ''; automaticOwner = ''; if (crmRecording()) recorder?.stop() }
+    crmUploadState.pending = 0; crmUploadState.message = ''; recoverUploadQueue()
+  })
+  // #ifdef APP
+  uni.onNetworkStatusChange((result) => { if (result.isConnected) crmRunUploadQueue() })
+  // #endif
+  setInterval(() => { crmRunUploadQueue() }, 30000)
+  recoverUploadQueue()
+}
+export function resumeCrmUploadQueue(): void { recoverUploadQueue() }
+export async function crmTakePhoto(capture: string): Promise<void> {
+  // #ifdef APP
+  const owner = crmMediaOwner(); const revision = crmOwner(); const rules = await visitCaptureRules(capture)
+  const location = await crmLocation(rules.maximumLocationAccuracyMeters)
+  const source = await new Promise<string>((resolve, reject) => { uni.chooseImage({ count: 1, sourceType: ['camera'], success: (result) => resolve(result.tempFilePaths[0]), fail: (_) => reject(new Error('拍照未完成')) }) })
+  const capturedAt = new Date().toISOString()
+  if (revision != crmOwner()) throw new Error('账号已变更，请返回原账号处理材料')
+  const imageType = await new Promise<string>((resolve, reject) => { uni.getImageInfo({ src: source, success: (info) => { const format = (info.type ?? '').toLowerCase(); if (format == 'png' || format == 'jpeg' || format == 'jpg') resolve(format); else reject(new Error('请选择 JPEG 或 PNG 照片')) }, fail: (_) => reject(new Error('无法读取照片格式，请重试')) }) })
+  const id = crmId(); const fileName = id + (imageType == 'png' ? '.png' : '.jpg'); const directory = uni.env.USER_DATA_PATH + '/rigour-crm-evidence'
+  const fs = uni.getFileSystemManager()
+  await new Promise<boolean>((resolve, reject) => { fs.access({ path: directory, success: () => resolve(true), fail: () => fs.mkdir({ dirPath: directory, recursive: true, success: () => resolve(true), fail: (_) => reject(new Error('无法保存现场照片，请保留原始材料')) }) }) })
+  await new Promise<boolean>((resolve, reject) => { fs.copyFile({ srcPath: source, destPath: directory + '/' + fileName, success: () => resolve(true), fail: (_) => reject(new Error('照片保存失败，请保留原始材料')) }) })
+  const media = readMedia(owner, capture)
+  media.photos.push({ id: id, fileName: fileName, capturedAt: capturedAt, longitude: location.getNumber('longitude')!, latitude: location.getNumber('latitude')!, accuracyMeters: location.getNumber('accuracyMeters')!, uploaded: false, captureSource: 'APP_CAMERA' } as CrmPhoto)
+  saveMedia(owner, capture, media); crmQueueUpload(capture, owner)
+  // #endif
+  // #ifndef APP
+  throw new Error('请在原生 App 中拍摄现场照片')
+  // #endif
+}

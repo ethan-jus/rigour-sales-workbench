@@ -48,6 +48,7 @@
 <script setup lang="uts">
 import { session, hasPermission } from '../../services/session.uts'
 import { logoutCompany } from '../../services/auth.uts'
+import { crmRecording } from '../../services/crm-media.uts'
 import { salesProfile, syncSalesProfile, requestSalesApi } from '../../services/sales-profile.uts'
 import { loadDrafts, commerce, CartDraft } from '../../services/commerce.uts'
 import { loadLocalVisits, visitDraftCount, hasActiveVisitRecording, visitToday } from '../../services/visits.uts'
@@ -70,7 +71,7 @@ function orders(): void { uni.switchTab({ url: '/pages/orders/orders' }) }
 function visits(): void { uni.switchTab({ url: '/pages/visits/visits' }) }
 function commission(): void { uni.navigateTo({ url: '/pages/work/work?view=commission' }) }
 function logout(): void {
-  if (hasActiveVisitRecording()) { uni.showToast({ title: '请先停止并保存当前录音再退出登录', icon: 'none' }); return }
+  if (hasActiveVisitRecording() || crmRecording()) { uni.showToast({ title: '请先停止并保存当前录音再退出登录', icon: 'none' }); return }
   logoutCompany(); loadDrafts(); loadLocalVisits()
 }
 function loadPerformance(): void {
@@ -115,4 +116,10 @@ onShow(() => { loadDrafts(); loadLocalVisits(); if (view.value == 'performance')
 .metric { flex: 1; padding: 18px; background-color: #f8f7f4; border-radius: 6px; margin-right: 8px; }
 .metric-value { color: #21252b; font-size: 25px; font-weight: bold; margin-top: 9px; }
 .section-label { font-size: 18px; color: #21252b; margin-top: 26px; font-weight: bold; }
+
+/* #ifdef APP-ANDROID */
+.big-number,
+.metric-value,
+.section-label { font-family: sans-serif; }
+/* #endif */
 </style>

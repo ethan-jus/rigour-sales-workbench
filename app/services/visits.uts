@@ -9,7 +9,7 @@ export type VisitPhoto = { fileName: string, capturedAt: number }
 export type VisitDraft = { id: string, storeId: string, customerId: string, storeName: string, address: string, contact: string, note: string, createdAt: number, updatedAt: number, photos: VisitPhoto[], clips: SavedClip[], location: DeviceLocation | null }
 export type VisitItem = { id: string, storeName: string, address: string, time: string, status: string, review: string, note: string, contact: string }
 type VisitState = { storageHealthy: boolean, drafts: VisitDraft[], activeId: string, capture: CaptureState, locating: boolean, locationText: string, notice: string, loadedOwner: string, recordingDraftId: string, recordingOwner: string }
-export const visitState = reactive({ storageHealthy: true, drafts: [] as VisitDraft[], activeId: '', capture: { phase: 'idle', message: '未开始录音', activeDurationEstimateMs: 0, temporaryPath: '', savedPath: '' } as CaptureState, locating: false, locationText: '进入选店页自动获取当前位置', notice: '', loadedOwner: '', recordingDraftId: '', recordingOwner: '' } as VisitState)
+export const visitState = reactive({ storageHealthy: true, drafts: [] as VisitDraft[], activeId: '', capture: { phase: 'idle', message: '未开始录音', activeDurationEstimateMs: 0, temporaryPath: '', savedPath: '', discardedClip: null } as CaptureState, locating: false, locationText: '进入选店页自动获取当前位置', notice: '', loadedOwner: '', recordingDraftId: '', recordingOwner: '' } as VisitState)
 let captureSession: CaptureSession | null = null
 let captureTicker = 0
 let latestLocation: DeviceLocation | null = null
@@ -97,14 +97,14 @@ export function visitPhotoPath(photo: VisitPhoto): string {
   return ''
   // #endif
 }
-export function addVisitPhotos(camera: boolean): void {
+export function addVisitPhotos(): void {
   const draft = activeVisitDraft()
   if (draft == null) return
   if (draft.photos.length >= 9) { visitState.notice = '一次拜访最多添加 9 张照片。'; return }
   const draftId = draft.id
   const expectedOwner = ownerKey()
   // #ifdef APP
-  uni.chooseImage({ count: 9 - draft.photos.length, sizeType: ['compressed'], sourceType: camera ? ['camera'] : ['album'], success: (result) => {
+  uni.chooseImage({ count: 9 - draft.photos.length, sizeType: ['compressed'], sourceType: ['camera'], success: (result) => {
     const fs = uni.getFileSystemManager()
     const directory = uni.env.USER_DATA_PATH + '/rigour-visit-photos'
     const saveFiles = (): void => {
@@ -124,7 +124,7 @@ export function addVisitPhotos(camera: boolean): void {
   }, fail: (error) => { if (!error.errMsg.toLowerCase().includes('cancel')) visitState.notice = '无法添加照片：' + error.errMsg } })
   // #endif
   // #ifndef APP
-  visitState.notice = '请在手机 App 中拍照或选择相册照片。'
+  visitState.notice = '请在手机 App 中拍摄现场照片。'
   // #endif
 }
 export function removeVisitPhoto(index: number): void { const d = activeVisitDraft(); if (d == null) return; d.photos.splice(index, 1); d.updatedAt = Date.now(); saveLocalVisits() }

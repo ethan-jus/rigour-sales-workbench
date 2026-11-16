@@ -70,7 +70,7 @@ runtimeName.value = 'iOS 原生测试'
 runtimeName.value = 'HarmonyOS 原生测试'
 // #endif
 
-const capture = ref({ phase: 'idle', message: '未开始录音', activeDurationEstimateMs: 0, temporaryPath: '', savedPath: '' } as CaptureState)
+const capture = ref({ phase: 'idle', message: '未开始录音', activeDurationEstimateMs: 0, temporaryPath: '', savedPath: '', discardedClip: null } as CaptureState)
 const savedClips = ref([] as SavedClip[])
 const fileMessage = ref('')
 const playbackMessage = ref('')
@@ -201,4 +201,10 @@ onUnload(() => {
 .clip { border-top-width: 1px; border-top-color: #e9edf4; padding-top: 14px; margin-top: 14px; }
 .clip-name { color: #25374f; font-size: 13px; }
 .event { color: #54637c; font-size: 12px; line-height: 20px; margin-top: 8px; }
+
+/* #ifdef APP-ANDROID */
+.heading,
+.title,
+.timer { font-family: sans-serif; }
+/* #endif */
 </style>

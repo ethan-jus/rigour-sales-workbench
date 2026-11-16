@@ -1,9 +1,9 @@
 {
-	"name": "瑞盖销售工作台",
+	"name": "销售工作台",
 	"appid": "__UNI__EE5460C",
 	"description": "公司内部销售作业 App",
-	"versionName": "0.2.0",
-	"versionCode": 200,
+	"versionName": "0.2.1",
+	"versionCode": 201,
 	"vueVersion": "3",
 	"uniStatistics": {
 		"enable": false
@@ -14,6 +14,12 @@
 	},
 	"app-android": {
 		"distribute": {
+			"icons": {
+				"hdpi": "static/brand/icon-72.png",
+				"xhdpi": "static/brand/icon-96.png",
+				"xxhdpi": "static/brand/icon-144.png",
+				"xxxhdpi": "static/brand/icon-192.png"
+			},
 			"modules": {
 				"uni-location": {
 					"system": {}
@@ -41,7 +47,7 @@
 		}
 	},
 	"web": {
-		"title": "瑞盖销售工作台 · 开发预览",
+		"title": "销售工作台 · 开发预览",
 		"router": {
 			"mode": "hash",
 			"base": "/"

@@ -1,0 +1,276 @@
+<template>
+  <view class="sw-page">
+    <scroll-view class="cv-scroll" direction="vertical" :scroll-into-view="scrollTarget">
+      <view class="cv-content">
+        <text class="cv-store">{{ storeName }}</text>
+        <text v-if="storeAddress.length > 0" class="cv-muted cv-address">{{ storeAddress }}</text>
+        <text v-if="timeText.length > 0" class="cv-muted">{{ timeText }}</text>
+        <view v-if="error.length > 0" id="visit-error" class="cv-error"><text class="cv-error-text">{{ error }}</text><button class="sw-text-button" :disabled="busy" @click="reload">重试</button></view>
+        <text v-if="loading" class="cv-muted cv-loading">加载中…</text>
+        <view v-if="baseLoaded && !ready && !loading" class="cv-result"><text class="cv-label">{{ status == 'CHECKED_IN' ? '进行中' : '拜访已结束' }}</text><text v-if="note.length > 0" class="cv-muted">{{ note }}</text></view>
+        <template v-if="ready">
+          <view v-if="status == 'CHECKED_OUT'" class="cv-result"><text class="cv-label">{{ reviewStatus }}</text><text v-if="reviewReason.length > 0" class="cv-muted">{{ reviewReason }}</text></view>
+          <view v-if="captureId.length > 0" class="cv-recording" hover-class="sw-pressed" @click="recordingsExpanded = !recordingsExpanded"><image class="cv-icon" src="/static/visits/mic.svg" /><view :class="recordingActive ? 'cv-dot cv-dot-active' : 'cv-dot'" /><text class="cv-recording-text">{{ recordingStatus }}</text><text class="cv-muted">{{ recordingsExpanded ? '收起' : '查看' }}</text><image class="cv-arrow" :src="recordingsExpanded ? '/static/home/chevron-down.svg' : '/static/home/chevron-right.svg'" /></view>
+          <view v-if="recordingsExpanded" class="cv-material-details">
+            <text class="cv-muted">{{ recordingText }}</text>
+            <button v-if="status != 'CHECKED_IN' && captureId.length > 0" class="sw-text-button" @click="openEvidence">原文与录音</button>
+            <button v-if="status == 'CHECKED_IN' && !recordingActive && !rules.automaticRecording" class="sw-text-button" :disabled="busy" @click="startRecording">开始录音</button>
+            <button v-if="recordingHere && recordingActive && !rules.automaticRecording" class="sw-text-button" @click="stopRecording">停止录音</button>
+            <button v-if="recordingHere && (crmRecorder.phase == 'save-error' || crmRecorder.phase == 'saved')" class="sw-text-button" @click="retryRecording">重试保存</button>
+            <view v-for="item in media.recordings" :key="item.clip.id" class="cv-file-row"><text class="cv-muted sw-grow">{{ formatClock(item.clip.activeDurationEstimateMs) }} · {{ item.captureSource == 'FILE_IMPORT' ? '历史导入 · 不计现场证据' : item.clip.fileName.length == 0 ? '不足30秒，已丢弃' : item.uploaded ? '已同步' : '待同步' }}</text><button v-if="item.clip.fileName.length > 0" class="sw-text-button" :disabled="recordingActive" @click="playClip(item.clip)">回放</button></view>
+            <text v-if="playbackMessage.length > 0" class="cv-muted">{{ playbackMessage }}</text><button v-if="playing" class="sw-text-button" @click="stopPlayback">停止回放</button>
+          </view>
+          <view v-if="recordingInterrupted" class="cv-error"><text class="cv-error-text">录音已中断</text><button class="sw-text-button" :disabled="busy" @click="resumeRecording">恢复录音</button></view>
+          <view id="visit-photos" class="cv-section">
+            <view class="cv-section-title"><text class="cv-label">门头照</text><text class="cv-muted">{{ visiblePhotoCount }}张</text></view>
+            <view class="cv-photos"><view v-for="photo in media.photos" :key="photo.id" class="cv-photo-control"><image class="cv-photo" :src="photoPath(photo)" mode="aspectFill" @click="preview(photo)" /><view v-if="photo.uploaded" class="cv-photo-check"><image class="cv-photo-check-icon" src="/static/visits/check-white.svg" /></view><text v-else class="cv-photo-pending">{{ photo.captureSource == 'FILE_IMPORT' ? '历史导入' : '待同步' }}</text></view><view v-if="status == 'CHECKED_IN'" class="cv-camera" hover-class="sw-pressed" @click="takePhoto"><image class="cv-camera-icon" src="/static/visits/camera.svg" /><text class="cv-muted">拍照</text></view></view>
+            <text v-if="media.photos.length == 0 && status == 'CHECKED_OUT'" class="cv-muted">{{ photoCount > 0 ? '照片已存档' : '暂无照片' }}</text>
+          </view>
+          <view class="cv-field" hover-class="sw-pressed" @click="contactsExpanded = !contactsExpanded"><text class="cv-label">接待人</text><text class="cv-field-value" :lines="1">{{ selectedPeople }}</text><image class="cv-arrow" src="/static/home/chevron-right.svg" /></view>
+          <view v-if="contactsExpanded" class="cv-contacts">
+            <button v-for="person in contacts" :key="person.id" :class="selected.includes(person.id) ? 'cv-person cv-person-selected' : 'cv-person'" :disabled="submitted || person.status != 'ACTIVE'" @click="toggle(person.id)">{{ selected.includes(person.id) ? '✓ ' : '' }}{{ person.name }} · {{ person.role }}</button>
+            <text v-if="contacts.length == 0" class="cv-muted">暂无联系人</text><button v-if="!submitted" class="sw-text-button" @click="manageContacts">添加联系人</button>
+          </view>
+          <view class="cv-field"><text class="cv-label sw-grow">沟通结果</text><button :class="outcome == 'CONTACTED' ? 'cv-chip cv-chip-selected' : 'cv-chip'" :disabled="submitted" @click="chooseOutcome('CONTACTED')">已沟通</button><button :class="outcome != 'CONTACTED' ? 'cv-chip cv-chip-selected' : 'cv-chip'" :disabled="submitted" @click="chooseOutcome('OTHER_NO_CONTACT')">未接触</button></view>
+          <view v-if="outcome == 'CONTACTED'" class="cv-field"><text class="cv-label sw-grow">合作意向</text><button v-for="option in intentions" :key="option.value" :class="intention == option.value ? 'cv-chip cv-chip-short cv-chip-selected' : 'cv-chip cv-chip-short'" :disabled="submitted" @click="chooseIntention(option.value)">{{ option.label }}</button></view>
+          <view class="cv-notes"><text class="cv-label">拜访记录</text><textarea class="cv-textarea" v-model="note" :disabled="submitted" maxlength="1024" placeholder="沟通情况与下一步安排" @input="saveDraft" /><view v-if="draftSaved && !submitted" class="cv-saved"><image class="cv-saved-icon" src="/static/visits/check.svg" /><text class="cv-small">已保存草稿</text></view></view>
+          <view v-if="pendingMaterials > 0" class="cv-file-row"><text class="cv-muted sw-grow">{{ pendingMaterials }}项材料待同步</text><button class="sw-text-button" :disabled="busy || crmUploadState.busy" @click="upload">{{ crmUploadState.busy ? '同步中' : '重试' }}</button></view>
+        </template>
+      </view>
+    </scroll-view>
+    <view v-if="ready && captureId.length > 0" class="cv-footer"><button v-if="status == 'CHECKED_IN' || !submitted" class="cv-complete" hover-class="sw-pressed" :disabled="busy" :loading="busy" @click="completeVisit">{{ busy ? '处理中' : status == 'CHECKED_IN' ? '完成拜访' : '提交结果' }}</button><button v-else class="cv-refresh" :disabled="busy || loading" @click="reload">刷新状态</button></view>
+  </view>
+</template>
+<script setup lang="uts">
+import { crmDeparture, ensureCrmDeparture, stopCrmDeparture } from '../../services/crm-departure.uts'
+import { apiErrorMessage } from '../../services/api.uts'
+import { session } from '../../services/session.uts'
+import { crmCall, crmObject, crmContacts, crmReception, crmSaveReception, crmLocation, crmId, crmMessage, crmOwner, crmVisitRecords, crmVisitStatus, crmVisitReason, CrmVisitRecord, CrmContact } from '../../services/crm.uts'
+import { visitCaptureRules, emptyCaptureRules, CaptureRules } from '../../services/visit-policy.uts'
+import { crmEnsureAutomaticRecording, crmResumeAutomaticRecording, crmFinishRecording, crmCompleteRecording, crmEndingVisit, crmUploadState } from '../../services/crm-media.uts'
+import { crmMedia, crmPhotoPath, crmTakePhoto, crmUpload, crmRecorder, crmRecording, crmStartRecording, crmStopRecording, crmRetryRecording, crmMediaOwner, CrmMedia, CrmPhoto, CrmAudio } from '../../services/crm-media.uts'
+import { visitClock } from '../../services/visits.uts'
+import { visitBoardTime } from '../../services/visit-workbench.uts'
+import { SavedClip, savedClipPath } from '../../services/capture.uts'
+const baseLoaded = ref(false)
+const storeAddress = ref(''); const timeText = ref(''); const draftSaved = ref(false); const photoCount = ref(0); const recordingsExpanded = ref(false); const contactsExpanded = ref(false)
+const storeId = ref(''); const visitId = ref(''); const captureId = ref(''); const storeName = ref('门店拜访'); const status = ref(''); const submitted = ref(false)
+const contacts = ref<CrmContact[]>([]); const selected = ref<string[]>([]); const receptionText = ref(''); const outcome = ref('CONTACTED'); const intention = ref('NONE'); const note = ref('')
+const loading = ref(false); const busy = ref(false); const ready = ref(false); const error = ref(''); const evidenceText = ref(''); const recordingText = ref(''); const minimumClipSeconds = ref(30)
+const rules = ref<CaptureRules>(emptyCaptureRules()); const ending = ref(false)
+const scrollTarget = ref(''); const reviewStatus = ref(''); const reviewReason = ref('')
+const playing = ref(false); const playbackMessage = ref('')
+// #ifdef APP
+let player: InnerAudioContext | null = null
+// #endif
+watch(error, (message: string) => { if (message.length > 0) { scrollTarget.value = ''; nextTick(() => { scrollTarget.value = 'visit-error' }) } })
+const media = ref<CrmMedia>({ photos: [], recordings: [] } as CrmMedia)
+type IntentionOption = { value: string, label: string }
+const intentions: IntentionOption[] = [{ value: 'HIGH', label: '高' }, { value: 'MEDIUM', label: '中' }, { value: 'LOW', label: '低' }, { value: 'NONE', label: '暂无' }]
+const recordingHere = computed((): boolean => crmRecorder.captureId == captureId.value && crmRecorder.owner == crmMediaOwner())
+const recordingActive = computed((): boolean => crmRecording())
+const selectedPeople = computed((): string => {
+  if (submitted.value) return receptionText.value.length > 0 ? receptionText.value : '未关联联系人'
+  const names = contacts.value.filter((c: CrmContact): boolean => selected.value.includes(c.id)).map((c: CrmContact): string => c.name + ' · ' + c.role).join('、')
+  return names.length > 0 ? names : '选择接待人'
+})
+const recordingStatus = computed((): string => recordingHere.value && recordingActive.value ? (crmRecorder.phase == 'recording' ? '录音中 ' : '录音待恢复 ') + visitClock(crmRecorder.durationMs) : status.value == 'CHECKED_IN' ? '录音未开始' : '录音已结束')
+const recordingInterrupted = computed((): boolean => status.value == 'CHECKED_IN' && rules.value.automaticRecording && !ending.value && (!recordingActive.value || crmRecorder.phase == 'interrupted' || crmRecorder.phase == 'paused' || crmRecorder.phase == 'error'))
+const visiblePhotoCount = computed((): number => photoCount.value + media.value.photos.filter((p: CrmPhoto): boolean => !p.uploaded && p.captureSource != 'FILE_IMPORT').length)
+const pendingMaterials = computed((): number => media.value.photos.filter((p: CrmPhoto): boolean => !p.uploaded && p.captureSource != 'FILE_IMPORT').length + media.value.recordings.filter((a: CrmAudio): boolean => !a.uploaded && a.captureSource != 'FILE_IMPORT' && a.clip.fileName.length > 0).length)
+function formatClock(ms: number): string { return visitClock(ms) }
+let owner = ''; let generation = 0; let leaveKey = ''; let leaveBody: UTSJSONObject | null = null
+let photoCaptureActive = false; let photoReturnPending = false; let departureRevisionAtHide = 0
+function draftKey(): string { return 'rigour.crm.result.v1.' + encodeURIComponent(crmMediaOwner()) + '.' + captureId.value }
+function saveDraft(): void { if (!ready.value || submitted.value) return; try { uni.setStorageSync(draftKey(), JSON.stringify({ note: note.value, outcome: outcome.value, intention: intention.value, selected: selected.value } as UTSJSONObject)); draftSaved.value = true } catch (e) { draftSaved.value = false; error.value = '本机草稿保存失败，请保留当前页面' } }
+function chooseOutcome(value: string): void { outcome.value = value; saveDraft() }
+function chooseIntention(value: string): void { intention.value = value; saveDraft() }
+function toggle(id: string): void { selected.value = selected.value.includes(id) ? selected.value.filter((v: string): boolean => v != id) : selected.value.concat([id]); saveDraft() }
+function manageContacts(): void { saveDraft(); uni.navigateTo({ url: '/pages/customer-detail/customer-detail?id=' + storeId.value + '&source=MINE' }) }
+function refreshMedia(): void { try { media.value = crmMedia(captureId.value) } catch (e) { error.value = crmMessage(e) } }
+function focusPhotos(): void { scrollTarget.value = ''; nextTick(() => { scrollTarget.value = 'visit-photos' }) }
+function applyPhotoStatus(evidence: UTSJSONObject): void {
+  photoCount.value = evidence.getNumber('storefrontPhotoCount') ?? 0
+  evidenceText.value = '服务端已收 ' + (evidence.getNumber('storefrontPhotoCount') ?? 0).toString() + ' 张 · ' + ((evidence.getBoolean('storefrontPhotoSatisfied') ?? false) ? '照片要求已满足' : '尚未满足照片要求')
+}
+async function refreshPhotoStatus(): Promise<void> {
+  const version = generation; const account = crmOwner()
+  try {
+    const evidence = crmObject(await crmCall('/sales/me/visits/' + captureId.value + '/evidence'))
+    if (version == generation && account == crmOwner()) applyPhotoStatus(evidence)
+  } catch (e) { if (version == generation && account == crmOwner()) error.value = crmMessage(e) }
+}
+async function reload(): Promise<void> {
+  const version = ++generation; loading.value = true; error.value = ''; ready.value = false; baseLoaded.value = false
+  try {
+    if (captureId.value.length == 0) {
+      const result = await crmCall('/crm/stores/' + storeId.value + '/visits?view=MINE')
+      const historical = (result.getArray<UTSJSONObject>('data') ?? [] as UTSJSONObject[]).find((v: UTSJSONObject): boolean => v.getString('id') == visitId.value)
+      if (version != generation) return
+      if (historical == null) throw new Error('未找到拜访记录')
+      reviewStatus.value = crmVisitStatus(historical.getString('status') ?? ''); reviewReason.value = crmVisitReason(historical.getString('reviewReason') ?? '')
+      note.value = historical.getString('resultSummary') ?? ''; status.value = 'CHECKED_OUT'; submitted.value = true; ready.value = true
+      uni.setNavigationBarTitle({ title: '拜访详情' }); return
+    }
+    const captureRules = await visitCaptureRules(captureId.value)
+    const detail = crmObject(await crmCall('/sales/me/visits/' + encodeURIComponent(captureId.value)))
+    if (version != generation) return
+    storeAddress.value = detail.getJSON('targetSnapshot')?.getString('storeAddress') ?? ''
+    const arrived = detail.getString('checkedInAt') ?? ''; const departed = detail.getString('checkedOutAt') ?? ''; timeText.value = visitBoardTime(arrived, departed)
+    uni.setNavigationBarTitle({ title: detail.getString('status') == 'CHECKED_IN' ? '拜访中' : '拜访详情' })
+    storeName.value = detail.getJSON('targetSnapshot')?.getString('storeName') ?? '门店拜访'; status.value = detail.getString('status') ?? ''; submitted.value = (detail.getString('resultSubmittedAt') ?? '').length > 0
+    note.value = detail.getString('resultNote') ?? ''; baseLoaded.value = true
+    rules.value = captureRules; ending.value = crmEndingVisit(captureId.value)
+    if (detail.getString('status') == 'CHECKED_IN' && captureRules.automaticRecording && !ending.value) { try { crmEnsureAutomaticRecording(captureId.value) } catch (e) { error.value = crmMessage(e) } }
+    if (captureRules.automaticCheckout && detail.getString('status') == 'CHECKED_IN') { try { await ensureCrmDeparture(captureId.value) } catch (e) { error.value = crmMessage(e) } }
+    const people = await crmContacts(storeId.value); const reception = await crmReception(storeId.value, visitId.value)
+    const evidence = crmObject(await crmCall('/sales/me/visits/' + captureId.value + '/evidence')); const recording = crmObject(await crmCall('/sales/me/visits/' + captureId.value + '/recordings'))
+    const visit = (await crmVisitRecords(storeId.value)).find((item: CrmVisitRecord): boolean => item.id == visitId.value)
+    if (version != generation) return
+    reviewStatus.value = crmVisitStatus(visit?.status ?? ''); reviewReason.value = crmVisitReason(visit?.reviewReason ?? '')
+    contacts.value = people; selected.value = reception.map((c: CrmContact): string => c.id); receptionText.value = reception.map((c: CrmContact): string => c.name + '（' + c.role + '）').join('、')
+    note.value = detail.getString('resultNote') ?? ''; outcome.value = detail.getString('contactOutcome') ?? 'CONTACTED'; intention.value = detail.getString('intentionLevel') ?? 'NONE'
+    applyPhotoStatus(evidence)
+    minimumClipSeconds.value = recording.getNumber('minimumClipSeconds') ?? 30
+    recordingText.value = (recording.getBoolean('recordingEnabled') ?? false) ? ((recording.getNumber('minimumRecordingSeconds') ?? 0) == 0 ? '不设累计时长门槛' : '要求 ' + (recording.getNumber('minimumRecordingSeconds') ?? 0).toString() + ' 秒') + ' · 已核验 ' + Math.floor((recording.getNumber('verifiedTotalDurationMs') ?? 0) / 1000).toString() + ' 秒' : '当前政策不强制录音'
+    if (!submitted.value) { const raw = uni.getStorageSync(draftKey()); if (raw != null && (raw as string).length > 0) { const saved = JSON.parse<UTSJSONObject>(raw as string); if (saved != null) { note.value = saved.getString('note') ?? ''; outcome.value = saved.getString('outcome') ?? 'CONTACTED'; intention.value = saved.getString('intention') ?? 'NONE'; selected.value = ((saved['selected'] as string[] | null) ?? [] as string[]).filter((id: string): boolean => people.some((c: CrmContact): boolean => c.id == id && c.status == 'ACTIVE')) } } }
+    refreshMedia(); draftSaved.value = !submitted.value && note.value.length > 0; ready.value = true
+  } catch (e) { if (version == generation) { const message = crmMessage(e); error.value = baseLoaded.value && message == apiErrorMessage('FORBIDDEN', 403) ? '当前无权查看该客户的联系人及拜访材料' : message } } finally { if (version == generation) loading.value = false }
+}
+async function saveResult(): Promise<void> {
+  if (busy.value) return
+  if (note.value.trim().length == 0) { error.value = '请填写实际沟通或现场情况'; return }
+  busy.value = true; error.value = ''; saveDraft()
+  try { await crmSaveReception(storeId.value, visitId.value, selected.value); await crmCall('/sales/me/visits/' + captureId.value + '/result', 'PUT', { contactOutcome: outcome.value, kpName: null, kpPhone: null, intentionLevel: outcome.value == 'CONTACTED' ? intention.value : null, resultNote: note.value.trim() } as UTSJSONObject); await reload() }
+  catch (e) { error.value = crmMessage(e) } finally { busy.value = false }
+}
+async function takePhoto(): Promise<void> {
+  if (busy.value) return
+  busy.value = true; photoCaptureActive = true; error.value = ''
+  try { await crmTakePhoto(captureId.value); refreshMedia(); focusPhotos() }
+  catch (e) { error.value = crmMessage(e) }
+  finally { busy.value = false; photoCaptureActive = false }
+}
+function photoPath(photo: CrmPhoto): string { return crmPhotoPath(photo) }
+function preview(photo: CrmPhoto): void { uni.previewImage({ urls: [crmPhotoPath(photo)] }) }
+function stopPlayback(): void {
+  // #ifdef APP
+  player?.stop()
+  // #endif
+  playing.value = false; playbackMessage.value = ''
+}
+function playClip(clip: SavedClip): void {
+  if (crmRecording()) return
+  // #ifdef APP
+  if (player == null) { player = uni.createInnerAudioContext(); player!.onPlay(() => { playing.value = true; playbackMessage.value = '正在回放本机录音' }); player!.onEnded(() => { playing.value = false; playbackMessage.value = '回放结束' }); player!.onError((_error) => { playing.value = false; playbackMessage.value = '回放失败，请保留原文件后重试' }) }
+  player!.stop(); player!.src = savedClipPath(clip); player!.play()
+  // #endif
+}
+function resumeRecording(): void { stopPlayback(); try { crmResumeAutomaticRecording(captureId.value); ending.value = false } catch (e) { error.value = crmMessage(e) } }
+function startRecording(): void { stopPlayback(); try { crmStartRecording(captureId.value) } catch (e) { error.value = crmMessage(e) } }
+function stopRecording(): void { crmStopRecording() }
+function retryRecording(): void { crmRetryRecording(); refreshMedia() }
+async function upload(): Promise<void> { if (busy.value) return; busy.value = true; error.value = ''; saveDraft(); try { await crmUpload(captureId.value, minimumClipSeconds.value); await reload() } catch (e) { error.value = crmMessage(e); refreshMedia() } finally { busy.value = false } }
+function leaveStorageKey(): string { return 'rigour.crm.checkout.v1.' + encodeURIComponent(crmMediaOwner()) + '.' + captureId.value }
+async function leave(): Promise<void> {
+  if (busy.value || !submitted.value) return
+  busy.value = true; error.value = ''
+  try {
+    if (leaveBody == null) {
+      const saved = uni.getStorageSync(leaveStorageKey())
+      if (saved != null && (saved as string).length > 0) leaveBody = JSON.parse<UTSJSONObject>(saved as string)
+    }
+    if (leaveBody == null) {
+      const location = await crmLocation(rules.value.maximumLocationAccuracyMeters)
+      leaveKey = crmId(); leaveBody = { idempotencyKey: leaveKey, deviceEventId: leaveKey, clientOccurredAt: new Date().toISOString(), location: location } as UTSJSONObject
+      uni.setStorageSync(leaveStorageKey(), JSON.stringify(leaveBody))
+    }
+    stopPlayback(); await crmFinishRecording(captureId.value); ending.value = true
+    await crmCall('/sales/me/visits/' + captureId.value + '/check-out', 'POST', leaveBody)
+    uni.removeStorageSync(leaveStorageKey()); leaveBody = null; crmCompleteRecording(captureId.value); stopCrmDeparture(captureId.value); await reload()
+  } catch (e) { error.value = crmMessage(e); ending.value = crmEndingVisit(captureId.value); if (error.value == apiErrorMessage('SALES_VISIT_OUTSIDE_RADIUS', 409) || error.value == apiErrorMessage('LOCATION_ACCURACY_INSUFFICIENT', 409)) { uni.removeStorageSync(leaveStorageKey()); leaveBody = null; if (rules.value.automaticRecording) { crmResumeAutomaticRecording(captureId.value); ending.value = false } } }
+  finally { busy.value = false }
+}
+async function completeVisit(): Promise<void> {
+  if (busy.value || !ready.value) return
+  if (!submitted.value) await saveResult()
+  if (!submitted.value || error.value.length > 0) return
+  if (status.value == 'CHECKED_IN') await leave()
+}
+watch((): number => crmRecorder.mediaRevision, (_value: number) => { if (recordingHere.value) refreshMedia() })
+function openEvidence(): void { stopPlayback(); uni.navigateTo({ url: '/pages/visit-evidence/visit-evidence?visit=' + captureId.value + '&store=' + encodeURIComponent(storeName.value) }) }
+onLoad((options) => { storeId.value = options['store'] ?? ''; visitId.value = options['visit'] ?? ''; captureId.value = options['capture'] ?? '' })
+let pageVisible = false
+function showPage(): void {
+  if (owner.length > 0 && owner != crmOwner()) { generation++; ready.value = false; baseLoaded.value = false; storeName.value = '门店拜访'; storeAddress.value = ''; timeText.value = ''; note.value = ''; contacts.value = []; selected.value = []; media.value = { photos: [], recordings: [] } as CrmMedia; error.value = '账号已变更，请从本人客户重新进入拜访'; return }
+  owner = crmOwner()
+  // Camera return must keep the mounted photo list, regardless of onShow/capture callback order.
+  if (photoReturnPending) {
+    photoReturnPending = false
+    if (departureRevisionAtHide != crmDeparture.completedRevision) { reload().then(() => { focusPhotos() }); return }
+    refreshMedia(); focusPhotos(); refreshPhotoStatus(); return
+  }
+  if (session.authenticated) reload()
+}
+onShow(() => { pageVisible = true; showPage() })
+watch((): number => crmDeparture.completedRevision, (_value: number) => { if (pageVisible && crmDeparture.captureId == captureId.value) { saveDraft(); reload() } })
+watch((): boolean => crmUploadState.busy, (uploading: boolean) => { if (!uploading && pageVisible && ready.value) refreshPhotoStatus() })
+onHide(() => { pageVisible = false; departureRevisionAtHide = crmDeparture.completedRevision; if (photoCaptureActive) photoReturnPending = true; stopPlayback(); saveDraft() })
+onUnload(() => {
+  stopPlayback()
+  // #ifdef APP
+  player?.destroy(); player = null
+  // #endif
+})
+watch((): boolean => session.authenticated, (_authenticated: boolean) => { stopPlayback(); if (pageVisible) showPage() })
+</script>
+<style>
+@import '../../styles/workbench-ui.css';
+.cv-scroll { flex: 1; }
+.cv-content { width: 100%; max-width: 560px; align-self: center; padding: 12px 20px 20px; }
+.cv-store { color: #252a31; font-size: 21px; line-height: 30px; font-weight: bold; }
+.cv-muted { color: #626970; font-size: 13px; line-height: 21px; }
+.cv-address { margin-top: 4px; }
+.cv-label { color: #252a31; font-size: 16px; line-height: 24px; font-weight: bold; }
+.cv-recording { flex-direction: row; align-items: center; min-height: 42px; margin-top: 14px; margin-bottom: 6px; padding: 8px 10px; background-color: #f5f6f7; border-radius: 9px; }
+.cv-icon { width: 21px; height: 24px; }
+.cv-dot { width: 7px; height: 7px; border-radius: 4px; background-color: #8b8d8e; margin: 0 8px; }
+.cv-dot-active { background-color: #c64c1c; }
+.cv-recording-text { flex: 1; color: #252a31; font-size: 14px; line-height: 22px; }
+.cv-arrow { width: 16px; height: 16px; margin-left: 6px; }
+.cv-section { padding: 12px 0; border-style: solid; border-width: 0; border-bottom-width: 1px; border-bottom-color: #d6dbdf; }
+.cv-section-title { flex-direction: row; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.cv-photos { flex-direction: row; flex-wrap: wrap; }
+.cv-photo-control { width: 80px; height: 80px; margin-right: 8px; margin-bottom: 4px; }
+.cv-photo { width: 80px; height: 80px; border-radius: 8px; }
+.cv-photo-check { position: absolute; bottom: 4px; right: 4px; width: 19px; height: 19px; border-radius: 10px; background-color: #c64c1c; align-items: center; justify-content: center; }
+.cv-photo-check-icon { width: 14px; height: 14px; }
+.cv-photo-pending { position: absolute; bottom: 0; left: 0; right: 0; background-color: #f5f6f7; color: #626970; font-size: 11px; text-align: center; }
+.cv-camera { width: 80px; height: 80px; margin-bottom: 4px; background-color: #f8f9fa; border-width: 1px; border-color: #a9afb5; border-style: dashed; border-radius: 8px; align-items: center; justify-content: center; }
+.cv-camera-icon { width: 28px; height: 28px; margin-bottom: 4px; }
+.cv-field { flex-direction: row; align-items: center; min-height: 52px; border-style: solid; border-width: 0; border-bottom-width: 1px; border-bottom-color: #d6dbdf; }
+.cv-field-value { flex: 1; color: #626970; font-size: 14px; text-align: right; margin-left: 14px; }
+.cv-chip { margin: 0 0 0 8px; padding: 0 12px; height: 32px; line-height: 32px; color: #626970; font-size: 14px; background-color: #f5f6f7; border-width: 0; border-radius: 7px; }
+.cv-chip-short { padding: 0 10px; margin-left: 6px; }
+.cv-chip-selected { color: #c64c1c; background-color: #fff2ea; }
+.cv-notes { padding-top: 12px; }
+.cv-textarea { width: 100%; height: 96px; padding: 10px 12px; margin-top: 8px; background-color: #f5f6f7; border-radius: 9px; font-size: 15px; line-height: 23px; color: #252a31; }
+.cv-saved { flex-direction: row; align-items: center; margin-top: 8px; }
+.cv-small { color: #626970; font-size: 12px; line-height: 18px; }
+.cv-saved-icon { width: 14px; height: 14px; margin-right: 5px; }
+.cv-footer { padding: 8px 20px 16px; padding-bottom: env(safe-area-inset-bottom); background-color: #ffffff; }
+.cv-complete { height: 48px; line-height: 48px; padding: 0; margin: 0 0 12px; border-width: 0; border-radius: 10px; background-color: #c64c1c; color: #ffffff; font-size: 17px; font-weight: bold; }
+.cv-refresh { height: 48px; line-height: 48px; padding: 0; margin: 0 0 12px; border-width: 0; border-radius: 10px; background-color: #f5f6f7; color: #626970; font-size: 15px; }
+.cv-file-row { flex-direction: row; align-items: center; min-height: 44px; }
+.cv-error { flex-direction: row; align-items: center; background-color: #fff2ea; padding: 6px 10px; margin-top: 8px; border-radius: 8px; }
+.cv-error-text { flex: 1; color: #b42318; font-size: 13px; line-height: 21px; }
+.cv-loading { padding: 24px 0; }
+.cv-result { background-color: #f5f6f7; border-radius: 8px; padding: 10px 12px; margin-top: 12px; }
+.cv-contacts { padding: 8px 0; }
+.cv-person { color: #626970; font-size: 14px; line-height: 44px; margin: 0 0 6px; padding: 0 12px; border-width: 0; border-radius: 6px; background-color: #f5f6f7; text-align: left; }
+.cv-person-selected { color: #c64c1c; background-color: #fff2ea; }
+.cv-material-details { padding: 6px 10px; background-color: #f8f9fa; border-radius: 8px; }
+/* #ifdef APP-ANDROID */
+.cv-store,.cv-label,.cv-complete { font-family: sans-serif; }
+/* #endif */
+</style>

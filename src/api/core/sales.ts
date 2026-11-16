@@ -424,6 +424,8 @@ export interface InterruptionCommand {
 }
 
 export const salesApi = {
+  normalizeLocation: (point: { longitude: number; latitude: number; coordinateSystem: 'WGS84' | 'GCJ02' }) =>
+    apiClient.post<{ longitude: number; latitude: number; coordinateSystem: 'GCJ02' }>('/sales/work/location/normalize', point),
   context(): Promise<ApiResponse<SalesContextView>> {
     return apiClient.get<SalesContextView>('/sales/me/context');
   },

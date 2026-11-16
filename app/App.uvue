@@ -1,8 +1,20 @@
 <script setup lang="uts">
 // #ifdef APP
+import { watch } from 'vue'
+import { startCrmUploadQueue, resumeCrmUploadQueue } from './services/crm-media.uts'
+import { startCrmDeparture, resumeCrmDeparture } from './services/crm-departure.uts'
 import { restoreCompanySession } from './services/auth.uts'
+import { startFieldTracking, resumeFieldTracking } from './services/field-tracking.uts'
 import { startSalesProfileSync } from './services/sales-profile.uts'
-onLaunch(() => { startSalesProfileSync(); restoreCompanySession() })
+import { startVisitPolicyPreload, resumeVisitPolicyPreload, pauseVisitPolicyPreload } from './services/visit-policy.uts'
+import { session } from './services/session.uts'
+watch((): boolean => session.authenticated, (authenticated: boolean, previous: boolean) => {
+  if (authenticated && !previous) resumeFieldTracking()
+  if (!authenticated && previous) uni.reLaunch({ url: '/pages/login/login' })
+})
+onLaunch(() => { startCrmUploadQueue(); startCrmDeparture(); startSalesProfileSync(); startVisitPolicyPreload(); startFieldTracking(); restoreCompanySession() })
+onHide(() => { pauseVisitPolicyPreload() })
+onShow(() => { resumeVisitPolicyPreload(); resumeCrmUploadQueue(); resumeCrmDeparture(); resumeFieldTracking() })
 // #endif
 // #ifdef WEB
 onLaunch(() => {})

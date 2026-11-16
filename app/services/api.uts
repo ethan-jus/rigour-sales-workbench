@@ -1,6 +1,7 @@
 import { session } from './session.uts'
 import { ensureAccessToken, invalidateCompanySession } from './auth.uts'
 import { appEnvironment, environmentReady } from './config.uts'
+import { invalidateHomeCache } from './home-cache.uts'
 import { parseApiJson } from './json.uts'
 
 export function apiErrorMessage(code: string, status: number): string {
@@ -11,10 +12,17 @@ export function apiErrorMessage(code: string, status: number): string {
     return '暂无此功能或数据的权限，请联系管理员。'
   }
   if (status == 409) {
+    if (code == 'LOCATION_ACCURACY_INSUFFICIENT') return '当前定位精度不满足拜访规则，请到开阔处重新定位。'
+    if (code == 'SALES_VISIT_OUTSIDE_RADIUS') return '当前位置不在门店允许的范围内，请重新定位离店。'
+    if (code == 'CRM_STORE_VISIT_OUTSIDE_RADIUS') return '请到店后再开始拜访'
     if (code == 'SALES_EMPLOYEE_BINDING_CONFLICT') return '公司员工信息与已有销售档案不一致，请联系管理员核对。'
     if (code == 'SALES_POLICY_NOT_FOUND') return '尚未配置生效的销售外勤规则，请联系管理员。'
     if (code == 'SALES_VISIT_POLICY_NOT_FOUND') return '尚未配置生效的拜访规则，请联系管理员。'
+    if (code == 'SALES_WORK_DAY_ALREADY_ACTIVE') return '当前已上班签到，请刷新工作日状态。'
+    if (code == 'CONFLICT') return '记录状态已变化或不满足操作条件，请刷新后核实归属、版本和工作日。'
   }
+  if (status == 400 && code == 'VALIDATION_FAILED') return '填写内容不符合要求，请检查必填项和电话格式。'
+  if (status == 404 && code == 'SALES_WORK_DAY_NOT_FOUND') return '当天尚未上班签到。'
   if (status == 404 && code == 'SALES_VISIT_NOT_FOUND') return '拜访记录不存在或已不可查看，请返回记录列表。'
   if (status >= 200 && status < 300) return '业务处理未完成，请稍后重试。'
   return '服务暂时不可用（' + status.toString() + '），请稍后重试。'
@@ -66,6 +74,7 @@ function sendAuthenticatedRequest(path: string, method: string, body: UTSJSONObj
       }
       if (result == null) { fail('服务未返回有效数据，请重试。'); return }
       if (code.length > 0 && code != 'OK') { fail(apiErrorMessage(code, response.statusCode)); return }
+      if (method != 'GET' && method != 'HEAD') invalidateHomeCache()
       success(result)
     },
     fail: (_) => {

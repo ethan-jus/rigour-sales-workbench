@@ -1,0 +1,63 @@
+import { watch, ref } from 'vue'
+import { session } from './session.uts'
+import { appEnvironment } from './config.uts'
+import { parseApiJson } from './json.uts'
+
+export type HomeSnapshot = { key: string, savedAt: number, data: UTSJSONObject }
+const storageKey = 'rigour-sales-home-display-v1'
+const maximumAge = 10 * 60 * 1000
+let loadedOwner = ''
+const mutationRevision = ref(0)
+export function homeReadRevision(): number { return mutationRevision.value }
+export function invalidateHomeCache(): void { mutationRevision.value++; clear() }
+let entries: HomeSnapshot[] = []
+
+function ownerKey(): string {
+  if (!session.authenticated) return ''
+  return JSON.stringify([appEnvironment.environment, appEnvironment.gatewayOrigin, appEnvironment.issuer,
+    appEnvironment.clientId, session.tenantId, session.userId, session.permissions.slice().sort().join(',')])
+}
+function fresh(savedAt: number): boolean {
+  const age = Date.now() - savedAt
+  return savedAt > 0 && age >= 0 && age < maximumAge
+}
+function clear(): void {
+  entries = [] as HomeSnapshot[]; loadedOwner = ''
+  try { uni.removeStorageSync(storageKey) } catch (_) {}
+}
+function alignOwner(): void {
+  const owner = ownerKey()
+  if (owner.length == 0) { clear(); return }
+  if (owner == loadedOwner) return
+  entries = [] as HomeSnapshot[]; loadedOwner = owner
+  try {
+    const raw = uni.getStorageSync(storageKey)
+    const stored = typeof raw == 'string' ? parseApiJson(raw) : null
+    if (stored?.getString('owner') != owner) { uni.removeStorageSync(storageKey); return }
+    const items = stored?.getArray<UTSJSONObject>('entries') ?? [] as UTSJSONObject[]
+    items.slice(-12).forEach((item: UTSJSONObject) => {
+      const key = item.getString('key') ?? ''; const savedAt = item.getNumber('savedAt') ?? 0; const data = item.getJSON('data')
+      if (key.length > 0 && fresh(savedAt) && data != null) entries.push({ key, savedAt, data: data! } as HomeSnapshot)
+    })
+  } catch (_) { entries = [] as HomeSnapshot[] }
+}
+function persist(): void {
+  // Only bounded homepage aggregates: no credentials, contacts, media or check-in state.
+  try { uni.setStorageSync(storageKey, JSON.stringify({ owner: loadedOwner, entries } as UTSJSONObject)) } catch (_) {}
+}
+export function readHomeSnapshot(key: string): HomeSnapshot | null {
+  alignOwner()
+  return entries.find((item: HomeSnapshot): boolean => item.key == key && fresh(item.savedAt)) ?? null
+}
+export function writeHomeSnapshot(key: string, data: UTSJSONObject): void {
+  alignOwner()
+  if (loadedOwner.length == 0) return
+  entries = entries.filter((item: HomeSnapshot): boolean => item.key != key && fresh(item.savedAt)).slice(-11)
+  entries.push({ key, savedAt: Date.now(), data } as HomeSnapshot); persist()
+}
+export function forgetHomeSnapshot(key: string): void {
+  alignOwner()
+  entries = entries.filter((item: HomeSnapshot): boolean => item.key != key); persist()
+}
+// A verified cold restore may reuse its own snapshot; logout/account/permission changes erase it.
+watch((): string => ownerKey(), (owner: string, previous: string) => { if (previous.length > 0 && owner != previous) clear() })

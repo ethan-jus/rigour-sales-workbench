@@ -1,0 +1,46 @@
+.v-page { flex: 1; background-color: #ffffff; padding-top: env(safe-area-inset-top); }
+.v-content { width: 100%; max-width: 560px; align-self: center; padding: 0 20px 24px; }
+.v-header { height: 64px; flex-direction: row; align-items: center; justify-content: space-between; }
+.v-title { font-size: 26px; line-height: 36px; font-weight: bold; color: #252a31; }
+.v-period-row { flex-direction: row; align-items: center; justify-content: space-between; min-height: 52px; }
+.v-periods { flex-direction: row; align-items: center; }
+.v-period { margin: 0 6px 0 0; padding: 0 11px; height: 36px; line-height: 36px; border-width: 0; border-radius: 7px; background-color: #f5f6f7; color: #626970; font-size: 14px; }
+.v-period-active { color: #c64c1c; background-color: #fff2ea; font-weight: bold; }
+.v-date { min-height: 48px; flex-direction: row; align-items: center; }
+.v-arrow { width: 16px; height: 16px; margin-left: 6px; }
+.v-small { font-size: 13px; line-height: 20px; color: #626970; }
+.v-text { font-size: 15px; line-height: 23px; color: #252a31; }
+.v-orange { color: #c64c1c; }
+.v-danger { color: #b42318; }
+.v-menu { background-color: #f5f6f7; border-radius: 10px; padding: 4px 12px; margin-bottom: 8px; }
+.v-menu-button { background-color: transparent; color: #252a31; font-size: 15px; margin: 0; padding: 0; height: 48px; line-height: 48px; text-align: left; border-width: 0; }
+.v-menu-item { height: 48px; justify-content: center; }
+.v-stats { flex-direction: row; align-items: center; background-color: #f5f6f7; border-radius: 10px; height: 48px; margin-top: 4px; margin-bottom: 12px; }
+.v-stat { flex: 1; height: 48px; flex-direction: row; align-items: center; justify-content: center; }
+.v-stat-divider { width: 1px; height: 24px; background-color: #d6dbdf; }
+.v-stat-label { color: #626970; font-size: 15px; margin-right: 7px; }
+.v-number { color: #252a31; font-size: 22px; line-height: 30px; font-weight: bold; }
+.v-search-row { flex-direction: row; align-items: center; min-height: 48px; }
+.v-search { flex: 1; height: 42px; flex-direction: row; align-items: center; background-color: #f5f6f7; border-radius: 9px; padding: 0 12px; }
+.v-icon { width: 22px; height: 22px; }
+.v-search-input { flex: 1; height: 42px; color: #252a31; font-size: 14px; margin-left: 10px; }
+.v-filter-control { width: 48px; height: 48px; align-items: center; justify-content: center; margin-left: 4px; }
+.v-filter-row { flex-direction: row; align-items: center; justify-content: space-between; border-style: solid; border-width: 0; border-bottom-width: 1px; border-bottom-color: #d6dbdf; }
+.v-record { padding: 12px 0; border-style: solid; border-width: 0; border-bottom-width: 1px; border-bottom-color: #d6dbdf; }
+.v-name { color: #252a31; font-size: 16px; font-weight: bold; line-height: 24px; }
+.v-address { color: #626970; font-size: 13px; line-height: 20px; margin-top: 4px; margin-bottom: 2px; }
+.v-badge { flex-direction: row; align-items: center; background-color: #f0f2f4; border-radius: 5px; padding: 1px 7px; margin-left: 8px; }
+.v-badge-danger { background-color: #fff0ed; }
+.v-badge-accent { background-color: #fff2ea; }
+.v-badge-text { font-size: 12px; line-height: 20px; color: #626970; }
+.v-plan-row { flex-direction: row; align-items: center; padding: 14px 0; border-style: solid; border-width: 0; border-bottom-width: 1px; border-bottom-color: #d6dbdf; }
+.v-plan-action { width: 80px; height: 48px; margin-left: 8px; justify-content: center; align-items: flex-end; }
+.v-outline { width: 72px; height: 32px; line-height: 30px; padding: 0; margin: 0; border-width: 1px; border-color: #c64c1c; border-radius: 7px; background-color: #ffffff; color: #c64c1c; font-size: 14px; }
+.v-empty { color: #626970; font-size: 14px; text-align: center; padding: 36px 0; }
+.v-error { flex-direction: row; align-items: center; background-color: #fff2ea; border-radius: 8px; padding: 8px 12px; margin: 8px 0; }
+.v-error-text { flex: 1; color: #b42318; font-size: 13px; line-height: 20px; }
+.v-resume { flex-direction: row; align-items: center; background-color: #fff2ea; padding: 10px 12px; border-radius: 10px; margin-bottom: 8px; }
+.v-pending { min-height: 40px; flex-direction: row; align-items: center; justify-content: flex-end; }
+/* #ifdef APP-ANDROID */
+.v-title,.v-name,.v-number { font-family: sans-serif; }
+/* #endif */

@@ -7,16 +7,18 @@
     <view class="menu-row" @click="work('performance')"><image class="menu-icon" src="/static/tabs/chart.png"/><view class="grow"><text class="h3">目标与业绩</text><text class="muted">业务进度与明细</text></view><text class="arrow">›</text></view>
     <view class="menu-row" @click="work('commission')"><image class="menu-icon" src="/static/tabs/wallet.png"/><text class="h3 grow">我的提成</text><text class="arrow">›</text></view>
     <text class="section-label">工作与设置</text>
+    <view v-if="canReadFieldwork" class="menu-row" @click="fieldwork"><image class="menu-icon" src="/static/home/calendar-outline.svg"/><text class="h3 grow">外勤记录</text><text class="arrow">›</text></view>
     <view class="menu-row" @click="plan"><image class="menu-icon" src="/static/tabs/calendar.png"/><text class="h3 grow">拜访计划</text><text class="arrow">›</text></view>
     <view class="menu-row" @click="uploads"><image class="menu-icon" src="/static/tabs/upload.png"/><text class="h3 grow">上传任务</text><text class="fine">{{ count > 0 ? count.toString() + ' 份本机草稿' : '' }}</text><text class="arrow">›</text></view>
     <view class="menu-row" @click="work('messages')"><image class="menu-icon" src="/static/tabs/bell.png"/><text class="h3 grow">消息与待办</text><text class="arrow">›</text></view>
     <view class="menu-row" @click="account"><image class="menu-icon" src="/static/tabs/shield.png"/><text class="h3 grow">账号与设置</text><text class="arrow">›</text></view>
-    <text class="version">瑞盖销售工作台 · 内部试用版 0.2.0</text>
+    <text class="version">销售工作台 · 内部试用版 0.2.1</text>
   </view></scroll-view>
 </template>
 <script setup lang="uts">
-import { session } from '../../services/session.uts'
+import { session, hasPermission } from '../../services/session.uts'
 import { loadLocalVisits, visitDraftCount } from '../../services/visits.uts'
+const canReadFieldwork = computed((): boolean => hasPermission('sales:context:read'))
 const name = computed((): string => session.authenticated ? session.displayName : '欢迎使用')
 const initial = computed((): string => session.displayName.length > 0 ? session.displayName.substring(0, 1) : '我')
 const count = computed((): number => visitDraftCount())
@@ -27,6 +29,7 @@ function orders(): void { uni.switchTab({ url: '/pages/orders/orders' }) }
 function plan(): void { uni.navigateTo({ url: '/pages/visit/visit?view=plan' }) }
 function uploads(): void { uni.navigateTo({ url: '/pages/visit/visit?view=uploads' }) }
 function work(view: string): void { uni.navigateTo({ url: '/pages/work/work?view=' + view }) }
+function fieldwork(): void { uni.navigateTo({ url: '/pages/fieldwork/fieldwork' }) }
 function account(): void { work('account') }
 onShow(() => { loadLocalVisits() })
 </script>

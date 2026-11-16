@@ -1,0 +1,91 @@
+import { requestDeviceLocation, DeviceLocation } from './location.uts'
+import { crmCall, crmObject, crmStore, crmValidateCount, crmOwner, crmRecentVisitLocation, CrmVisitLocation } from './crm.uts'
+import { readCustomerSnapshot, refreshCustomerSnapshot } from './customer-cache.uts'
+import { CustomerRow, customerStoreRow, customerHistoryRow, customerPeriodQuery } from './customer-workbench.uts'
+
+export type NearbyOrigin = { gpsLongitude: number, gpsLatitude: number, gcjLongitude: number, gcjLatitude: number }
+export type NearbyPage = { items: CustomerRow[], total: number, cursor: string, origin: NearbyOrigin }
+export function nearbyDistance(lng: number, lat: number, targetLng: number, targetLat: number): number {
+  const rad = Math.PI / 180; const a = Math.sin((lat - targetLat) * rad / 2); const b = Math.sin((lng - targetLng) * rad / 2)
+  return 12742017.6 * Math.asin(Math.min(1, Math.sqrt(a * a + Math.cos(lat * rad) * Math.cos(targetLat * rad) * b * b)))
+}
+export function nearbyDistanceText(meters: number | null): string {
+  const distance = meters ?? -1
+  if (!Number.isFinite(distance) || distance < 0) return '距离未知'
+  if (distance < 50) return '约50米内'
+  if (distance < 1000) { const rounded = Math.round(distance / 10) * 10; return '约' + rounded.toString() + '米' }
+  const kilometers = distance / 1000
+  return '约' + kilometers.toFixed(1) + '公里'
+}
+export function nearbyUpdateDistances(items: CustomerRow[], origin: NearbyOrigin): void {
+  for (const row of items) {
+    if (row.nearLongitude == null || row.nearLatitude == null || !['GCJ02', 'WGS84'].includes(row.nearCoordinateSystem)) { row.distanceText = '距离未知'; continue }
+    const gps = row.nearCoordinateSystem == 'WGS84'
+    row.distanceText = nearbyDistanceText(nearbyDistance(gps ? origin.gpsLongitude : origin.gcjLongitude, gps ? origin.gpsLatitude : origin.gcjLatitude, row.nearLongitude!, row.nearLatitude!))
+  }
+}
+function pointQuery(lng: number, lat: number): string { return '&nearLongitude=' + lng.toFixed(6) + '&nearLatitude=' + lat.toFixed(6) + '&nearCoordinateSystem=WGS84' }
+function parseOrigin(data: UTSJSONObject): NearbyOrigin {
+  const gpsLng = data.getNumber('gpsLongitude'); const gpsLat = data.getNumber('gpsLatitude'); const gcjLng = data.getNumber('gcjLongitude'); const gcjLat = data.getNumber('gcjLatitude')
+  if (gpsLng == null || gpsLat == null || gcjLng == null || gcjLat == null || !Number.isFinite(gpsLng!) || !Number.isFinite(gpsLat!) || !Number.isFinite(gcjLng!) || !Number.isFinite(gcjLat!) || Math.abs(gpsLng!) > 180 || Math.abs(gpsLat!) > 90 || Math.abs(gcjLng!) > 180 || Math.abs(gcjLat!) > 90) throw new Error('定位资料不完整，请重新定位')
+  return { gpsLongitude: gpsLng!, gpsLatitude: gpsLat!, gcjLongitude: gcjLng!, gcjLatitude: gcjLat! } as NearbyOrigin
+}
+const originSnapshotKey = 'customer-nearby:origin'
+export function customerNearbyOriginSnapshot(): NearbyOrigin | null {
+  const data = readCustomerSnapshot(originSnapshotKey)
+  return data == null ? null : parseOrigin(data)
+}
+export function customerNearbyVisitLocation(): CrmVisitLocation | null {
+  const data = readCustomerSnapshot(originSnapshotKey, 30000)
+  if (data == null) return null
+  const origin = parseOrigin(data)
+  const point = { owner: crmOwner(), requestedAt: data.getNumber('requestedAt') ?? 0, receivedAt: data.getNumber('receivedAt') ?? 0,
+    location: { longitude: origin.gcjLongitude, latitude: origin.gcjLatitude, accuracyMeters: data.getNumber('accuracyMeters'), source: 'APP_NATIVE' } as UTSJSONObject } as CrmVisitLocation
+  return crmRecentVisitLocation(point) == null ? null : point
+}
+export async function customerNearbyLocation(kind: string, force: boolean = false): Promise<NearbyOrigin> {
+  const cached = force ? null : readCustomerSnapshot(originSnapshotKey, 30000)
+  if (cached != null) return parseOrigin(cached)
+  const data = await refreshCustomerSnapshot(originSnapshotKey, async (): Promise<UTSJSONObject> => {
+    const point = await new Promise<DeviceLocation>((resolve, reject) => { requestDeviceLocation((p: DeviceLocation) => resolve(p), (message: string) => reject(new Error(message)), 3000) })
+    if (point.accuracy != null && point.accuracy! > 200) throw new Error('当前定位精度不足，请到开阔位置重试')
+    const result = crmObject(await crmCall('/crm/stores/nearby/origin?view=' + (kind == 'PUBLIC' ? 'PUBLIC' : 'MINE') + pointQuery(point.longitude, point.latitude)))
+    parseOrigin(result)
+    result['accuracyMeters'] = point.accuracy; result['requestedAt'] = point.requestedAt; result['receivedAt'] = point.receivedAt
+    return result
+  })
+  return parseOrigin(data)
+}
+function nearbyPath(kind: string, from: string, to: string, keyword: string, relation: string, filters: string): string {
+  const path = kind == 'COOPERATED' ? '/crm/customer-workbench/nearby?kind=COOPERATED&' + customerPeriodQuery(from, to) + '&relation=' + encodeURIComponent(relation) : '/crm/stores/nearby?view=' + kind + filters
+  return path + '&size=20&keyword=' + encodeURIComponent(keyword)
+}
+function nearbyPage(data: UTSJSONObject, kind: string): NearbyPage {
+  const history = kind == 'COOPERATED'
+  crmValidateCount(data, 'total')
+  if (!Array.isArray(data['items']) || (data['nextCursor'] != null && data.getString('nextCursor') == null)) throw new Error('附近门店列表不完整，请刷新')
+  const center = data.getJSON('origin'); if (center == null) throw new Error('附近门店缺少定位基准，请刷新')
+  const items = data.getArray<UTSJSONObject>('items')!.map((entry: UTSJSONObject): CustomerRow => {
+    const store = entry.getJSON('store'); if (store == null || (store!.getString('id') ?? '').trim().length == 0) throw new Error('附近门店资料不完整')
+    const row = history ? customerHistoryRow(store!) : customerStoreRow(crmStore(store!))
+    row.nearLongitude = entry.getNumber('longitude'); row.nearLatitude = entry.getNumber('latitude'); row.nearCoordinateSystem = entry.getString('coordinateSystem') ?? ''
+    row.distanceText = nearbyDistanceText(entry.getNumber('distanceMeters'))
+    return row
+  })
+  return { items: items, total: data.getNumber('total')!, cursor: data.getString('nextCursor') ?? '', origin: parseOrigin(center!) } as NearbyPage
+}
+
+export function customerNearbySnapshot(kind: string, from: string, to: string, keyword: string, relation: string, filters: string): NearbyPage | null {
+  const data = readCustomerSnapshot(nearbyPath(kind, from, to, keyword, relation, filters))
+  return data == null ? null : nearbyPage(data, kind)
+}
+export async function customerNearbyList(kind: string, from: string, to: string, keyword: string, relation: string, filters: string, origin: NearbyOrigin, cursor: string): Promise<NearbyPage> {
+  const selection = nearbyPath(kind, from, to, keyword, relation, filters)
+  const path = selection + pointQuery(origin.gpsLongitude, origin.gpsLatitude) + '&nearCursor=' + encodeURIComponent(cursor)
+  const data = await refreshCustomerSnapshot(path, async (): Promise<UTSJSONObject> => {
+    const result = crmObject(await crmCall(path))
+    nearbyPage(result, kind)
+    return result
+  }, cursor.length == 0 ? selection : path)
+  return nearbyPage(data, kind)
+}

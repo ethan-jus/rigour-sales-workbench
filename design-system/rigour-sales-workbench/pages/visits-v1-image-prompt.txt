@@ -1,0 +1,40 @@
+Use case: ui-mockup.
+Create a polished high-fidelity CHINESE mobile enterprise sales App design review board, three front-facing flat phone screens side-by-side, equal width, 390x844 logical points, on a very pale neutral background. Large readable crisp Chinese text. Landscape board approximately 1800x1300 or wider, no perspective, no hands, no decorative graphics. Thin dark-gray device outlines with rounded corners, modest status bars, no bulky hardware. Headings outside screens: "拜访记录", "拜访计划", "拜访中". Small footer outside phones only: "设计预览 · 示例数据". All screens white #FFFFFF, graphite #252A31, secondary #626970, separators #D6DBDF, pale-gray #F5F6F7, rust orange #C64C1C for primary action/selected state, pale-orange #FFF2EA. Chinese system sans-serif. Compact, refined, precise alignment: 20px phone gutters, 8/12/16 spacing, section titles 17px, page title 25px, store names16px semibold, metadata13px. No giant dashboards, no explanatory paragraphs, no slogan. Outline icons in one consistent 1.7px stroke family. Calm compact rows, no shadows or excessive cards.
+
+LEFT PHONE — default visit record root tab, 14:50 status time.
+Header "拜访" left and compact orange filled button with small outlined map-pin/play icon plus "开始拜访" at right.
+Underline tabs "拜访记录" (selected orange) and "拜访计划".
+Next row: compact segmented date "今日" selected pale-orange, "本月", "上月", and right "11月12日⌄".
+Next SINGLE compact pale-gray strip with labels and values ON SAME BASELINE: "拜访 8" | "有效 6" | "新增 3". Numbers bold, not stacked. Three equal cells, subtle separators.
+Next search row: search icon, "搜索门店", right separate filter sliders icon.
+Below a slim row "全部状态⌄" left and "8次" right.
+Records as compact white rows separated by fine hairlines, NO individual rounded cards or large left icon. Each row has bold store name left, a concise status pill and chevron at right, second line complete geographic address in smaller gray, third line time and duration. Four rows:
+1 "星辰台球俱乐部" with neutral gray check badge "有效"; "四川省成都市武侯区 · 科华北路88号"; "14:10–14:42 · 32分钟".
+2 "锐力台球（高新店）" badge "待核验" pale gray; "四川省成都市武侯区 · 天府三街126号"; "13:20–13:46 · 26分钟".
+3 "初见台球俱乐部" badge "有效"; "四川省成都市锦江区 · 东大街18号"; "11:05–11:38 · 33分钟".
+4 "八号台球（城西店）" muted red badge "未通过"; "四川省成都市青羊区 · 清江东路68号"; "10:10–10:34 · 24分钟".
+Bottom fixed 5-tab nav: outline home "工作台", two people "客户", clipboard WITH CHECK "拜访" selected orange, document with text lines "订单", person "我的". The visit icon MUST be clipboard-check, not a location pin. Generous tap area despite compact visuals, home gesture bar below.
+
+MIDDLE PHONE — same root tab, plan selected, 14:50.
+Same header "拜访", same orange "开始拜访" action.
+Underline tabs "拜访记录" and "拜访计划" selected orange.
+Date row: "今日" selected pale-orange, "明日", right "11月12日⌄".
+Same compact search row "搜索门店" with search and filter icons.
+Next status chips "待拜访 3" selected orange text and "已完成 2" gray.
+Three compact plan rows separated by hairlines; slim orange outlined "去拜访" right, approx72x32 visual with sufficient touch space.
+1 "九号台球俱乐部", small pale-orange "待首访" beside/under name if room, "四川省成都市武侯区 · 武侯大道68号", "确认采购需求", orange short deadline "保护至今日18:00".
+2 "黑桃台球俱乐部", "四川省成都市锦江区 · 静安路66号", "跟进台呢报价", muted "保护至11月16日".
+3 "青禾台球空间", "四川省成都市成华区 · 建设路30号", "回访到货情况", muted "保护至11月20日".
+No filler content after list. Natural remaining white space. Identical bottom nav with clipboard-check "拜访" selected orange. No extra floating controls.
+
+RIGHT PHONE — focused in-store visit screen, secondary page, 14:28.
+Top nav back chevron, centered title "拜访中", NO bottom 5-tab nav on this secondary screen.
+Store heading "星辰台球俱乐部", then smaller full address "四川省成都市武侯区 · 科华北路88号", then "14:10 到店 · 已停留18分钟".
+Compact pale-gray status row with microphone outline + small dot and "录音中 18:24" left, "查看 ›" right; do not show complicated waveform or explanations.
+Section title "门头照" with "1张" at right. One 76x76 muted realistic storefront thumbnail with a small check at corner, plus same-sized outlined camera tile labeled "拍照". Thin divider.
+Compact single-line selector row "接待人" left; "王先生 · 老板  ›" right.
+Compact row "沟通结果" left, two chips "已沟通" selected pale-orange and "未接触".
+Compact row "合作意向" left, four short chips "高" selected, "中", "低", "暂无".
+Section "拜访记录" with a small textarea pale-gray surface about100 high. Typed example two short lines "已沟通台呢采购需求，" and "明日发送报价。". No explanatory helper paragraph.
+A restrained gray check with "已保存草稿" below.
+At bottom above safe area: wide solid rust-orange button "完成拜访", 48px tall, radius10. No second competing button. All content fits comfortably with compact spacing, correct hierarchy; no long descriptions. Preserve text verbatim, accurate Chinese typography, refined business usability.

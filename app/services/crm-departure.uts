@@ -1,0 +1,140 @@
+import { reactive, watch } from 'vue'
+import { acquireBackgroundLocation, releaseBackgroundLocation, BackgroundPoint } from './background-location.uts'
+import { crmCall, crmObject, crmId, crmOwner, crmMessage } from './crm.uts'
+import { crmMediaOwner, crmFinishRecording, crmCompleteRecording, crmEndingVisit } from './crm-media.uts'
+
+type DepartureTarget = { captureId: string, longitude: number, latitude: number, radius: number, maximumAccuracy: number | null }
+type DepartureState = { captureId: string, message: string, completedRevision: number }
+export const crmDeparture = reactive({ captureId: '', message: '', completedRevision: 0 } as DepartureState)
+let target: DepartureTarget | null = null
+let owner = ''
+let started = false
+let processing = false
+let completing = false
+let lastSampleAt = 0
+let outsideSince = 0
+let outsideLastAt = 0
+let pending: UTSJSONObject | null = null
+
+function storageKey(account: string): string { return 'rigour.crm.departure.v1.' + encodeURIComponent(account) }
+function pendingKey(account: string): string { return storageKey(account) + '.pending' }
+export function departureDistance(longitude: number, latitude: number, targetLongitude: number, targetLatitude: number): number {
+  const rad = Math.PI / 180
+  const a = Math.sin((latitude - targetLatitude) * rad / 2)
+  const b = Math.sin((longitude - targetLongitude) * rad / 2)
+  return 6371000 * 2 * Math.asin(Math.min(1, Math.sqrt(a * a + Math.cos(latitude * rad) * Math.cos(targetLatitude * rad) * b * b)))
+}
+function stopLocation(): void {
+  releaseBackgroundLocation('departure')
+  started = false; outsideSince = 0; outsideLastAt = 0
+}
+export function stopCrmDeparture(capture: string): void {
+  if (target?.captureId != capture) return
+  stopLocation()
+  uni.removeStorageSync(storageKey(owner)); uni.removeStorageSync(pendingKey(owner))
+  target = null; pending = null; crmDeparture.message = ''
+}
+async function completeDeparture(): Promise<void> {
+  const current = target; const account = owner; const revision = crmOwner(); const command = pending
+  if (completing || current == null || command == null || account != crmMediaOwner()) return
+  completing = true; crmDeparture.message = '已确认离店，正在结束录音与拜访'
+  try {
+    await crmFinishRecording(current.captureId)
+    if (account != crmMediaOwner() || revision != crmOwner()) return
+    // Retrying the same body is safe after a lost response; files upload independently.
+    try { await crmCall('/sales/me/visits/' + current.captureId + '/auto-check-out', 'POST', command) }
+    catch (e) {
+      const detail = crmObject(await crmCall('/sales/me/visits/' + current.captureId))
+      if (detail.getString('status') != 'CHECKED_OUT') throw e
+    }
+    if (account != crmMediaOwner() || revision != crmOwner()) return
+    crmCompleteRecording(current.captureId); stopCrmDeparture(current.captureId)
+    crmDeparture.message = '已自动结束拜访，材料后台上传；未填结果可继续补充'
+    crmDeparture.completedRevision++
+  } catch (e) { if (account == crmMediaOwner()) crmDeparture.message = '离店结束待重试：' + crmMessage(e) }
+  finally { completing = false }
+}
+async function acceptLocation(longitude: number, latitude: number, accuracy: number): Promise<void> {
+  const current = target; const account = owner; const revision = crmOwner(); const now = Date.now()
+  if (current == null || account != crmMediaOwner() || pending != null || processing || crmEndingVisit(current.captureId)) return
+  if (now - lastSampleAt < 10000) return
+  lastSampleAt = now
+  if (!Number.isFinite(accuracy) || accuracy <= 0 || (current.maximumAccuracy != null && accuracy > current.maximumAccuracy!)) {
+    outsideSince = 0; crmDeparture.message = '定位精度不足，暂不自动结束，请重新定位'; return
+  }
+  processing = true
+  try {
+    const location = crmObject(await crmCall('/sales/work/location/normalize', 'POST', { longitude: longitude, latitude: latitude, coordinateSystem: 'WGS84' } as UTSJSONObject))
+    if (target?.captureId != current.captureId || account != crmMediaOwner() || revision != crmOwner()) return
+    const lng = location.getNumber('longitude'); const lat = location.getNumber('latitude')
+    if (location.getString('coordinateSystem') != 'GCJ02' || lng == null || lat == null) throw new Error('坐标转换未完成')
+    const distance = departureDistance(lng!, lat!, current.longitude, current.latitude)
+    if (distance - accuracy <= current.radius) {
+      outsideSince = 0; outsideLastAt = 0; crmDeparture.message = '离店监测中 · 超出 ' + current.radius.toString() + ' 米范围后自动结束'; return
+    }
+    if (outsideSince == 0 || now - outsideLastAt > 60000) outsideSince = now
+    outsideLastAt = now
+    crmDeparture.message = '正在确认已离开门店范围'
+    if (now - outsideSince < 15000) return
+    const id = crmId()
+    pending = { idempotencyKey: id, deviceEventId: id, clientOccurredAt: new Date().toISOString(), location: { longitude: lng!, latitude: lat!, accuracyMeters: accuracy, source: 'APP_NATIVE' } as UTSJSONObject } as UTSJSONObject
+    uni.setStorageSync(pendingKey(account), JSON.stringify(pending)); stopLocation()
+    await completeDeparture()
+  } catch (e) { if (account == crmMediaOwner()) { outsideSince = 0; crmDeparture.message = '离店定位待恢复：' + crmMessage(e) } }
+  finally { processing = false }
+}
+function beginLocation(): void {
+  if (started || target == null || owner != crmMediaOwner() || pending != null) return
+  // #ifdef APP
+  started = true
+  const capture = target!.captureId; const account = owner
+  acquireBackgroundLocation('departure', (point: BackgroundPoint) => { acceptLocation(point.longitude, point.latitude, point.accuracy) }, (message: string) => { outsideSince = 0; crmDeparture.message = '离店监测定位失败：' + message }).then(() => {
+    if (started && target?.captureId == capture && owner == account) crmDeparture.message = '离店监测已开启，定位不可用时不会自动结束'
+  }).catch((error) => { if (target?.captureId == capture && owner == account) { stopLocation(); crmDeparture.message = '离店监测未启动：' + (error == null ? '系统定位不可用' : crmMessage(error!)) + '；请恢复定位或手动完成拜访' } })
+  // #endif
+}
+export async function ensureCrmDeparture(capture: string): Promise<void> {
+  if (target?.captureId == capture && owner == crmMediaOwner()) { if (pending != null) await completeDeparture(); else beginLocation(); return }
+  const revision = crmOwner(); const account = crmMediaOwner()
+  const data = crmObject(await crmCall('/sales/me/visits/' + capture + '/auto-departure-context'))
+  if (revision != crmOwner()) return
+  if (data.getString('status') != 'CHECKED_IN' || data.getBoolean('enabled') != true) { stopCrmDeparture(capture); return }
+  const lng = data.getNumber('longitude'); const lat = data.getNumber('latitude'); const radius = data.getNumber('radiusMeters')
+  if (lng == null || lat == null || radius == null || radius! <= 0) throw new Error('本次拜访缺少离店定位规则')
+  stopLocation(); owner = account; pending = null; lastSampleAt = 0
+  target = { captureId: capture, longitude: lng!, latitude: lat!, radius: radius!, maximumAccuracy: data.getNumber('maximumLocationAccuracyMeters') } as DepartureTarget
+  crmDeparture.captureId = capture
+  uni.setStorageSync(storageKey(owner), JSON.stringify(target)); beginLocation()
+}
+export async function resumeCrmDeparture(): Promise<void> {
+  const account = crmMediaOwner()
+  if (account.length == 0) return
+  if (owner != account) { stopLocation(); target = null; pending = null; owner = account }
+  try {
+    if (target == null) {
+      const raw = uni.getStorageSync(storageKey(account))
+      if (raw == null || (raw as string).length == 0) return
+      target = JSON.parse<DepartureTarget>(raw as string)
+      const saved = uni.getStorageSync(pendingKey(account))
+      pending = saved != null && (saved as string).length > 0 ? JSON.parse<UTSJSONObject>(saved as string) : null
+    }
+    if (target == null) return
+    const capture = target!.captureId
+    crmDeparture.captureId = capture
+    if (pending != null) { await completeDeparture(); return }
+    const detail = crmObject(await crmCall('/sales/me/visits/' + capture))
+    if (account != crmMediaOwner()) return
+    if (detail.getString('status') != 'CHECKED_IN') { stopCrmDeparture(capture); return }
+    // A cold launch never prompts for location. An active visit resumes only with prior permission.
+    // #ifdef APP
+    if (uni.getAppAuthorizeSetting().locationAuthorized == 'authorized') beginLocation()
+    // #endif
+  } catch (e) { if (account == crmMediaOwner()) crmDeparture.message = '离店监测待恢复：' + crmMessage(e) }
+}
+let initialized = false
+export function startCrmDeparture(): void {
+  if (initialized) return
+  initialized = true
+  watch((): string => crmMediaOwner(), (_account: string) => { stopLocation(); target = null; pending = null; crmDeparture.message = ''; resumeCrmDeparture() })
+  setInterval(() => { if (pending != null) completeDeparture() }, 30000)
+}

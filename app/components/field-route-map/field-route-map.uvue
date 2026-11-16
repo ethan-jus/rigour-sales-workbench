@@ -1,0 +1,76 @@
+<template>
+  <view class="route-map">
+    <!-- #ifdef APP-ANDROID -->
+    <amap v-if="consented" class="route-native" :latitude="latitude" :longitude="longitude" :scale="13" :markers="amapMarkers" :polylines="amapLines" :include-points="amapPoints" :show-location="false" :show-scale="true" :enable-poi="true" :enable-rotate="false" @markertap="selectMarker" />
+    <view v-if="consented" class="route-toggle" :aria-label="fullscreen ? '退出全屏' : '全屏查看地图'" hover-class="route-toggle-pressed" @click="toggleFullscreen"><view class="route-toggle-surface"><image class="route-toggle-icon" :src="fullscreen ? '/static/fieldwork/minimize.svg' : '/static/fieldwork/maximize.svg'" /></view></view>
+    <view v-else class="route-consent">
+      <text class="route-title">查看轨迹地图</text>
+      <text class="route-copy">高德地图 SDK 会处理设备、网络及地图位置信息，用于地图展示与安全保障。</text>
+      <text class="route-policy" @click="openPrivacy">高德 SDK 隐私政策</text>
+      <button class="route-enable" @click="agree">同意并查看</button>
+    </view>
+    <!-- #endif -->
+    <!-- #ifndef APP-ANDROID -->
+    <view class="route-consent"><text class="route-copy">此版本暂不支持地图，作业记录可在下方查看</text></view>
+    <!-- #endif -->
+  </view>
+</template>
+<script setup lang="uts">
+import { FieldLine, FieldMarker, FieldPoint } from '../../services/fieldwork.uts'
+// The provider boundary owns SDK consent and types; mileage remains server-calculated.
+// #ifdef APP-ANDROID
+import Intent from 'android.content.Intent'
+import Uri from 'android.net.Uri'
+import { AmapMarker, AmapLocationObject, Polyline as AmapPolyline } from '../../uni_modules/uni-map-amap/utssdk/interface.uts'
+import { UniMapMarkerTapEvent as AmapMarkerTapEvent } from '../../uni_modules/uni-map-amap/components/amap/global.uts'
+// #endif
+type RouteMapProps = { owner: string, latitude: number, longitude: number, points: FieldPoint[], lines: FieldLine[], markers: FieldMarker[], fullscreen: boolean }
+const props = defineProps<RouteMapProps>()
+const emit = defineEmits<{ (event: 'select', markerId: number): void; (event: 'fullscreen'): void }>()
+function toggleFullscreen(): void { emit('fullscreen') }
+// #ifdef APP-ANDROID
+const consented = ref(false)
+function consentKey(): string { return 'rigour.amap.consent.v1|' + props.owner }
+function readConsent(): void {
+  consented.value = false
+  if (props.owner.length == 0) return
+  try { consented.value = uni.getStorageSync(consentKey()) == true } catch (_) { }
+}
+function agree(): void {
+  if (props.owner.length == 0) return
+  try { uni.setStorageSync(consentKey(), true) }
+  catch (_) { uni.showToast({ title: '本机设置未保存，下次需重新确认', icon: 'none' }) }
+  consented.value = true
+}
+function openPrivacy(): void {
+  try {
+    const intent = new Intent(Intent.ACTION_VIEW, Uri.parse('https://lbs.amap.com/pages/privacy/'))
+    UTSAndroid.getUniActivity()!.startActivity(intent)
+  } catch (_) { uni.showToast({ title: '暂时无法打开隐私政策，请稍后重试', icon: 'none' }) }
+}
+function selectMarker(event: AmapMarkerTapEvent): void { emit('select', event.detail?.markerId ?? 0) }
+const amapPoints = computed((): AmapLocationObject[] | null => {
+  if (props.points.length < 2) return null
+  const first = props.points[0]
+  if (!props.points.some((point: FieldPoint): boolean => point.latitude != first.latitude || point.longitude != first.longitude)) return null
+  return props.points.map((point): AmapLocationObject => ({ latitude: point.latitude, longitude: point.longitude } as AmapLocationObject))
+})
+const amapLines = computed((): AmapPolyline[] => props.lines.map((line): AmapPolyline => ({ points: line.points.map((point): AmapLocationObject => ({ latitude: point.latitude, longitude: point.longitude } as AmapLocationObject)), color: line.color, width: line.width } as AmapPolyline)))
+const amapMarkers = computed((): AmapMarker[] => props.markers.map((marker: FieldMarker): AmapMarker => ({ id: marker.id, latitude: marker.latitude, longitude: marker.longitude, iconPath: marker.iconPath, width: marker.width, height: marker.height, title: marker.title } as AmapMarker)))
+onMounted(readConsent)
+watch((): string => props.owner, (_owner: string) => readConsent())
+// #endif
+</script>
+<style>
+.route-map { width: 100%; height: 100%; position: relative; }
+.route-native { width: 100%; height: 100%; }
+.route-toggle { position: absolute; right: 0; top: 0; width: 48px; height: 48px; align-items: center; justify-content: center; }
+.route-toggle-surface { width: 32px; height: 32px; border-radius: 6px; background-color: #ffffff; align-items: center; justify-content: center; }
+.route-toggle-pressed { opacity: 0.7; }
+.route-toggle-icon { width: 22px; height: 22px; }
+.route-consent { flex: 1; align-items: center; justify-content: center; padding: 16px 20px; }
+.route-title { color: #24282d; font-size: 16px; font-weight: 600; margin-bottom: 8px; }
+.route-copy { color: #626970; font-size: 12px; line-height: 19px; text-align: center; }
+.route-policy { color: #b65129; font-size: 12px; line-height: 44px; }
+.route-enable { height: 40px; line-height: 40px; font-size: 14px; padding: 0 20px; margin: 0; border-width: 0; border-radius: 8px; color: #ffffff; background-color: #b65129; }
+</style>

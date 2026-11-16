@@ -1,0 +1,87 @@
+<template>
+  <view class="sw-page">
+    <scroll-view class="v-history-page" direction="vertical" @scrolltolower="more">
+      <view class="v-content">
+        <view class="v-period-row">
+          <view class="v-periods"><button :class="period == 'today' ? 'v-period v-period-active' : 'v-period'" @click="selectPeriod('today')">今日</button><button :class="period == 'month' ? 'v-period v-period-active' : 'v-period'" @click="selectPeriod('month')">本月</button><button :class="period == 'lastMonth' ? 'v-period v-period-active' : 'v-period'" @click="selectPeriod('lastMonth')">上月</button></view>
+          <view class="v-date" @click="dateMenu = !dateMenu"><text class="v-small">{{ range.dateLabel }}</text><image class="v-arrow" src="/static/home/chevron-down.svg" /></view>
+        </view>
+        <view v-if="dateMenu" class="v-menu"><button class="v-menu-button" @click="selectPeriod('year')">本年</button><picker mode="date" fields="month" start="1970-01-01" :end="today" :value="range.from.substring(0,7)" @change="chooseMonth"><view class="v-menu-item"><text class="v-text">选择月份</text></view></picker><picker mode="date" start="1970-01-01" :end="today" :value="range.from" @change="chooseDay"><view class="v-menu-item"><text class="v-text">选择日期</text></view></picker></view>
+        <view class="v-stats"><view class="v-stat" @click="metric('all')"><text class="v-stat-label">拜访</text><text class="v-number">{{ visits }}</text></view><view class="v-stat-divider" /><view class="v-stat" @click="metric('effective')"><text class="v-stat-label">有效</text><text class="v-number">{{ effective }}</text></view><view class="v-stat-divider" /><view class="v-stat" @click="metric('first')"><text class="v-stat-label">新增</text><text class="v-number">{{ first }}</text></view></view>
+        <view class="v-search-row"><view class="v-search"><image class="v-icon" src="/static/customers/search.svg" /><input class="v-search-input" v-model="keyword" placeholder="搜索门店" confirm-type="search" @input="searchChanged" @confirm="search" /></view><view class="v-filter-control" @click="chooseFilter"><image class="v-icon" src="/static/customers/filter.svg" /></view></view>
+        <view class="v-filter-row"><view class="v-date" @click="chooseFilter"><text class="v-small">{{ filterLabel }}</text><image class="v-arrow" src="/static/home/chevron-down.svg" /></view><text class="v-small">{{ totalLabel }}</text></view>
+        <view v-if="error.length > 0" class="v-error"><text class="v-error-text">{{ error }}</text><button class="sw-text-button" @click="reload">重试</button></view>
+        <view v-for="row in rows" :key="row.id" class="v-record" hover-class="sw-pressed" @click="openRecord(row)"><view class="sw-row"><text class="v-name sw-grow" :lines="1">{{ row.name }}</text><view :class="row.tone == 'danger' ? 'v-badge v-badge-danger' : row.tone == 'accent' ? 'v-badge v-badge-accent' : 'v-badge'"><text :class="row.tone == 'danger' ? 'v-badge-text v-danger' : row.tone == 'accent' ? 'v-badge-text v-orange' : 'v-badge-text'">{{ row.label }}</text></view><image class="v-arrow" src="/static/home/chevron-right.svg" /></view><text class="v-address" :lines="2">{{ row.address }}</text><text class="v-small">{{ row.time }}</text></view>
+        <text v-if="loading" class="v-empty">加载中…</text><text v-if="loaded && !loading && rows.length == 0 && error.length == 0" class="v-empty">暂无拜访记录</text>
+        <button v-if="rows.length < total && !loading" class="sw-text-button" @click="more">加载更多</button>
+      </view>
+    </scroll-view>
+  </view>
+</template>
+<script setup lang="uts">
+import { hasPermission, requireSession } from '../../services/session.uts'
+import { crmMessage } from '../../services/crm.uts'
+import { visitToday, visitReadKey } from '../../services/visits.uts'
+import { workbenchPeriod, WorkbenchPeriod } from '../../services/workbench.uts'
+import { VisitBoardRow, visitBoardLabel, parseVisitBoardRow, loadVisitBoard, openVisitBoardRow } from '../../services/visit-workbench.uts'
+const today = ref(visitToday()); const period = ref('today'); const month = ref(''); const selectedDay = ref(''); const selectedFrom = ref(''); const selectedTo = ref(''); const dateMenu = ref(false)
+const keyword = ref(''); const kind = ref('all'); const state = ref('ALL'); const rows = ref<VisitBoardRow[]>([])
+const visits = ref('—'); const effective = ref('—'); const first = ref('—'); const total = ref(0); const loading = ref(false); const loaded = ref(false); const error = ref('')
+let request = 0; let searchTimer = 0; let visible = false
+const range = computed((): WorkbenchPeriod => {
+  if (period.value == 'day') return { from: selectedDay.value, to: selectedDay.value, label: '日期', dateLabel: selectedDay.value.substring(5).replace('-', '月') + '日' } as WorkbenchPeriod
+  if (period.value == 'range') return { from: selectedFrom.value, to: selectedTo.value, label: '所选期间', dateLabel: selectedFrom.value == selectedTo.value ? selectedFrom.value.substring(5).replace('-', '月') + '日' : selectedFrom.value.substring(0,7) } as WorkbenchPeriod
+  return workbenchPeriod(period.value, today.value, month.value)
+})
+const filterLabel = computed((): string => kind.value == 'first' ? '新增拜访' : kind.value == 'effective' ? '有效拜访' : state.value == 'ALL' ? '全部状态' : visitBoardLabel(state.value))
+const totalLabel = computed((): string => loaded.value ? total.value.toString() + (kind.value == 'first' ? '家' : '次') : '—')
+async function load(append: boolean = false): Promise<void> {
+  if (!requireSession() || (append && loading.value)) return
+  const version = ++request; const owner = visitReadKey(); loading.value = true; error.value = ''
+  if (!append) { loaded.value = false; rows.value = []; total.value = 0; visits.value = '—'; effective.value = '—'; first.value = '—' }
+  try {
+    if (!hasPermission('sales:visit:own:read') || !hasPermission('crm:store:history-read')) throw new Error('当前账号没有拜访记录权限')
+    const data = await loadVisitBoard(range.value.from, range.value.to, kind.value, state.value, keyword.value, append ? Math.floor(rows.value.length / 20) + 1 : 1)
+    if (version != request || owner != visitReadKey()) return
+    const items = data.getArray<UTSJSONObject>('items'); const count = data.getNumber('total'); const summary = data.getJSON('summary')
+    if (items == null || count == null || summary == null) throw new Error('拜访数据格式异常')
+    const allCount = summary!.getNumber('totalVisitCount'); const effectiveCount = summary!.getNumber('effectiveVisitCount'); const firstCount = summary!.getNumber('firstVisitCount')
+    if (allCount == null || effectiveCount == null || firstCount == null) throw new Error('拜访统计格式异常')
+    const next = items!.map((row: UTSJSONObject): VisitBoardRow => { const item = parseVisitBoardRow(row); if (item.time.length >= 16) item.time = item.time.substring(range.value.from == range.value.to ? 11 : 5); return item })
+    rows.value = append ? rows.value.concat(next) : next; total.value = count!
+    visits.value = allCount!.toString(); effective.value = effectiveCount!.toString(); first.value = firstCount!.toString(); loaded.value = true
+  } catch (e) { if (version == request && owner == visitReadKey()) error.value = crmMessage(e) }
+  finally { if (version == request) loading.value = false }
+}
+function reload(): void { load(false) }
+function more(): void { if (loaded.value && rows.value.length < total.value) load(true) }
+function selectPeriod(value: string): void { period.value = value; dateMenu.value = false; reload() }
+function chooseMonth(e: UniPickerChangeEvent): void { month.value = e.detail.value as string; selectPeriod('custom') }
+function chooseDay(e: UniPickerChangeEvent): void { selectedDay.value = e.detail.value as string; selectPeriod('day') }
+function metric(value: string): void { kind.value = value; state.value = 'ALL'; reload() }
+function chooseFilter(): void { uni.showActionSheet({ itemList: ['全部状态','进行中','待提交','待核验','有效','未通过','已撤销'], success: (r) => { const values = ['ALL','IN_PROGRESS','PENDING_SUBMIT','SUBMITTED','EFFECTIVE','INVALID','VOID']; state.value = values[r.tapIndex]; kind.value = 'all'; reload() } }) }
+function search(): void { clearTimeout(searchTimer); reload() }
+function searchChanged(): void { clearTimeout(searchTimer); searchTimer = setTimeout(() => { reload() }, 350) }
+function openRecord(row: VisitBoardRow): void { openVisitBoardRow(row) }
+onLoad((query) => {
+  const from = query['from'] ?? ''; const to = query['to'] ?? ''; const selectedKind = query['kind'] ?? ''; const selectedState = query['status'] ?? ''
+  if (/^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to) && from <= to) {
+    selectedFrom.value = from; selectedTo.value = to; period.value = 'range'
+    const currentMonth = workbenchPeriod('month', today.value, ''); const previousMonth = workbenchPeriod('lastMonth', today.value, '')
+    if (from == today.value && to == today.value) period.value = 'today'
+    else if (from == currentMonth.from && to == currentMonth.to) period.value = 'month'
+    else if (from == previousMonth.from && to == previousMonth.to) period.value = 'lastMonth'
+  }
+  if (['all','effective','first'].includes(selectedKind)) kind.value = selectedKind
+  if (['ALL','IN_PROGRESS','PENDING_SUBMIT','SUBMITTED','EFFECTIVE','INVALID','VOID'].includes(selectedState)) state.value = selectedState
+})
+onShow(() => { visible = true; today.value = visitToday(); reload() })
+onHide(() => { visible = false; clearTimeout(searchTimer) })
+onUnload(() => { request++; clearTimeout(searchTimer) })
+watch((): string => visitReadKey(), () => { request++; loaded.value = false; total.value = 0; loading.value = false; rows.value = []; visits.value = '—'; effective.value = '—'; first.value = '—'; error.value = ''; if (visible) reload() })
+</script>
+<style>
+@import "../../styles/workbench-ui.css";
+@import "../../styles/visits.css";
+.v-history-page { flex: 1; background-color: #ffffff; }
+</style>

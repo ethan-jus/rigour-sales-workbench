@@ -1,0 +1,108 @@
+import { requestApi } from './api.uts'
+import { requestSalesApi } from './sales-profile.uts'
+import { watch } from 'vue'
+import { session, hasPermission } from './session.uts'
+import { appEnvironment } from './config.uts'
+export type CaptureRules = { requireLocationOnOpen: boolean, maximumLocationAccuracyMeters: number | null, automaticRecording: boolean, automaticCheckout: boolean, allowPhotoImport: boolean, allowRecordingImport: boolean }
+export type VisitEntryPolicy = { id: string, radiusMeters: number, captureRules: CaptureRules }
+export function emptyCaptureRules(): CaptureRules { return { requireLocationOnOpen: false, maximumLocationAccuracyMeters: null, automaticRecording: false, automaticCheckout: false, allowPhotoImport: false, allowRecordingImport: false } as CaptureRules }
+export function parseCaptureRules(value: UTSJSONObject): CaptureRules {
+  return { requireLocationOnOpen: value.getBoolean('requireLocationOnOpen') ?? false, maximumLocationAccuracyMeters: value.getNumber('maximumLocationAccuracyMeters'), automaticRecording: value.getBoolean('automaticRecording') ?? false, automaticCheckout: value.getBoolean('automaticCheckout') ?? false, allowPhotoImport: value.getBoolean('allowPhotoImport') ?? false, allowRecordingImport: value.getBoolean('allowRecordingImport') ?? false } as CaptureRules
+}
+type CaptureRuleSnapshot = { captureId: string, savedAt: number, rules: CaptureRules }
+let policyGeneration = 0; let policyOwner = ''; let currentPolicy: VisitEntryPolicy | null = null; let currentSavedAt = 0
+let currentRequest: Promise<VisitEntryPolicy> | null = null
+let captures: CaptureRuleSnapshot[] = []
+const captureRequests = new Map<string, Promise<CaptureRules>>()
+let preloadStarted = false; let preloadTimer = 0
+function policyOwnerKey(): string {
+  if (!session.authenticated) return ''
+  return JSON.stringify([appEnvironment.environment, appEnvironment.gatewayOrigin, appEnvironment.issuer,
+    session.tenantId, session.userId, session.revision, session.permissions.slice().sort().join(',')])
+}
+function alignPolicyOwner(): string {
+  const next = policyOwnerKey()
+  if (next != policyOwner) { policyGeneration++; policyOwner = next; currentPolicy = null; currentSavedAt = 0; currentRequest = null; captures = []; captureRequests.clear() }
+  return next
+}
+function freshPolicy(savedAt: number, maximumAge: number): boolean { const age = Date.now() - savedAt; return savedAt > 0 && age >= 0 && age < maximumAge }
+async function readCurrentPolicy(owner: string, version: number): Promise<VisitEntryPolicy> {
+  try {
+    const data = await new Promise<UTSJSONObject>((resolve, reject) => {
+      requestSalesApi('/sales/me/visit-policy', (response) => { const value = response.getJSON('data'); if (value == null) reject(new Error('拜访规则尚未加载，请重试')); else resolve(value) }, (message) => reject(new Error(message)))
+    })
+    if (owner != alignPolicyOwner() || version != policyGeneration) throw new Error('账号已变更')
+    const id = data.getString('id') ?? ''; const radius = data.getNumber('radiusMeters'); const rules = data.getJSON('captureRules')
+    if (id.length == 0 || radius == null || !Number.isFinite(radius!) || radius! <= 0 || rules == null) throw new Error('拜访范围规则尚未加载，请重试')
+    const result = { id: id, radiusMeters: radius!, captureRules: parseCaptureRules(rules!) } as VisitEntryPolicy
+    currentPolicy = result; currentSavedAt = Date.now(); return result
+  } catch (e) { if (owner == alignPolicyOwner() && version == policyGeneration) { currentPolicy = null; currentSavedAt = 0 }; throw e }
+  finally { if (owner == alignPolicyOwner() && version == policyGeneration) currentRequest = null }
+}
+// One account-scoped published snapshot for every entry; no page owns a second policy cache.
+export function currentVisitEntryPolicy(force: boolean = false): Promise<VisitEntryPolicy> {
+  const owner = alignPolicyOwner()
+  if (owner.length == 0 || !hasPermission('sales:context:read')) return new Promise<VisitEntryPolicy>((_, reject) => reject(new Error('当前账号不能读取拜访规则')))
+  if (!force && currentPolicy != null && freshPolicy(currentSavedAt, 300000)) return Promise.resolve(currentPolicy!)
+  if (currentRequest != null) return currentRequest!
+  currentRequest = readCurrentPolicy(owner, policyGeneration); return currentRequest!
+}
+export async function currentCaptureRules(): Promise<CaptureRules> { return (await currentVisitEntryPolicy()).captureRules }
+async function readCaptureRules(capture: string, owner: string, version: number): Promise<CaptureRules> {
+  try {
+    const data = await new Promise<UTSJSONObject>((resolve, reject) => { requestApi('/sales/me/visits/' + encodeURIComponent(capture) + '/capture-rules', 'GET', null, (response) => {
+      const value = response.getJSON('data'); if (value == null) reject(new Error('本次拜访规则读取失败')); else resolve(value)
+    }, (message) => reject(new Error(message))) })
+    if (owner != alignPolicyOwner() || version != policyGeneration) throw new Error('账号已变更')
+    const rules = parseCaptureRules(data)
+    captures = captures.filter((item: CaptureRuleSnapshot): boolean => item.captureId != capture).slice(-19)
+    captures.push({ captureId: capture, savedAt: Date.now(), rules: rules } as CaptureRuleSnapshot)
+    return rules
+  } catch (e) { if (owner == alignPolicyOwner() && version == policyGeneration) captures = captures.filter((item: CaptureRuleSnapshot): boolean => item.captureId != capture); throw e }
+  finally { if (owner == alignPolicyOwner() && version == policyGeneration) captureRequests.delete(capture) }
+}
+export function visitCaptureRules(capture: string): Promise<CaptureRules> {
+  const owner = alignPolicyOwner()
+  if (owner.length == 0) return new Promise<CaptureRules>((_, reject) => reject(new Error('请先登录公司账号')))
+  const cached = captures.find((item: CaptureRuleSnapshot): boolean => item.captureId == capture && freshPolicy(item.savedAt, 600000))
+  if (cached != null) return Promise.resolve(cached.rules)
+  const running = captureRequests.get(capture); if (running != null) return running
+  const request = readCaptureRules(capture, owner, policyGeneration); captureRequests.set(capture, request); return request
+}
+function preloadPolicy(force: boolean = false): void {
+  if (alignPolicyOwner().length == 0 || !hasPermission('sales:context:read')) return
+  currentVisitEntryPolicy(force).catch((_) => {})
+}
+export function resumeVisitPolicyPreload(): void {
+  preloadPolicy(); clearInterval(preloadTimer)
+  preloadTimer = setInterval(() => { preloadPolicy(true) }, 60000)
+}
+export function pauseVisitPolicyPreload(): void { clearInterval(preloadTimer) }
+export function startVisitPolicyPreload(): void {
+  if (preloadStarted) return
+  preloadStarted = true
+  watch((): string => policyOwnerKey(), (_value: string) => { alignPolicyOwner(); preloadPolicy() })
+  resumeVisitPolicyPreload()
+}
+export function validateLocationAccuracy(accuracy: number | null, maximum: number | null): void {
+  if (accuracy == null || accuracy! <= 0) throw new Error('未取得有效定位精度，请重新定位')
+  if (maximum != null && accuracy! > maximum!) throw new Error('当前定位误差约 ' + Math.round(accuracy!).toString() + ' 米，要求不超过 ' + maximum!.toString() + ' 米，请到开阔处重试')
+}
+export function requestVisitMicrophone(): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    // #ifdef APP-ANDROID || APP-HARMONY
+    let permission = 'android.permission.RECORD_AUDIO'
+    // #ifdef APP-HARMONY
+    permission = 'ohos.permission.MICROPHONE'
+    // #endif
+    uni.requestSystemPermission({ permissions: [permission], success: (result) => { if (result.grantedList.includes(permission)) resolve(); else reject(new Error('本次拜访要求录音，请允许麦克风后重试；可在系统设置中开启')) }, fail: (error) => reject(new Error('麦克风授权失败：' + error.errMsg)) })
+    // #endif
+    // #ifdef APP-IOS
+    if (uni.getAppAuthorizeSetting().microphoneAuthorized == 'denied') reject(new Error('请在系统设置中允许麦克风，才能自动记录拜访'))
+    else resolve()
+    // #endif
+    // #ifndef APP
+    reject(new Error('请在原生 APP 中录音'))
+    // #endif
+  })
+}
