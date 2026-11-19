@@ -139,7 +139,7 @@ describe('TrackPage 日期轨迹与全屏地图', () => {
     wrapper = mount(TrackPage, {
       global: {
         plugins: [Vant],
-        stubs: { RouterLink: { template: '<a><slot /></a>' } },
+        stubs: { VanNavBar: true, RouterLink: { template: '<a><slot /></a>' } },
       },
     });
     await flushPromises();
