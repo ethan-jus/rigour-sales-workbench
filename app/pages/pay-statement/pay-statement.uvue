@@ -1,0 +1,67 @@
+<template>
+  <scroll-view class="sw-page" direction="vertical">
+    <view class="statement">
+      <picker mode="date" fields="month" :value="month" :end="today" @change="selectMonth"><view class="sw-card"><text class="heading">{{ month }} 工资条 ›</text></view></picker>
+      <text v-if="message.length > 0" class="notice">{{ message }}</text>
+      <view v-if="ready" class="sw-card"><text class="heading">{{ stage }}</text>
+        <view v-for="item in amounts" :key="item.label" class="line"><text class="label">{{ item.label }}</text><text class="amount">{{ item.value }}</text></view>
+      </view>
+      <view v-if="ready" class="sw-card"><text class="heading">提成明细</text><text v-if="details.length == 0" class="notice">本月无已核定商品行提成</text>
+        <view v-for="item in details" :key="item.id" class="item"><text class="amount">{{ item.product }} · {{ item.amount }}</text><text class="label">{{ item.reference }}</text></view>
+      </view>
+    </view>
+  </scroll-view>
+</template>
+<script setup lang="uts">
+import { crmCall, crmObject, crmOwner, crmToday } from '../../services/crm.uts'
+import { hasPermission } from '../../services/session.uts'
+import { workbenchMoney } from '../../services/workbench.uts'
+type AmountRow = { label: string, value: string }
+type CommissionRow = { id: number, product: string, amount: string, reference: string }
+const today = crmToday().substring(0, 7)
+const month = ref<string>(today)
+const amounts = ref<AmountRow[]>([])
+const details = ref<CommissionRow[]>([])
+const stage = ref<string>('')
+const message = ref<string>('')
+const ready = ref<boolean>(false)
+let generation = 0
+function clear(): void { ready.value = false; amounts.value = [] as AmountRow[]; details.value = [] as CommissionRow[]; stage.value = '' }
+function valueRow(row: UTSJSONObject, key: string, title: string): AmountRow {
+  return { label: title, value: workbenchMoney(row.getNumber(key)) } as AmountRow
+}
+async function load(): Promise<void> {
+  const run = ++generation; const owner = crmOwner()
+  clear()
+  if (!hasPermission('hr:payroll:self')) { message.value = '当前账号没有工资条查看权限'; return }
+  message.value = '读取中'
+  try {
+    const response = await crmCall('/hr/payroll/my-statement?month=' + month.value)
+    if (run != generation || owner != crmOwner()) return
+    const data = crmObject(response); const people = data.getArray<UTSJSONObject>('employees')
+    if (people == null) throw new Error('工资条数据不完整')
+    if (people.length == 0) { message.value = '该月暂无已公布工资条'; return }
+    const row = people[0]; const status = row.getString('status') ?? ''
+    if (status != 'CONFIRMED' && status != 'PAID') throw new Error('工资条状态待核')
+    stage.value = status == 'PAID' ? '已发放' : ((row.getNumber('paid') ?? 0) > 0 ? '部分发放' : '已确认，待发放')
+    amounts.value = [valueRow(row,'basis','整单结清业绩'),valueRow(row,'baseSalary','底薪'),valueRow(row,'performance','绩效工资'),valueRow(row,'commission','核定提成'),valueRow(row,'allowance','补贴'),valueRow(row,'deduction','扣款'),valueRow(row,'correction','跨月更正'),valueRow(row,'net','应付工资'),valueRow(row,'paid','已发放')] as AmountRow[]
+    const lines = row.getArray<UTSJSONObject>('details')
+    const result = [] as CommissionRow[]
+    if (lines != null) for (let i = 0; i < lines.length; i++) {
+      const item = lines[i]
+      result.push({ id:i, product:item.getString('product') ?? '商品待核', amount:workbenchMoney(item.getNumber('released')), reference:(item.getString('orderNo') ?? '') + ' · ' + (item.getString('rule') ?? '规则待核') } as CommissionRow)
+    }
+    details.value = result; ready.value = true; message.value = ''
+  } catch(e) { if (run == generation && owner == crmOwner()) message.value = (e as Error).message }
+}
+function selectMonth(event: UniPickerChangeEvent): void {
+  month.value = (event.detail.value as string).substring(0,7)
+  load()
+}
+onShow(() => { load() })
+onHide(() => { generation++; clear() })
+watch((): string => crmOwner(), (_owner: string) => { generation++; clear() })
+</script>
+<style>
+.statement{padding:16px;}.sw-card{background-color:#ffffff;border-radius:12px;padding:16px;margin-bottom:12px;}.heading{font-size:17px;font-weight:bold;color:#20262d;}.line{flex-direction:row;justify-content:space-between;padding-top:10px;}.label,.notice{font-size:14px;line-height:22px;color:#58616b;}.amount{font-size:15px;line-height:22px;color:#20262d;}.item{padding-top:12px;}
+</style>

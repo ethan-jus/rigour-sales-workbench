@@ -1,0 +1,81 @@
+<template>
+  <scroll-view class="sw-page" direction="vertical">
+    <view class="followup-list">
+      <view class="followup-controls"><button class="sw-text-button" :disabled="!closed" @click="show(false)">待办理</button><button class="sw-text-button" :disabled="closed" @click="show(true)">已结束</button></view>
+      <text v-if="message.length > 0" class="followup-notice">{{ message }}</text>
+      <view v-for="task in rows" :key="task.id" class="followup-card">
+        <text class="followup-title">{{ task.subject }}</text>
+        <text class="followup-notice">{{ task.kind == 'COLLECTION' ? '回款跟进' : '客户跟进' }} · {{ statusLabel(task.status) }} · {{ task.due }} 到期</text>
+        <text class="followup-note">{{ task.note }}</text>
+        <button v-if="canRespond && !closed && editing != task.id" class="sw-text-button" @click="selectTask(task)">{{ task.status == 'OPEN' ? '开始办理' : '提交结果' }}</button>
+        <view v-if="editing == task.id">
+          <textarea v-model="reply" class="followup-input" placeholder="填写实际联系进展或办理结果" :maxlength="2000" :disabled="saving"/>
+          <view class="followup-controls"><button class="sw-text-button" :disabled="saving" @click="editing = ''">取消</button><button class="sw-text-button" :loading="saving" :disabled="saving || reply.trim().length == 0" @click="submit(task)">提交</button></view>
+        </view>
+      </view>
+      <view class="followup-controls"><button v-if="page > 1" class="sw-text-button" @click="turn(-1)">上一页</button><button v-if="page * 25 < total" class="sw-text-button" @click="turn(1)">下一页</button><button class="sw-text-button" :disabled="saving" @click="load">刷新</button></view>
+    </view>
+  </scroll-view>
+</template>
+<script setup lang="uts">
+import { hasPermission } from '../../services/session.uts'
+import { crmCall, crmObject, crmOwner } from '../../services/crm.uts'
+type Task = { id:string, kind:string, subject:string, status:string, due:string, note:string, revision:number }
+const rows = ref<Task[]>([])
+const page = ref<number>(1)
+const total = ref<number>(0)
+const closed = ref<boolean>(false)
+const saving = ref<boolean>(false)
+const editing = ref<string>('')
+const reply = ref<string>('')
+const message = ref<string>('')
+const canRespond = computed(():boolean => hasPermission('sales:followup:self:respond'))
+let generation = 0
+function clear():void { rows.value = [] as Task[]; editing.value = ''; reply.value = ''; total.value = 0; message.value = '' }
+function statusLabel(code:string):string { if(code == 'OPEN') return '待办理'; if(code == 'IN_PROGRESS') return '办理中'; if(code == 'RESOLVED') return '已完成'; return '已关闭' }
+function dueDate(instant:string):string {
+  if(instant.length == 0) return '日期待核'
+  const timestamp = Date.parse(instant)
+  if(isNaN(timestamp)) return '日期待核'
+  return new Date(timestamp + 8 * 3600000).toISOString().substring(0,10)
+}
+async function load():Promise<void> {
+  const run = ++generation
+  const owner = crmOwner()
+  clear()
+  if(!hasPermission('sales:followup:self:read')) { message.value = '当前账号没有本人跟进权限'; return }
+  message.value = '读取中'
+  try {
+    const data = crmObject(await crmCall('/analytics/me/followups?size=25&page=' + page.value.toString() + '&closed=' + (closed.value ? 'true' : 'false')))
+    if(run != generation || owner != crmOwner()) return
+    const items = data.getArray<UTSJSONObject>('items')
+    if(items == null) throw new Error('跟进数据不完整')
+    const result = [] as Task[]
+    for(let i=0;i<items.length;i++) {
+      const row = items[i]
+      result.push({id:row.getString('id') ?? '',kind:row.getString('kind') ?? '',subject:row.getString('subject') ?? '',status:row.getString('status') ?? '',due:dueDate(row.getString('dueAt') ?? ''),note:row.getString('note') ?? '',revision:row.getNumber('revision') ?? 0} as Task)
+    }
+    total.value = data.getNumber('total') ?? 0
+    rows.value = result
+    message.value = result.length == 0 ? (closed.value ? '暂无已结束跟进' : '暂无指派给我的待办') : ''
+  } catch(e) { if(run == generation && owner == crmOwner()) message.value = (e as Error).message }
+}
+function selectTask(task:Task):void { editing.value = task.id; reply.value = '' }
+function turn(delta:number):void { page.value += delta; load() }
+function show(value:boolean):void { closed.value = value; page.value = 1; load() }
+async function submit(task:Task):Promise<void> {
+  if(saving.value || !canRespond.value || reply.value.trim().length == 0) return
+  const owner = crmOwner(); const run = generation; saving.value = true
+  try {
+    await crmCall('/analytics/me/followups/' + task.id,'PUT',{status:task.status == 'OPEN' ? 'IN_PROGRESS' : 'RESOLVED',note:reply.value.trim(),revision:task.revision} as UTSJSONObject)
+    if(owner == crmOwner() && run == generation) { page.value = 1; await load() }
+  } catch(e) { if(owner == crmOwner() && run == generation) message.value = (e as Error).message }
+  finally { saving.value = false }
+}
+onShow(()=>{ load() })
+onHide(()=>{ generation++; clear() })
+watch(():string=>crmOwner(),(_owner:string)=>{ generation++; clear() })
+</script>
+<style>
+.followup-list{padding:16px}.followup-controls{flex-direction:row;align-items:center;padding-top:6px;padding-bottom:6px}.followup-card{padding:16px;margin-top:10px;border-radius:10px;background-color:#ffffff}.followup-title{font-size:17px;color:#20262d;font-weight:bold}.followup-notice{font-size:14px;color:#596575;line-height:24px}.followup-note{font-size:15px;line-height:24px;margin-top:8px;color:#20262d}.followup-input{height:90px;margin-top:10px;padding:8px;background-color:#f4f6f8;font-size:15px}
+</style>

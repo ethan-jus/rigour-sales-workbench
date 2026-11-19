@@ -46,6 +46,14 @@
       }
     },
     {
+      "path": "pages/my-followups/my-followups",
+      "style": { "navigationBarTitleText": "我的跟进" }
+    },
+    {
+      "path": "pages/pay-statement/pay-statement",
+      "style": { "navigationBarTitleText": "我的薪酬" }
+    },
+    {
       "path": "pages/profile/profile",
       "style": {
         "navigationBarTitleText": "我的"
@@ -54,7 +62,7 @@
     {
       "path": "pages/workbench-details/workbench-details",
       "style": {
-        "navigationBarTitleText": "工作台明细"
+        "navigationBarTitleText": "我的业绩"
       }
     },
     {

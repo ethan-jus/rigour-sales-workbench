@@ -6,7 +6,7 @@
 
     <view v-else-if="view == 'customer'">
       <view class="customer-hero"><view class="hero-avatar"><text class="hero-letter">客</text></view><text class="tiny-tag">{{ customer.status == 'ACTIVE' ? '启用客户' : customer.status == 'INACTIVE' ? '已停用' : '客户档案' }}</text><text class="hero-name">{{ customer.name }}</text><text class="muted centered">{{ customer.address.length > 0 ? customer.address : '地址待完善' }}</text></view>
-      <button class="primary" :disabled="customer.id.length == 0 || customer.status == 'INACTIVE'" @click="startOrder">为客户下单</button>
+      <button class="primary" :disabled="customer.id.length == 0 || customer.status == 'INACTIVE'" @click="startOrder">为客户建草稿</button>
       <view class="section"><text class="section-title">联系信息</text><view class="info-row"><text class="label">联系人</text><text class="value">{{ customer.contact.length > 0 ? customer.contact : '未填写' }}</text></view><view class="info-row" @click="callCustomer"><text class="label">联系电话</text><text class="link">{{ customer.phone.length > 0 ? customer.phone : '未填写' }}</text></view><view class="info-row"><text class="label">客户地址</text><text class="value address-value">{{ customer.address.length > 0 ? customer.address : '未填写' }}</text></view></view>
       <view class="section"><text class="section-title">业务跟进</text><view class="action-row" @click="customerOrders"><view><text class="row-title">搜索客户名称的订单</text><text class="muted">按当前名称查询，结果可能包含同名客户</text></view><text class="chevron">›</text></view><view class="action-row" @click="goVisits"><view><text class="row-title">拜访打卡</text><text class="muted">前往拜访，选择现场门店</text></view><text class="chevron">›</text></view></view>
     </view>
@@ -32,7 +32,7 @@
     </view>
 
     <view v-else-if="view == 'cart' || view == 'checkout'">
-      <text class="title">{{ view == 'cart' ? '购物草稿' : '确认订单信息' }}</text>
+      <text class="title">{{ view == 'cart' ? '购物草稿' : '核对草稿信息' }}</text>
       <view class="customer-context"><text class="context-caption">下单客户</text><view class="row"><text class="context-name">{{ draft.customerId.length > 0 ? draft.customerName : '尚未选择客户' }}</text><text class="link" @click="chooseCustomer">切换 ›</text></view></view>
       <view v-if="draft.lines.length == 0" class="empty"><text class="empty-icon">▢</text><text class="row-title">还没有添加商品</text><text class="muted centered">每个客户的购物草稿独立保存。</text><button class="primary" @click="open('products')">去选商品</button></view>
       <view v-for="line in draft.lines" :key="line.productId" class="cart-row"><view class="cart-line-head"><text class="product-name">{{ line.name }}</text><text v-if="view == 'cart'" class="remove" @click="remove(line)">移除</text></view><text class="muted">{{ line.spec }}{{ line.unit.length > 0 ? ' · ' + line.unit : '' }}</text><view class="product-bottom"><view><text class="price">{{ money(line.referencePrice) }}</text><text class="reference">参考单价</text></view><view v-if="view == 'cart'" class="quantity"><button class="quantity-button" :disabled="line.quantity <= 1" @click="changeQuantity(line.productId, -1)">−</button><text class="quantity-value">{{ line.quantity }}</text><button class="quantity-button" @click="changeQuantity(line.productId, 1)">＋</button></view><text v-else class="row-title">× {{ line.quantity }}</text></view></view>
@@ -50,15 +50,7 @@
       <view class="order-status"><text class="tiny-tag">{{ orderStatus(order.status) }}</text><text class="title order-title">{{ order.customerName }}</text><text class="muted">{{ order.number }}</text></view>
       <view class="section"><text class="section-title">订单信息</text><view class="info-row"><text class="label">下单时间（北京时间）</text><text class="value">{{ order.time }}</text></view><view class="info-row"><text class="label">出库状态</text><text class="value">{{ outboundStatus(order.outboundStatus) }}</text></view><view class="info-row"><text class="label">收款状态</text><text class="value">{{ paymentStatus(order.paymentStatus) }}</text></view></view>
       <view class="section"><text class="section-title">商品明细 · {{ order.lines.length }} 项</text><view v-for="line in order.lines" :key="line.id" class="order-line"><view class="line-copy"><text class="row-title">{{ line.name }}</text><text class="muted">{{ line.spec }} × {{ line.quantity }} {{ line.unit }}</text></view><text class="line-amount">{{ money(line.amount) }}</text></view><view class="info-row"><text class="label">订单应付金额</text><text class="order-total">{{ money(order.total) }}</text></view></view>
-      <view class="section"><text class="section-title">订单回款</text><view class="info-row"><text class="label">已收款金额</text><text class="value">{{ money(order.paidAmount) }}</text></view><view class="info-row"><text class="label">未收款金额</text><text class="value">{{ money(order.unpaidAmount) }}</text></view><text class="reference">金额按平台订单回款口径展示。</text></view>
-      <view class="two-actions"><button class="secondary half" @click="open('returns')">退货售后</button><button class="primary half" @click="open('payment')">回款登记</button></view>
-    </view>
-
-    <view v-else-if="view == 'payment' || view == 'returns'">
-      <text class="title">{{ view == 'payment' ? '回款登记' : '退货售后' }}</text>
-      <view class="customer-context"><text class="context-caption">关联订单</text><text class="context-name">{{ order.customerName }}</text><text class="muted">{{ order.number }}</text></view>
-      <view class="info-row"><text class="label">订单应付金额</text><text class="value">{{ money(order.total) }}</text></view>
-      <view class="notice"><text class="notice-heading">{{ view == 'payment' ? '手机端回款登记尚未开放' : '手机端退货申请尚未开放' }}</text><text class="notice-copy">{{ view == 'payment' ? '请继续在供应链平台登记回款。提交凭证与财务确认到账会分开处理，当前不会修改订单已收金额。' : '请继续在供应链平台办理退货售后。当前不会创建退货单或扣减订单金额。' }}</text></view><button class="secondary" @click="open('order-detail')">返回订单详情</button>
+      <view class="section"><text class="section-title">订单回款</text><view class="info-row"><text class="label">已收款金额</text><text class="value">{{ money(order.paidAmount) }}</text></view><view class="info-row"><text class="label">未收款金额</text><text class="value">{{ money(order.unpaidAmount) }}</text></view><text class="reference">订单登记金额按原单展示，已核实资金见回款记录。</text></view>
     </view>
 
     <view v-else-if="view == 'result'" class="empty"><text class="saved-icon">✓</text><text class="title">购物草稿已保存</text><text class="muted centered">{{ draft.customerName }}的收货信息与商品已保存到本机，尚未生成正式订单。</text><button class="primary" @click="open('cart')">查看购物草稿</button><button class="secondary" @click="chooseCustomer">返回客户</button></view>
@@ -87,10 +79,8 @@ function setTitle(): void {
   if (view.value == 'customer') title = '客户详情'
   if (view.value == 'product') title = '商品详情'
   if (view.value == 'cart') title = '购物草稿'
-  if (view.value == 'checkout') title = '确认订单信息'
+  if (view.value == 'checkout') title = '核对草稿信息'
   if (view.value == 'order-detail') title = '订单详情'
-  if (view.value == 'payment') title = '回款登记'
-  if (view.value == 'returns') title = '退货售后'
   if (view.value == 'result') title = '保存结果'
   uni.setNavigationBarTitle({ title: title })
 }
@@ -102,11 +92,11 @@ function reload(): void {
   if (view.value == 'products') loadProducts(query.value)
   if (view.value == 'customer') { loading.value = true; loadCustomerDetail(id.value, (_customer: Customer) => { loading.value = false }, (message: string) => { loading.value = false; error.value = message }) }
   if (view.value == 'product') { loading.value = true; loadProductDetail(id.value, (_product: Product) => { loading.value = false }, (message: string) => { loading.value = false; error.value = message }) }
-  if (view.value == 'order-detail' || view.value == 'payment' || view.value == 'returns') { loading.value = true; loadOrderDetail(id.value.length > 0 ? id.value : commerce.selectedOrderId, (_order: SalesOrder) => { loading.value = false }, (message: string) => { loading.value = false; error.value = message }) }
+  if (view.value == 'order-detail') { loading.value = true; loadOrderDetail(id.value.length > 0 ? id.value : commerce.selectedOrderId, (_order: SalesOrder) => { loading.value = false }, (message: string) => { loading.value = false; error.value = message }) }
   if (view.value == 'checkout') { address.value = draft.value.address; note.value = draft.value.note }
 }
 function open(destination: string, targetId: string = ''): void {
-  const orderPage = destination == 'order-detail' || destination == 'payment' || destination == 'returns'
+  const orderPage = destination == 'order-detail'
   const wantedId = targetId.length > 0 ? targetId : orderPage ? order.value.id : ''
   const pages = getCurrentPages()
   for (let index = pages.length - 2; index >= 0; index--) {

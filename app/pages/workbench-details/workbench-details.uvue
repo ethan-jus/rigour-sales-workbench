@@ -92,8 +92,8 @@ function open(row: DetailRow): void {
 }
 onLoad((options) => {
   kind.value = options['kind'] ?? 'orders'; from.value = options['from'] ?? visitToday(); to.value = options['to'] ?? visitToday()
-  const titles = { orders: '交易订单', unpaid: '待回款', outbound: '待出库', receipts: '回款记录', performance: '全款回款订单', all: '拜访记录', effective: '有效拜访', first: '新增拜访', plans: '今日待拜访' } as UTSJSONObject
-  title.value = titles.getString(kind.value) ?? '工作台明细'
+  const titles = { orders: '交易订单', unpaid: '待回款', outbound: '待出库', receipts: '回款记录', performance: '结清回款贡献明细', all: '拜访记录', effective: '有效拜访', first: '新增拜访', plans: '今日待拜访' } as UTSJSONObject
+  title.value = titles.getString(kind.value) ?? '我的业绩'
   uni.setNavigationBarTitle({ title: title.value })
 })
 onShow(() => { visible = true; load(false) })

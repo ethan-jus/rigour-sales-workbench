@@ -23,7 +23,7 @@
       <view class="performance-card"><text class="muted">订单目标完成</text><text class="big-number">—</text><text class="fine">个人订单与目标统计接入后展示</text></view>
       <view class="metric-row"><view class="metric"><text class="muted">已记录拜访</text><text class="metric-value">{{ total }}</text></view><view class="metric"><text class="muted">有效拜访</text><text class="metric-value">{{ effective }}</text></view></view>
       <view v-if="message.length > 0" class="error"><text class="error-text">{{ message }}</text><text v-if="session.authenticated" class="link" @click="loadPerformance">重新加载</text></view>
-      <text class="section-label">业务明细</text><view class="entry" @click="orders"><text class="h3 grow">订单记录</text><text class="chevron">›</text></view><view class="entry" @click="visits"><text class="h3 grow">本人拜访</text><text class="chevron">›</text></view><view class="entry" @click="commission"><text class="h3 grow">提成进度</text><text class="chevron">›</text></view>
+      <text class="section-label">业务明细</text><view class="entry" @click="orders"><text class="h3 grow">订单记录</text><text class="chevron">›</text></view><view class="entry" @click="visits"><text class="h3 grow">本人拜访</text><text class="chevron">›</text></view><view v-if="canReadPay" class="entry" @click="openPay"><text class="h3 grow">我的薪酬</text><text class="chevron">›</text></view>
       <text class="fine intro">已记录拜访包含进行中的拜访，有效拜访以最终复核结果为准。</text>
     </template>
     <template v-else-if="view == 'messages'">
@@ -31,11 +31,6 @@
       <view class="entry" @click="uploads"><image class="entry-icon" src="/static/tabs/upload.png"/><view class="grow"><text class="h3">拜访草稿</text><text class="muted">{{ localVisitCount }} 份本机记录，尚未提交</text></view><text class="chevron">›</text></view>
       <view class="entry" @click="cartDrafts"><image class="entry-icon" src="/static/tabs/order.png"/><view class="grow"><text class="h3">购物草稿</text><text class="muted">{{ localCartCount }} 份草稿，继续完善商品与地址</text></view><text class="chevron">›</text></view>
       <view class="empty"><text class="empty-title">公司消息待开通</text><text class="empty-copy">审批、订单和公司通知将在消息服务接入后汇集到这里。</text></view>
-    </template>
-    <template v-else-if="view == 'commission'">
-      <text class="h1">我的提成</text><text class="muted intro">预计、已确认和已发放分别展示</text>
-      <view class="performance-card"><text class="muted">已确认待发放</text><text class="big-number">—</text><text class="fine">以公司核算结果为准</text></view>
-      <view class="empty"><text class="empty-title">个人提成尚未开通</text><text class="empty-copy">接入公司的提成核算结果后，可查看每笔计算依据和发放进度。</text></view>
     </template>
     <template v-else>
       <text class="h1">到账明细</text><text class="muted intro">按财务确认的实际到账日期查看</text>
@@ -69,7 +64,8 @@ function uploads(): void { uni.navigateTo({ url: '/pages/visit/visit?view=upload
 function cartDrafts(): void { uni.switchTab({ url: '/pages/customers/customers' }) }
 function orders(): void { uni.switchTab({ url: '/pages/orders/orders' }) }
 function visits(): void { uni.switchTab({ url: '/pages/visits/visits' }) }
-function commission(): void { uni.navigateTo({ url: '/pages/work/work?view=commission' }) }
+const canReadPay = computed((): boolean => hasPermission('hr:payroll:self'))
+function openPay(): void { uni.navigateTo({ url: '/pages/pay-statement/pay-statement' }) }
 function logout(): void {
   if (hasActiveVisitRecording() || crmRecording()) { uni.showToast({ title: '请先停止并保存当前录音再退出登录', icon: 'none' }); return }
   logoutCompany(); loadDrafts(); loadLocalVisits()
@@ -95,8 +91,9 @@ function loadPerformance(): void {
 }
 function setPeriod(value: number): void { monthOffset.value = value; loadPerformance() }
 onLoad((options) => {
+  if (options['view'] == 'commission') { uni.redirectTo({ url: '/pages/pay-statement/pay-statement' }); return }
   view.value = options['view'] ?? 'account'
-  const titles: UTSJSONObject = { account: '账号与设置', performance: '目标与业绩', commission: '我的提成', messages: '消息与待办', cashflow: '到账明细' }
+  const titles: UTSJSONObject = { account: '账号与设置', performance: '目标与业绩', messages: '消息与待办', cashflow: '到账明细' }
   uni.setNavigationBarTitle({ title: titles.getString(view.value) ?? '工作台' })
 })
 onShow(() => { loadDrafts(); loadLocalVisits(); if (view.value == 'performance') loadPerformance(); if (view.value == 'account') syncSalesProfile() })

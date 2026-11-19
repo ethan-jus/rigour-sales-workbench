@@ -1,7 +1,7 @@
 <template>
   <list-view class="page" direction="vertical">
     <list-item :type="1"><view class="content list-header">
-    <view class="heading-row"><text class="heading">订单</text><text class="new-order" @click="newOrder">＋ 下单</text></view>
+    <view class="heading-row"><text class="heading">订单</text><text class="new-order" @click="newOrder">＋ 建草稿</text></view>
     <text class="intro">订单进度与金额以供应链平台为准。</text>
     <view v-if="!session.authenticated" class="empty"><text class="empty-icon">▤</text><text class="empty-title">登录后查看订单</text><text class="empty-copy">同一个平台账号，同步你的业务权限。</text><button class="primary" @click="login">使用平台账号登录</button></view>
     <view v-else>
