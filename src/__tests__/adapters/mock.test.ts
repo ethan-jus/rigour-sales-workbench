@@ -1,36 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
-import { mockAdapter } from '@/adapters/feishu/mock';
+import { mockAdapter } from '@/adapters/workbench/mock';
 import { detectRuntimeContainer } from '@/adapters';
 
 // ============================================================================
-// Mock Feishu Adapter 测试
+// 工作台模拟设备 测试
 // ============================================================================
 
-describe('Mock Feishu Adapter', () => {
-  it('detectContainer 返回 unknown', () => {
-    expect(mockAdapter.detectContainer()).toBe('unknown');
-  });
-
-  it('getClientVersion 返回 mock 版本号', () => {
-    expect(mockAdapter.getClientVersion()).toBe('7.0.0-mock');
-  });
-
-  it('isJsapiAvailable 返回 false', () => {
-    expect(mockAdapter.isJsapiAvailable()).toBe(false);
-  });
-
-  // =========================================================================
-  // requestAuthCode
-  // =========================================================================
-  it('requestAuthCode 返回以 mock-auth-code- 开头的 code', async () => {
-    const code = await mockAdapter.requestAuthCode();
-    expect(code).toContain('mock-auth-code-');
-    expect(typeof code).toBe('string');
-  });
-
-  // =========================================================================
-  // 定位
-  // =========================================================================
+describe('工作台模拟设备', () => {
   it('getLocationStatus 返回 ready', () => {
     expect(mockAdapter.getLocationStatus()).toBe('ready');
   });
@@ -112,8 +88,8 @@ describe('Mock Feishu Adapter', () => {
 });
 
 describe('detectRuntimeContainer', () => {
-  it('VITE_FEISHU_MOCK=true 时返回 mockMode=true', () => {
-    vi.stubEnv('VITE_FEISHU_MOCK', 'true');
+  it('VITE_ENABLE_MOCK=true 时返回 mockMode=true', () => {
+    vi.stubEnv('VITE_ENABLE_MOCK', 'true');
     const env = detectRuntimeContainer();
     expect(env.mockMode).toBe(true);
   });

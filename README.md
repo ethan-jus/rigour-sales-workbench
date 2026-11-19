@@ -17,13 +17,10 @@
 
 ## 运行入口与能力适配
 
-- 生产 App 主入口为 Capacitor iOS/Android，登录使用 `VITE_AUTH_MODE=oidc`
+- Capacitor iOS/Android 工作台通过平台 OIDC 登录，uni-app x 作业 App 使用平台账号登录
 - App 通过 `WorkbenchCapabilities` 统一定位、拍照、录音；页面不得直接耦合 Capacitor 插件
-- 飞书 H5 仅作为兼容入口保留：飞书内使用 `requestAccess` callback API 免登，errno 103 自动降级 `requestAuthCode`
-- 前端只获取一次性授权码 code，由后端 `/auth/feishu/exchange` 交换 token；App Secret 永远不进前端
-- 普通浏览器仅在 `VITE_FEISHU_MOCK=true` 时使用 Mock Adapter
-- 生产非 App / 非飞书环境由 `unsupportedAdapter` 阻断，禁止静默回落 mock
-- **页面层不得导入飞书 JSAPI 包、访问全局 `tt` 或直接访问 Capacitor 原生插件**，所有调用只能经过 Adapter
+- H5 生产登录使用平台 OIDC 和 PKCE。原生 uni-app x 使用平台账号登录。
+- H5 层通过 `getWorkbenchCapabilities()` 获取设备能力。仅开发构建允许显式启用浏览器 Mock。
 - 客户端 API 位于 `window.tt` 顶层；录音使用 `tt.getRecorderManager()`，单段10分钟自动切片续录，总时长不限
 - 临时音频通过 `tt.getFileSystemManager().readFile()` 读取，再用同源 HTTPS multipart 上传
 - 定位使用 `tt.getLocation()`，参数为 `gcj02 + best + timeout/cacheTimeout`；PC 不支持，20 分钟采样只是 H5 前台尽力执行，不保证后台持续定位
@@ -33,7 +30,7 @@
 ## App 与内部协作
 
 - App 打包走 Capacitor，共享 Vue3/Vant 业务页面；当前 iOS Bundle ID 和 Android applicationId 均为 `com.rigour.workbench`，App 名称为“瑞盖销售工作台”
-- App 生产登录设置 `VITE_AUTH_MODE=oidc`，通过系统浏览器执行 OIDC Authorization Code + PKCE；不把 client secret 放入前端
+- Capacitor 工作台通过系统浏览器执行 OIDC Authorization Code + PKCE；不把 client secret 放入前端
 - 原生 App 通过 Keychain/Android Keystore 插件保存 token；Web/测试环境保留 localStorage 兼容
 - 原生 App 启动时默认强制获取一次当前位置；如果系统定位关闭、用户拒绝授权或当前定位不可用，启动流程阻断
 - 进行中工作日会恢复原生定位会话，采样周期优先采用 Sales Work 后端下发的 `fieldPolicy.locationIntervalMinutes`
@@ -52,8 +49,7 @@
 
 ```
 src/
-├── adapters/feishu/   # 飞书适配层（real + mock + unsupported + jsbridge）
-├── adapters/workbench/ # App/飞书/Mock 运行能力选择与定位拍照录音适配层
+├── adapters/workbench/ # App/开发 Mock 运行能力选择与定位拍照录音适配层
 ├── api/               # API 客户端 + 生成目录
 ├── bootstrap/         # 应用启动引导
 ├── layouts/           # 布局组件
@@ -65,7 +61,7 @@ src/
 └── __tests__/         # 单元测试
 ```
 
-当前页面骨架包括今日工作台、外勤考勤、客户门店、四阶段拜访执行、录音证据、轨迹/拜访/证据记录、配送跟进、当前规则、补卡申诉、隐私授权和个人中心。生产环境未接入Sales Work命令接口前，签到页不会生成本地伪考勤；浏览器Mock只用于验证飞书能力和交互结构。
+当前页面骨架包括今日工作台、外勤考勤、客户门店、四阶段拜访执行、录音证据、轨迹/拜访/证据记录、配送跟进、当前规则、补卡申诉、隐私授权和个人中心。生产环境未接入Sales Work命令接口前，签到页不会生成本地伪考勤；浏览器Mock只用于验证移动端交互。
 
 ## 环境变量
 
@@ -76,14 +72,11 @@ src/
 | VITE_ENABLE_MOCK | 启用全局 Mock | true |
 | VITE_DEFAULT_TENANT_ID | 默认租户 | demo |
 | VITE_APP_ENV | 运行环境 | local |
-| VITE_AUTH_MODE | 登录模式：feishu / oidc / mock | 跟随 VITE_FEISHU_MOCK |
 | VITE_OIDC_ISSUER | OIDC Issuer；App 模式必填 | (空) |
 | VITE_OIDC_CLIENT_ID | OIDC 公共客户端 ID；App 模式必填 | (空) |
 | VITE_OIDC_REDIRECT_URI | OIDC 回调地址；原生 App 应配置自定义 scheme/deep link | 当前页面地址 |
 | VITE_OIDC_SCOPE | OIDC scope | openid profile |
 | VITE_REQUIRE_LOCATION_ON_BOOT | 启动时是否强制获取定位；App 生产应为 true | true |
-| VITE_FEISHU_APP_ID | 飞书应用 ID | (空) |
-| VITE_FEISHU_MOCK | 飞书 Mock 模式 | true |
 
 仓库保留 `.env`、`.env.development`、`.env.production` 作为 Vite 模式默认值，并提供
 `.env.example` 作为配置模板。这些文件只能包含非敏感开关、路径和空 App ID；所有 `VITE_*`
@@ -118,7 +111,7 @@ Provisioning Profile、APNs 能力和 App Store Connect 应用记录。
 - H5打卡和拜访事实由Sales Work主写；CRM主写客户门店，HR主写正式考勤结果
 - App 打开时可以为准入控制强制获取一次当前位置；持续轨迹只在 Sales Work 确认签到后开始、签退后停止
 - 页面只管理展示状态和用户输入，业务判定由所属后端领域服务完成
-- 所有飞书能力只能通过 `getFeishuAdapter()` → `IFeishuAdapter` 调用
+- 设备能力通过 `getWorkbenchCapabilities()` 调用
 - 所有 App 原生能力只能通过 `getWorkbenchCapabilities()` → `WorkbenchCapabilities` 调用
 - 密钥、App Secret 等不得进入 `VITE_*` 或提交到 Git
 

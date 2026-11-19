@@ -241,7 +241,7 @@ export interface VisitPhotoEvidenceView {
   visitId: string;
   clientEvidenceId: string;
   evidenceRole: 'STOREFRONT' | string;
-  captureSource: 'FEISHU_CAMERA' | string;
+  captureSource: string;
   capturedAt: string;
   mediaType: string;
   objectSizeBytes: number;

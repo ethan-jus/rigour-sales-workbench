@@ -4,8 +4,8 @@ import { Capacitor } from '@capacitor/core';
 import { Camera, CameraDirection, EncodingType } from '@capacitor/camera';
 import { Geolocation, type CallbackID, type Position } from '@capacitor/geolocation';
 import { VoiceRecorder } from '@independo/capacitor-voice-recorder';
-import { uploadRecordingMultipart } from '@/adapters/feishu/recording-upload';
-import type { CapturedPhoto } from '@/adapters/feishu/types';
+import { uploadRecordingMultipart } from '@/adapters/workbench/recording-upload';
+import type { CapturedPhoto } from '@/adapters/workbench/media';
 import type { CapabilityStatus } from '@/types';
 import type { LocationTrackingOptions, WorkbenchCapabilities } from './types';
 

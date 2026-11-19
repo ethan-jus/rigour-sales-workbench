@@ -78,8 +78,7 @@ function installSuccessfulResponses(visits: VisitView[] = []) {
     fieldPolicy: {
       id: 'policy-1', policyCode: 'DEFAULT', policyName: '默认外勤规则', versionNo: 1,
       publishStatus: 'PUBLISHED', timezoneId: 'Asia/Shanghai', businessDayCutoff: '04:00:00',
-      checkInWindowStart: null, checkInWindowEnd: null, checkOutWindowStart: null, checkOutWindowEnd: null,
-      standardWorkMinutes: 480, minimumWorkMinutes: 420, requireCheckOut: true, allowAdjustment: true,
+      standardWorkMinutes: 480, minimumWorkMinutes: 420, allowResume: true, workHoursEnabled: true, allowAdjustment: true,
       adjustmentDeadlineHours: 24, locationEnabled: true, locationIntervalMinutes: 5,
       minimumLocationAccuracyMeters: 100, offlineUploadDeadlineMinutes: 30,
       effectiveFrom: `${today}T00:00:00Z`,

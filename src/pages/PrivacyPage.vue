@@ -3,7 +3,7 @@
     <van-nav-bar title="隐私与授权" left-arrow @click-left="$router.back()" />
     <div class="workbench-body">
       <van-cell-group inset title="移动端能力">
-        <van-cell title="身份" label="飞书一次性授权码由后端交换，不在前端保存App Secret" />
+        <van-cell title="身份" label="使用企业账号登录，权限由供应链平台分配" />
         <van-cell title="定位" label="仅工作期间前台尽力采样；锁屏和后台可能中断" />
         <van-cell title="录音" label="仅拜访执行时由销售主动开启，并记录告知与授权" />
       </van-cell-group>

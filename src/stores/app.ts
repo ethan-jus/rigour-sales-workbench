@@ -3,19 +3,8 @@ import { ref, computed } from 'vue';
 import { detectRuntimeContainer } from '@/adapters';
 import type { RuntimeEnv } from '@/types';
 
-/**
- * 应用全局状态。
- *
- * 职责：
- * - 存储飞书运行环境检测结果（容器类型、JSAPI 可用性、Mock 模式）
- * - 跟踪 bootstrap 启动流程状态（就绪/错误）
- * - 提供派生标签供页面层展示
- *
- * 风险：env 在 store 创建时同步调用 detectRuntimeContainer()，
- * 因此必须在 Pinia 安装后、bootstrap 执行前创建此 store。
- */
 export const useAppStore = defineStore('app', () => {
-  /** 飞书运行环境检测结果（容器、版本、JSAPI、Mock 模式） */
+  /** 工作台运行环境 */
   const env = ref<RuntimeEnv>(detectRuntimeContainer());
   /** 启动流程是否已完成 */
   const bootstrapReady = ref(false);
@@ -24,15 +13,8 @@ export const useAppStore = defineStore('app', () => {
 
   /** 是否运行在 Mock 模式（浏览器/CI 环境） */
   const isMockMode = computed(() => env.value.mockMode);
-  /** 是否在真实飞书环境中（非 Mock） */
-  const isFeishuEnv = computed(() => env.value.container !== 'unknown' && !env.value.mockMode);
-  /** 用户可读的容器标签 */
-  const containerLabel = computed(() => {
-    if (env.value.mockMode) return 'Mock (浏览器)';
-    if (env.value.container === 'feishu') return '飞书';
-    if (env.value.container === 'lark') return 'Lark';
-    return '未知环境';
-  });
+  const containerLabel = computed(() => env.value.mockMode ? 'Mock (浏览器)' :
+    env.value.container === 'native-app' ? '销售作业 App' : '浏览器');
 
   function setBootstrapReady() {
     bootstrapReady.value = true;
@@ -47,7 +29,6 @@ export const useAppStore = defineStore('app', () => {
     bootstrapReady,
     bootstrapError,
     isMockMode,
-    isFeishuEnv,
     containerLabel,
     setBootstrapReady,
     setBootstrapError,

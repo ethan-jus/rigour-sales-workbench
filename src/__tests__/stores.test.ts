@@ -10,7 +10,7 @@ import { useAppStore } from '@/stores/app';
 describe('Stores', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
-    vi.stubEnv('VITE_FEISHU_MOCK', 'true');
+    vi.stubEnv('VITE_ENABLE_MOCK', 'true');
     vi.stubEnv('VITE_DEFAULT_TENANT_ID', 'demo');
     localStorage.clear();
   });
@@ -21,7 +21,6 @@ describe('Stores', () => {
       expect(store.userId).toBeNull();
       expect(store.userName).toBe('');
       expect(store.isLoggedIn).toBe(false);
-      expect(store.feishuOpenId).toBeNull();
     });
 
     it('logout 清除所有状态', () => {
@@ -29,7 +28,6 @@ describe('Stores', () => {
       store.logout();
       expect(store.userId).toBeNull();
       expect(store.isLoggedIn).toBe(false);
-      expect(store.feishuOpenId).toBeNull();
     });
 
     it('login 在 mock 模式下成功并设置 mock 身份', async () => {
@@ -37,48 +35,13 @@ describe('Stores', () => {
       await store.login();
       expect(store.isLoggedIn).toBe(true);
       expect(store.userId).toBe('mock-user-001');
-      expect(store.feishuOpenId).toBe('ou_mock_001');
       expect(store.tenantId).toBe('demo');
 
       // 验证 localStorage 写入
       expect(localStorage.getItem('auth_user_id')).toBe('mock-user-001');
       expect(localStorage.getItem('auth_tenant_id')).toBe('demo');
-      expect(localStorage.getItem('auth_feishu_open_id')).toBe('ou_mock_001');
     });
 
-    it('login 失败时 isLoggedIn 仍为 false', async () => {
-      // 注入一个会失败的自定义 adapter，覆盖单例缓存
-      vi.stubEnv('VITE_FEISHU_MOCK', 'false');
-      vi.stubEnv('VITE_FEISHU_APP_ID', 'cli_test');
-      const { setFeishuAdapter } = await import('@/adapters');
-      setFeishuAdapter({
-        detectContainer: () => 'unknown',
-        getClientVersion: () => null,
-        isJsapiAvailable: () => false,
-        requestAuthCode: () => Promise.reject(new Error('模拟授权码获取失败')),
-        getLocationStatus: () => 'unsupported',
-        getCurrentLocation: async () => ({ latitude: 0, longitude: 0, accuracy: 0, timestamp: Date.now() }),
-        startLocation: async () => {},
-        stopLocation: async () => {},
-        getAudioStatus: () => 'unsupported',
-        startRecording: () => {},
-        stopRecording: async () => null,
-        uploadRecording: async () => {},
-        discardRecording: async () => {},
-        getCameraStatus: () => 'unsupported',
-        captureStorefrontPhoto: async () => { throw new Error('unsupported'); },
-        uploadPhoto: async () => {},
-        discardPhoto: async () => {},
-        destroy: () => {},
-      });
-      const store = useAuthStore();
-      try {
-        await store.login();
-      } catch {
-        // 预期失败
-      }
-      expect(store.isLoggedIn).toBe(false);
-    });
   });
 
   describe('appStore', () => {

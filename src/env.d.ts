@@ -16,22 +16,13 @@ interface ImportMetaEnv {
   readonly VITE_ENABLE_MOCK: string;
   readonly VITE_DEFAULT_TENANT_ID: string;
   readonly VITE_APP_ENV: string;
-  /** 登录模式：feishu 使用飞书免登，oidc 使用移动端系统浏览器 PKCE，mock 只用于开发/CI。 */
-  readonly VITE_AUTH_MODE: string;
-  /** App启动后是否强制先拿到定位；未配置时原生App默认强制，浏览器/飞书不强制。 */
+  /** 登录模式：平台登录使用 OIDC 与 PKCE，模拟模式仅用于开发和 CI。 */
+  /** App启动后是否强制先拿到定位；未配置时原生App默认强制，浏览器按配置执行。 */
   readonly VITE_REQUIRE_LOCATION_ON_BOOT: string;
   readonly VITE_OIDC_ISSUER: string;
   readonly VITE_OIDC_CLIENT_ID: string;
   readonly VITE_OIDC_REDIRECT_URI: string;
   readonly VITE_OIDC_SCOPE: string;
-  /** 飞书自建应用 App ID；requestAccess 使用 appID，旧 requestAuthCode 使用 appId。 */
-  readonly VITE_FEISHU_APP_ID: string;
-  /**
-   * 飞书 Mock 模式开关。
-   * true: 使用 mockAdapter（开发/CI）
-   * false: 生产模式，非飞书容器使用 unsupportedAdapter 阻断
-   */
-  readonly VITE_FEISHU_MOCK: string;
   /** 高德 JS API Key 与安全密钥；未配置时轨迹页降级为时间线视图。 */
   readonly VITE_AMAP_JS_KEY: string;
   readonly VITE_AMAP_SECURITY_CODE: string;

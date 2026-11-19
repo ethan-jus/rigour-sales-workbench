@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import Vant, { DatePicker } from 'vant';
-import { mockAdapter, setFeishuAdapter } from '@/adapters';
+import { mockAdapter } from '@/adapters';
+import { setWorkbenchCapabilities } from '@/adapters/workbench';
 import { localDate } from '@/utils/datetime';
 
 const mocks = vi.hoisted(() => ({
@@ -114,7 +115,7 @@ describe('TrackPage 日期轨迹与全屏地图', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     setActivePinia(createPinia());
-    setFeishuAdapter(mockAdapter);
+    setWorkbenchCapabilities({ ...mockAdapter, getRuntimeLabel: () => 'mock' });
     mocks.workDay.mockImplementation((date: string) => Promise.resolve(ok(workDayFixture(date))));
     mocks.workDayTrack.mockImplementation((date: string) => Promise.resolve(ok(trackFixture(date))));
     mocks.visits.mockResolvedValue(ok({ items: [], page: 1, pageSize: 20, total: 0 }));

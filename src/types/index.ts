@@ -1,11 +1,6 @@
-/** 飞书容器类型 */
-export type FeishuContainer = 'feishu' | 'lark' | 'unknown';
-
-/** 客户端运行环境信息 */
+/** 工作台所在的客户端及开发模拟状态。 */
 export interface RuntimeEnv {
-  container: FeishuContainer;
-  clientVersion: string | null;
-  jsapiAvailable: boolean;
+  container: 'native-app' | 'browser';
   mockMode: boolean;
 }
 
@@ -19,15 +14,6 @@ export type CapabilityStatus =
   | 'active'
   | 'interrupted'
   | 'failed';
-
-/** 飞书用户身份信息 */
-export interface FeishuIdentity {
-  userId: string;
-  name: string;
-  avatar: string;
-  tenantId: string;
-  openId?: string;
-}
 
 /** 定位采样点 */
 export interface LocationPoint {
@@ -68,14 +54,6 @@ export interface ApprovalNavigateParams {
   approvalCode: string;
   instanceId?: string;
   openId?: string;
-}
-
-/** 消息发送参数 */
-export interface FeishuMessageParams {
-  content: string;
-  msgType?: 'text' | 'post' | 'interactive';
-  openId?: string;
-  userId?: string;
 }
 
 /** API 标准响应 */

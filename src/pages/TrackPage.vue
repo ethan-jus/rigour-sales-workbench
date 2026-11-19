@@ -211,7 +211,6 @@ async function renderMap() {
   try {
     const amap = await loadAmap();
     if (generation !== mapRenderGeneration || current !== filteredTrack.value || !mapContainer.value) return;
-    // 飞书 Adapter 固定请求 gcj02，与高德底图坐标系一致；服务端按原值保存和返回。
     const path = current.points
       .filter((point) => point.qualityStatus === 'ACCEPTED')
       .map((point): [number, number] => [point.longitude, point.latitude]);

@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { getWorkbenchCapabilities } from '@/adapters/workbench';
-import type { CapturedPhoto } from '@/adapters/feishu/types';
+import type { CapturedPhoto } from '@/adapters/workbench/media';
 import { buildUploadRequest } from '@/api/core/client';
 import { normalizeError } from '@/api/core/error';
 import { createIdempotencyKey } from '@/utils/id';

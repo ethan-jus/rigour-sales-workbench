@@ -3,7 +3,8 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import Vant from 'vant';
 import type { RecordingSessionView, VisitView } from '@/api/core/sales';
-import { mockAdapter, setFeishuAdapter } from '@/adapters';
+import { mockAdapter } from '@/adapters';
+import { setWorkbenchCapabilities } from '@/adapters/workbench';
 
 const mocks = vi.hoisted(() => ({
   recordings: vi.fn(),
@@ -109,7 +110,7 @@ describe('VisitPage 真实拜访状态流', () => {
   beforeEach(() => {
     const pinia = createPinia();
     setActivePinia(pinia);
-    setFeishuAdapter(mockAdapter);
+    setWorkbenchCapabilities({ ...mockAdapter, getRuntimeLabel: () => 'mock' });
     localStorage.clear();
     mocks.recordings.mockReset();
     mocks.discardRecordingClip.mockReset();
@@ -279,7 +280,7 @@ describe('VisitPage 真实拜访状态流', () => {
     expect(useSalesStore().activeVisit?.status).toBe('CHECKED_IN');
   });
 
-  it('上传401时在当前页重新飞书免登，并用同一pending clip和新Token重传', async () => {
+  it('上传401时在当前页重新获取平台登录会话，并用同一pending clip和新Token重传', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-08-09T00:00:00Z'));
     localStorage.setItem('auth_token', 'stale-token');

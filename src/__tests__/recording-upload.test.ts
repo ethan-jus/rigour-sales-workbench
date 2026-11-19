@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   RecordingUploadError,
   uploadRecordingMultipart,
-} from '@/adapters/feishu/recording-upload';
+} from '@/adapters/workbench/recording-upload';
 
 describe('录音multipart上传错误协议', () => {
   afterEach(() => {

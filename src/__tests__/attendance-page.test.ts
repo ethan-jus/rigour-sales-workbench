@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import Vant from 'vant';
-import { mockAdapter, setFeishuAdapter } from '@/adapters';
+import { mockAdapter } from '@/adapters';
+import { setWorkbenchCapabilities } from '@/adapters/workbench';
 import { localDate } from '@/utils/datetime';
 
 const mocks = vi.hoisted(() => ({
@@ -36,7 +37,7 @@ describe('AttendancePage 月度出勤事实', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     setActivePinia(createPinia());
-    setFeishuAdapter(mockAdapter);
+    setWorkbenchCapabilities({ ...mockAdapter, getRuntimeLabel: () => 'mock' });
     const today = localDate();
     const month = today.slice(0, 7);
     mocks.workDay.mockResolvedValue(ok({

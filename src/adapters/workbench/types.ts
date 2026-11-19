@@ -5,14 +5,14 @@ import type {
   RecorderStopResult,
   RecordingObserver,
   RecordingUploadRequest,
-} from '@/adapters/feishu/types';
+} from '@/adapters/workbench/media';
 
 export interface LocationTrackingOptions {
   intervalMs?: number;
 }
 
 export interface WorkbenchCapabilities {
-  getRuntimeLabel(): 'native-app' | 'feishu' | 'mock' | 'unsupported';
+  getRuntimeLabel(): 'native-app' | 'mock' | 'unsupported';
 
   getLocationStatus(): CapabilityStatus;
   getCurrentLocation(): Promise<{

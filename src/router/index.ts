@@ -3,10 +3,9 @@ import { useAuthStore } from '@/stores/auth';
 import { ROUTE_FEATURES, type AppFeature } from '@/features/catalog';
 
 /**
- * 飞书销售 H5 路由配置。
+ * 销售工作台路由配置。
  *
- * 使用 Hash Router，使业务路由变化不改变飞书 JSSDK 的签名 URL（签名时需移除 fragment），
- * 同时避免直接刷新子页面时依赖 Web 服务器 SPA fallback。
+ * Hash 路由支持在静态服务器上直接刷新业务页面。
  * 路由按销售日常工作流组织：工作台 → 拜访/配送 → 考勤/轨迹 → 个人。
  * 每个路由的 meta.title 用于 document.title 和页面标题展示。
  *

@@ -31,7 +31,7 @@ App 通过 Gateway 使用现有 IAM 与 Sales API。不得将临时打卡的个�
 
 | 阶段 | 当前行为 | 三端迁移要求 |
 |---|---|---|
-| 配置 | `VITE_AUTH_MODE=oidc`；Issuer、Client ID 必填；例示回调 `com.rigour.workbench://auth/callback`；scope 默认 `openid profile` | 环境配置读取迁移至新运行时；确认 IAM 中真实启用的 PUBLIC 客户端和精确回调白名单，示例地址不等于已注册 |
+| 配置 | 平台 OIDC 的 Issuer、Client ID 必填；例示回调 `com.rigour.workbench://auth/callback`；scope 默认 `openid profile` | 环境配置读取迁移至新运行时；确认 IAM 中真实启用的 PUBLIC 客户端和精确回调白名单，示例地址不等于已注册 |
 | Discovery | `GET {issuer}/.well-known/openid-configuration`，读取 authorization/token/userinfo endpoint | 校验目标 Issuer 与可信 HTTPS；不手工猜 token endpoint |
 | 授权 | `response_type=code`、`client_id`、`redirect_uri`、`scope`、`state`、`nonce`、`code_challenge_method=S256`、`code_challenge` | Android/iOS/HarmonyOS 各自系统浏览器和回调、冷启动回调均验收；无 client secret |
 | 交换 | 对 discovery 的 token endpoint 表单 POST：`grant_type=authorization_code`、`client_id`、`redirect_uri`、`code`、`code_verifier` | 网络错误不得输出 code/verifier/token；单次消费，明确回调超时 |
@@ -164,7 +164,7 @@ checkpoint:
 本仓库：
 
 - `src/auth/mobile-oidc.ts`：discovery、code + PKCE、系统浏览器和回调；`src/auth/token-storage.ts`：现有原生安全存储与旧 Web 回落。
-- `src/stores/auth.ts`：OIDC/飞书/Mock 分流，登录后加载 `/me`；`src/api/core/iam.ts`：CurrentUserView。
+- `src/stores/auth.ts`：生产 OIDC 登录、开发 Mock，登录后加载 `/me`；`src/api/core/iam.ts`：CurrentUserView。
 - `src/api/core/client.ts`：基址、headers、timeout、响应处理；`src/api/core/sales.ts`：已有 TS API 和字段。
 - `src/features/catalog.ts`：当前客户端权限到入口的本地映射，不是完整远程功能配置。
 

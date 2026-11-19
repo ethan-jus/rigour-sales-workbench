@@ -3,8 +3,8 @@ import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vu
 import { onBeforeRouteLeave, useRoute } from 'vue-router';
 import { showToast } from 'vant';
 import { getWorkbenchCapabilities } from '@/adapters/workbench';
-import { RecordingUploadError } from '@/adapters/feishu/recording-upload';
-import type { RecorderStopResult } from '@/adapters/feishu/types';
+import { RecordingUploadError } from '@/adapters/workbench/recording-upload';
+import type { RecorderStopResult } from '@/adapters/workbench/media';
 import { buildUploadRequest } from '@/api/core/client';
 import { useAuthStore } from '@/stores/auth';
 import { useSalesStore } from '@/stores/sales';
@@ -404,8 +404,8 @@ async function retryPendingClips() {
 }
 
 /**
- * Access Token过期时在当前WebView内重新执行飞书免登，再复用原pending clip重传。
- * 禁止通过刷新页面恢复登录：pendingClips包含飞书临时文件句柄，刷新后无法可靠重建。
+ * Access Token过期时恢复平台登录会话，再复用原pending clip重传。
+ * 禁止通过刷新页面恢复登录：pendingClips包含设备临时文件句柄，刷新后无法可靠重建。
  */
 async function restoreAuthAndRetryPendingClips() {
   if (!recordingAuthExpired.value || !pendingClips.value.length || restoringRecordingAuth.value) return;
@@ -593,7 +593,7 @@ onBeforeRouteLeave(() => {
           </div>
           <div v-else-if="cameraStatus === 'unsupported'" class="photo-error">
             <van-icon name="warning-o" />
-            <span>当前客户端无法拉起手机相机，请在飞书手机端打开本次拜访后拍摄。</span>
+            <span>当前客户端无法拉起手机相机，请在销售作业 App 打开本次拜访后拍摄。</span>
           </div>
           <div v-if="salesStore.hasPendingStorefrontPhoto" class="photo-actions">
             <van-button

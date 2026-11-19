@@ -1,32 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { unsupportedAdapter } from '@/adapters/feishu/unsupported';
+import { unsupportedAdapter } from '@/adapters/workbench/unsupported';
 
 // ============================================================================
 // unsupportedAdapter 测试
 //
-// 验证生产非飞书环境所有操作均返回 unsupported 或抛出阻断错误，
+// 验证浏览器环境所有操作均返回 unsupported 或抛出阻断错误，
 // 禁止静默回落 mock。
 // ============================================================================
 
 describe('unsupportedAdapter', () => {
   beforeEach(() => {
-    vi.stubEnv('VITE_FEISHU_MOCK', 'false');
-  });
-
-  it('detectContainer 返回 unknown', () => {
-    expect(unsupportedAdapter.detectContainer()).toBe('unknown');
-  });
-
-  it('getClientVersion 返回 null', () => {
-    expect(unsupportedAdapter.getClientVersion()).toBeNull();
-  });
-
-  it('isJsapiAvailable 返回 false', () => {
-    expect(unsupportedAdapter.isJsapiAvailable()).toBe(false);
-  });
-
-  it('requestAuthCode 抛出阻断错误', async () => {
-    await expect(unsupportedAdapter.requestAuthCode()).rejects.toThrow('不是飞书客户端');
+    vi.stubEnv('VITE_ENABLE_MOCK', 'false');
   });
 
   it('getLocationStatus 返回 unsupported', () => {
@@ -34,7 +18,7 @@ describe('unsupportedAdapter', () => {
   });
 
   it('getCurrentLocation 明确阻断', async () => {
-    await expect(unsupportedAdapter.getCurrentLocation()).rejects.toThrow('当前环境不是飞书客户端');
+    await expect(unsupportedAdapter.getCurrentLocation()).rejects.toThrow('当前浏览器无法使用此设备能力');
   });
 
   it('startLocation 抛出阻断错误', async () => {
@@ -43,7 +27,7 @@ describe('unsupportedAdapter', () => {
         () => {},
         () => {},
       ),
-    ).rejects.toThrow('不是飞书客户端');
+    ).rejects.toThrow('无法使用此设备能力');
   });
 
   it('stopLocation 静默无操作', async () => {
@@ -56,7 +40,7 @@ describe('unsupportedAdapter', () => {
   });
 
   it('startRecording 抛出阻断错误', () => {
-    expect(() => unsupportedAdapter.startRecording()).toThrow('不是飞书客户端');
+    expect(() => unsupportedAdapter.startRecording()).toThrow('无法使用此设备能力');
   });
 
   it('stopRecording 返回 null', async () => {
@@ -66,7 +50,7 @@ describe('unsupportedAdapter', () => {
 
   it('手机相机能力明确阻断', async () => {
     expect(unsupportedAdapter.getCameraStatus()).toBe('unsupported');
-    await expect(unsupportedAdapter.captureStorefrontPhoto()).rejects.toThrow('不是飞书客户端');
+    await expect(unsupportedAdapter.captureStorefrontPhoto()).rejects.toThrow('无法使用此设备能力');
   });
 
   it('destroy 静默无操作', () => {
