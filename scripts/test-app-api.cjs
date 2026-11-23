@@ -25,12 +25,17 @@ function moduleFixture(name, globals = {}) {
   vm.runInNewContext(compiled.outputText, context)
   return context.exports
 }
+function devConfigFixture() {
+  const config = moduleFixture('config.uts')
+  Object.assign(config.appEnvironment, { environment: 'development', gatewayOrigin: 'http://localhost:26880', issuer: 'http://localhost:26881', clientId: 'rigour-sales-app-android-dev', redirectUri: 'uniappx://rigour-sales/auth/callback' })
+  return config
+}
 function apiFixture() {
   const requests = [], errors = [], successes = [], tokenCalls = [], pendingTokens = []
   let holdTokens = false
   let invalidations = 0
   const session = { authenticated: true, accessToken: 'test-access', expiresAt: 200000, revision: 1, tokenVersion: 1 }
-  const config = moduleFixture('config.uts')
+  const config = devConfigFixture()
   // Simulate UTSJSONObject's accessors, while executing the actual text parser.
   const json = moduleFixture('json.uts', { JSON: { parse: text => new Obj(JSON.parse(text)) } })
   const invalidateCompanySession = () => { session.authenticated = false; session.accessToken = ''; session.revision++; session.tokenVersion++ }
@@ -83,7 +88,7 @@ test('unconfigured or invalid origins cannot make authenticated requests', () =>
 })
 
 test('DEV HTTP origin exception accepts only the two exact loopback authorities', () => {
-  const config = moduleFixture('config.uts')
+  const config = devConfigFixture()
   for (const origin of ['http://localhost:26880', 'http://localhost:26881']) {
     assert.equal(config.serviceOrigin(origin), origin)
     assert.equal(config.serviceOrigin(origin + '/oauth2/authorize?state=test'), origin)
@@ -99,7 +104,7 @@ test('DEV HTTP origin exception accepts only the two exact loopback authorities'
 })
 
 test('production never inherits the HTTP loopback exception', () => {
-  const config = moduleFixture('config.uts')
+  const config = devConfigFixture()
   Object.assign(config.appEnvironment, { environment: 'production', clientId: 'company-native', redirectUri: 'com.rigour.workbench://auth/callback' })
   for (const origin of ['http://localhost:26880', 'http://localhost:26881', 'http://192.168.1.10:26880']) assert.equal(config.serviceOrigin(origin), '')
   assert.equal(config.environmentReady(), false)
@@ -110,7 +115,7 @@ test('production never inherits the HTTP loopback exception', () => {
 })
 
 test('HTTPS origins reject userinfo and gateways must be bare authorities', () => {
-  const config = moduleFixture('config.uts')
+  const config = devConfigFixture()
   assert.equal(config.serviceOrigin('https://iam.example.test/oauth2/token'), 'https://iam.example.test')
   for (const origin of ['https://user@iam.example.test', 'https://iam.example.test@other.invalid', 'https://iam.example.test\\@other.invalid']) assert.equal(config.serviceOrigin(origin), '')
   Object.assign(config.appEnvironment, { environment: 'production', gatewayOrigin: 'https://gateway.example.test/api', issuer: 'https://iam.example.test', clientId: 'company-native', redirectUri: 'com.rigour.workbench://auth/callback' })
@@ -132,14 +137,14 @@ test('debug callback requires the exact DEV client and role-specific loopback or
     { redirectUri: 'uniappx://rigour-sales/auth/callback?extra=1' },
     { redirectUri: 'uniappx://other/auth/callback' },
   ]) {
-    const config = moduleFixture('config.uts')
+    const config = devConfigFixture()
     Object.assign(config.appEnvironment, overrides)
     assert.equal(config.environmentReady(), false, JSON.stringify(overrides))
   }
 })
 
 test('production cannot use the Android debug client even with a formal callback', () => {
-  const config = moduleFixture('config.uts')
+  const config = devConfigFixture()
   Object.assign(config.appEnvironment, { environment: 'production', gatewayOrigin: 'https://gateway.example.test', issuer: 'https://iam.example.test', redirectUri: 'com.rigour.workbench://auth/callback' })
   assert.equal(config.environmentReady(), false)
 })
@@ -343,4 +348,13 @@ test('only successful business mutations invalidate homepage snapshots and pendi
   send('PUT', 200, {code:'CONFLICT'}); assert.equal(f.invalidations(),0)
   for (const method of ['POST','PUT','PATCH','DELETE']) send(method,200,{code:'OK',data:{}})
   assert.equal(f.invalidations(),4)
+})
+
+test('intentional validation and conflict messages reach form fields, while mismatched responses stay generic', () => {
+  for (const [status, code, message] of [[400,'VALIDATION_FAILED','请选择接待人'],[422,'VALIDATION_FAILED','请选择经营类型'],[409,'CONFLICT','门店资料已更新，请刷新后确认']]) {
+    const f=apiFixture();f.request();f.requests[0].success({statusCode:status,data:JSON.stringify({code,message})});assert.equal(f.errors[0],message)
+  }
+  for (const [status,code,message] of [[500,'VALIDATION_FAILED','private details'],[400,'CONFLICT','private details'],[409,'CONFLICT','bad\ntrace'],[400,'BAD_REQUEST','private details']]) {
+    const f=apiFixture();f.request();f.requests[0].success({statusCode:status,data:JSON.stringify({code,message})});assert.notEqual(f.errors[0],message)
+  }
 })

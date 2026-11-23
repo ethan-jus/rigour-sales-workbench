@@ -14,7 +14,7 @@
     "app:g0:check:ios": "node scripts/app-g0.mjs app-ios",
     "app:g0:check:harmony": "node scripts/app-g0.mjs app-harmony",
     "app:g0:test": "node scripts/test-app-g0-native.cjs",
-    "app:v1:test": "node --test scripts/test-app-g0-native.cjs scripts/test-app-v1-auth.cjs scripts/test-app-api.cjs scripts/test-app-json.cjs scripts/test-app-v1-commerce.cjs scripts/test-app-v1-visits.cjs scripts/test-app-secure-session.cjs scripts/test-app-sales-profile.cjs scripts/test-app-crm.cjs scripts/test-app-crm-departure.cjs scripts/test-app-home.cjs scripts/test-app-home-cache.cjs scripts/test-app-customers.cjs scripts/test-app-customer-cache.cjs scripts/test-app-customer-pages.cjs scripts/test-app-visit-workbench.cjs scripts/test-app-visit-policy.cjs scripts/test-app-visits-page.cjs scripts/test-app-attendance.cjs scripts/test-app-field-tracking.cjs scripts/test-app-fieldwork.cjs scripts/test-app-background-location.cjs scripts/test-app-recording-review.cjs",
+    "app:v1:test": "node --test scripts/test-app-wecom.cjs scripts/test-app-g0-native.cjs scripts/test-app-v1-auth.cjs scripts/test-app-api.cjs scripts/test-app-json.cjs scripts/test-app-v1-commerce.cjs scripts/test-app-secure-session.cjs scripts/test-app-sales-profile.cjs scripts/test-app-crm.cjs scripts/test-app-store-intake.cjs scripts/test-app-crm-departure.cjs scripts/test-app-home.cjs scripts/test-app-home-cache.cjs scripts/test-app-customers.cjs scripts/test-app-customer-cache.cjs scripts/test-app-customer-pages.cjs scripts/test-app-visit-workbench.cjs scripts/test-app-visit-policy.cjs scripts/test-app-visits-page.cjs scripts/test-app-attendance.cjs scripts/test-app-field-tracking.cjs scripts/test-app-fieldwork.cjs scripts/test-app-background-location.cjs scripts/test-app-recording-review.cjs scripts/test-app-visit-fieldwork.cjs scripts/test-app-visit-completion.cjs scripts/test-app-visit-verification.cjs",
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
@@ -28,7 +28,9 @@
     "cap:open:android": "cap open android",
     "android:apk:debug": "cd android && ./gradlew assembleDebug",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "app:build:android": "python3 scripts/build-android-local.py",
+    "app:install:android": "python3 scripts/build-android-local.py --install"
   },
   "dependencies": {
     "@aparajita/capacitor-secure-storage": "^8.0.0",

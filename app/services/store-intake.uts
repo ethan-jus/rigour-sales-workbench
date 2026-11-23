@@ -1,0 +1,92 @@
+import { crmCall, crmObject, crmMutation, crmId, crmOwner, CrmArea } from './crm.uts'
+import { invalidateCustomerCache } from './customer-cache.uts'
+import { requestDeviceLocation, DeviceLocation } from './location.uts'
+import { nearbyDistanceText } from './customer-nearby.uts'
+
+export type IntakeType = { code: string, name: string, parent: string }
+export type IntakeContext = { areas: CrmArea[], reason: string }
+export type IntakePoint = { longitude: number, latitude: number, area: string, address: string }
+export type IntakePoi = { id: string, name: string, address: string, phone: string, type: string, area: string, longitude: number, latitude: number }
+export type IntakeCandidate = { poi: IntakePoi, state: string, storeId: string, label: string, action: string, distance: string }
+export type StoreLead = { id: string, name: string, address: string, area: string, longitude: number, latitude: number, coordinateSystem: string, phone: string, type: string, status: string, statusLabel: string, submittedAt: string, reviewedAt: string, reason: string, storeId: string, revision: number }
+export type LeadPage = { items: StoreLead[], total: number }
+export type LeadDraft = { name: string, address: string, areaCode: string, longitude: number, latitude: number, coordinateSystem: string, publicPhone: string | null, storeTypeCode: string }
+function requiredString(row: UTSJSONObject, key: string): string {
+  const value = row.getString(key)
+  if (value == null || value!.length == 0) throw new Error('门店资料不完整，请刷新重试')
+  return value!
+}
+function coordinate(row: UTSJSONObject, key: string, max: number): number {
+  const value = row.getNumber(key)
+  if (value == null || !Number.isFinite(value!) || Math.abs(value!) > max) throw new Error('门店位置不完整，请重新定位')
+  return value!
+}
+export function parseIntakePoi(row: UTSJSONObject): IntakePoi {
+  return { id: requiredString(row, 'id'), name: requiredString(row, 'name'), address: requiredString(row, 'address'), phone: row.getString('publicPhone') ?? '', type: row.getString('typeCode') ?? '', area: requiredString(row, 'areaCode'), longitude: coordinate(row, 'longitude', 180), latitude: coordinate(row, 'latitude', 90) } as IntakePoi
+}
+export function parseIntakeCandidate(row: UTSJSONObject): IntakeCandidate {
+  const poi = row.getJSON('poi'); const state = requiredString(row, 'state'); const storeId = row.getString('storeId') ?? ''
+  if (poi == null || !['NEW', 'PUBLIC', 'MINE', 'REVIEW', 'UNAVAILABLE'].includes(state) || (['PUBLIC', 'MINE'].includes(state) && storeId.length == 0)) throw new Error('门店查重结果不完整，请刷新')
+  const label = state == 'PUBLIC' ? '公海' : state == 'MINE' ? '我的私海' : state == 'REVIEW' ? '待核验' : state == 'UNAVAILABLE' ? '公司已收录' : '未入库'
+  const action = state == 'PUBLIC' ? '查看档案' : state == 'MINE' ? '查看客户' : state == 'REVIEW' ? '提报核验' : state == 'UNAVAILABLE' ? '暂不可开发' : '核对门店'
+  return { poi: parseIntakePoi(poi!), state: state, storeId: storeId, label: label, action: action, distance: nearbyDistanceText(row.getNumber('distanceMeters')) } as IntakeCandidate
+}
+export async function intakeContext(): Promise<IntakeContext> {
+  const data = crmObject(await crmCall('/crm/stores/intake/context')); const rows = data.getArray<UTSJSONObject>('areas')
+  if (rows == null) throw new Error('地区范围未返回，请重试')
+  return { areas: rows!.map((r: UTSJSONObject): CrmArea => ({ code: requiredString(r, 'code'), name: requiredString(r, 'name'), level: requiredString(r, 'level'), parent: r.getString('parentCode') ?? '' } as CrmArea)), reason: data.getString('emptyScopeReason') ?? '' } as IntakeContext
+}
+export async function intakeTypes(): Promise<IntakeType[]> {
+  const response = await crmCall('/crm/stores/intake/types'); const rows = response.getArray<UTSJSONObject>('data')
+  if (rows == null) throw new Error('门店分类未返回，请重试')
+  return rows!.map((r: UTSJSONObject): IntakeType => ({ code: requiredString(r, 'dictionaryItemCode'), name: requiredString(r, 'dictionaryItemName'), parent: r.getString('parentDictionaryItemCode') ?? '' } as IntakeType))
+}
+export async function intakeDiscover(keyword: string, area: string, point: IntakePoint | null, radius: number): Promise<IntakeCandidate[]> {
+  const near = point == null ? '' : '&longitude=' + point!.longitude.toString() + '&latitude=' + point!.latitude.toString() + '&coordinateSystem=GCJ02&radiusMeters=' + radius.toString()
+  const data = crmObject(await crmCall('/crm/stores/intake/discover?keyword=' + encodeURIComponent(keyword.trim()) + '&areaCode=' + encodeURIComponent(area) + near))
+  const rows = data.getArray<UTSJSONObject>('items')
+  if (rows == null || data.getString('coordinateSystem') != 'GCJ02') throw new Error('高德查询结果不完整，请重试')
+  return rows!.map((r: UTSJSONObject): IntakeCandidate => parseIntakeCandidate(r))
+}
+export async function intakeResolve(longitude: number, latitude: number, system: string): Promise<IntakePoint> {
+  const row = crmObject(await crmCall('/crm/stores/intake/location?longitude=' + longitude.toString() + '&latitude=' + latitude.toString() + '&coordinateSystem=' + system))
+  if (row.getString('status') != 'RESOLVED') throw new Error('地址未解析成功，请重新定位')
+  return { longitude: coordinate(row, 'amapLongitude', 180), latitude: coordinate(row, 'amapLatitude', 90), area: requiredString(row, 'adcode'), address: requiredString(row, 'formattedAddress') } as IntakePoint
+}
+export async function intakeDevicePoint(): Promise<IntakePoint> {
+  const account = crmOwner()
+  const location = await new Promise<DeviceLocation>((resolve, reject) => requestDeviceLocation((p: DeviceLocation) => resolve(p), (message: string) => reject(new Error(message)), 3000))
+  if (account != crmOwner()) throw new Error('账号已变更，请重新进入')
+  if (location.accuracy != null && location.accuracy! > 200) throw new Error('定位精度不足，请到开阔位置重试')
+  return await intakeResolve(location.longitude, location.latitude, 'WGS84')
+}
+export async function intakeAdmit(poi: string): Promise<string> {
+  return requiredString(crmObject(await crmMutation('/crm/stores/intake/amap', 'POST', { poiId: poi } as UTSJSONObject)), 'storeId')
+}
+export function openIntakeStore(id: string, source: string, admitted: boolean): void {
+  uni.navigateTo({ url: '/pages/customer-detail/customer-detail?id=' + encodeURIComponent(id) + '&source=' + source + (admitted ? '&admitted=true' : '') })
+}
+export function parseStoreLead(row: UTSJSONObject): StoreLead {
+  const status = requiredString(row, 'status')
+  if (!['PENDING_REVIEW', 'APPROVED', 'REJECTED'].includes(status)) throw new Error('提报状态不完整，请刷新')
+  return { id: requiredString(row, 'id'), name: requiredString(row, 'name'), address: requiredString(row, 'address'), area: requiredString(row, 'areaCode'), longitude: coordinate(row, 'longitude', 180), latitude: coordinate(row, 'latitude', 90), coordinateSystem: requiredString(row, 'coordinateSystem'), phone: row.getString('publicPhone') ?? '', type: row.getString('storeTypeCode') ?? '', status: status, statusLabel: status == 'APPROVED' ? '已入库' : status == 'REJECTED' ? '已退回' : '待审核', submittedAt: row.getString('submittedAt') ?? '', reviewedAt: row.getString('reviewedAt') ?? '', reason: row.getString('reviewReason') ?? '', storeId: row.getString('resultStoreId') ?? '', revision: row.getNumber('revision') ?? 0 } as StoreLead
+}
+export async function intakeLeads(page: number, status: string): Promise<LeadPage> {
+  const data = crmObject(await crmCall('/crm/stores/leads?review=false&page=' + page.toString() + '&size=20&status=' + status)); const rows = data.getArray<UTSJSONObject>('items'); const total = data.getNumber('total')
+  if (rows == null || total == null) throw new Error('提报列表不完整，请刷新')
+  return { items: rows!.map((r: UTSJSONObject): StoreLead => parseStoreLead(r)), total: total! } as LeadPage
+}
+export async function intakeLead(id: string): Promise<StoreLead> { return parseStoreLead(crmObject(await crmCall('/crm/stores/leads/' + encodeURIComponent(id)))) }
+const leadRequests = new Map<string, string>(); let leadOwner = ''
+export async function intakeSubmit(draft: LeadDraft, id: string, revision: number): Promise<StoreLead> {
+  const account = crmOwner(); if (leadOwner != account) { leadRequests.clear(); leadOwner = account }
+  const memo = id + ':' + revision.toString() + ':' + JSON.stringify(draft)
+  const request = leadRequests.get(memo) ?? crmId(); leadRequests.set(memo, request)
+  const proposal = JSON.parse<UTSJSONObject>(JSON.stringify(draft))!; proposal['requestId'] = request
+  const data = crmObject(await crmCall('/crm/stores/leads' + (id.length > 0 ? '/' + id : ''), id.length > 0 ? 'PUT' : 'POST', id.length > 0 ? { revision: revision, proposal: proposal } as UTSJSONObject : proposal))
+  const result = parseStoreLead(data); leadRequests.delete(memo); invalidateCustomerCache(); return result
+}
+// A short-lived navigation payload; no customer details persist across an account switch.
+let seedOwner = ''; let seed: IntakePoi | null = null
+export function intakeManual(poi: IntakePoi | null): void { seedOwner = crmOwner(); seed = poi; uni.navigateTo({ url: '/pages/store-lead/store-lead' }) }
+export function takeIntakeSeed(): IntakePoi | null { const result = seedOwner == crmOwner() ? seed : null; seed = null; seedOwner = ''; return result }

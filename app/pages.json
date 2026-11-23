@@ -56,7 +56,8 @@
     {
       "path": "pages/profile/profile",
       "style": {
-        "navigationBarTitleText": "我的"
+        "navigationBarTitleText": "我的",
+        "navigationStyle": "custom"
       }
     },
     {
@@ -72,15 +73,9 @@
       }
     },
     {
-      "path": "pages/visit/visit",
-      "style": {
-        "navigationBarTitleText": "拜访"
-      }
-    },
-    {
       "path": "pages/work/work",
       "style": {
-        "navigationBarTitleText": "工作与设置"
+        "navigationBarTitleText": "设置"
       }
     },
     {
@@ -108,6 +103,24 @@
       }
     },
     {
+      "path": "pages/store-development/store-development",
+      "style": {
+        "navigationBarTitleText": "开发门店"
+      }
+    },
+    {
+      "path": "pages/store-lead/store-lead",
+      "style": {
+        "navigationBarTitleText": "手动提报"
+      }
+    },
+    {
+      "path": "pages/store-leads/store-leads",
+      "style": {
+        "navigationBarTitleText": "我的提报"
+      }
+    },
+    {
       "path": "pages/customer-detail/customer-detail",
       "style": {
         "navigationBarTitleText": "客户详情"
@@ -128,13 +141,55 @@
     {
       "path": "pages/fieldwork-statement/fieldwork-statement",
       "style": {
-        "navigationBarTitleText": "异常说明"
+        "navigationBarTitleText": "补充说明"
       }
     },
     {
       "path": "pages/visit-evidence/visit-evidence",
       "style": {
-        "navigationBarTitleText": "拜访详情"
+        "navigationBarTitleText": "录音与原文"
+      }
+    },
+    {
+      "path": "pages/visit-uploads/visit-uploads",
+      "style": {
+        "navigationBarTitleText": "材料同步"
+      }
+    },
+    {
+      "path": "pages/voice-profile/voice-profile",
+      "style": {
+        "navigationBarTitleText": "声音登记"
+      }
+    },
+    {
+      "path": "pages/visit-appeal/visit-appeal",
+      "style": {
+        "navigationBarTitleText": "填写申诉"
+      }
+    },
+    {
+      "path": "pages/visit-verification/visit-verification",
+      "style": {
+        "navigationBarTitleText": "拜访核验"
+      }
+    },
+    {
+      "path": "pages/profile-help/profile-help",
+      "style": {
+        "navigationBarTitleText": "使用帮助"
+      }
+    },
+    {
+      "path": "pages/wecom/wecom",
+      "style": {
+        "navigationBarTitleText": "我的企微客户"
+      }
+    },
+    {
+      "path": "pages/customer-location/customer-location",
+      "style": {
+        "navigationBarTitleText": "门店位置"
       }
     }
   ],

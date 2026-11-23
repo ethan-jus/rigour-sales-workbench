@@ -8,18 +8,24 @@ const assert = require('node:assert/strict')
 const test = require('node:test')
 const ts = require('typescript')
 
-function sourceFor(android, file = 'secure-session.uts') {
+function sourceFor(platform, file = 'secure-session.uts') {
   let enabled = true
   const stack = []
   return fs.readFileSync(path.join(__dirname, '../app/services', file), 'utf8').split('\n').filter(line => {
-    const match = line.match(/\/\/ #(ifdef|ifndef) APP-ANDROID/)
-    if (match) { stack.push(enabled); enabled = enabled && (match[1] === 'ifdef' ? android : !android); return false }
+    const match = line.match(/\/\/ #(ifdef|ifndef) (APP-[A-Z-]+)/)
+    if (match) {
+      stack.push(enabled)
+      const matchesPlatform = match[2] === platform
+      enabled = enabled && (match[1] === 'ifdef' ? matchesPlatform : !matchesPlatform)
+      return false
+    }
     if (line.includes('// #endif')) { enabled = stack.pop(); return false }
     return enabled
   }).join('\n')
 }
 
-function fixture({ android = true, sdk = 35 } = {}) {
+function fixture({ android = true, ios = false, sdk = 35 } = {}) {
+  const platform = ios ? 'APP-IOS' : android ? 'APP-ANDROID' : 'APP-HARMONY'
   let thread = 'main'
   const io = [], main = [], files = new Map(), keys = new Map(), errors = [], results = [], faults = {}
   const env = { environment: 'development', issuer: 'https://login.example.test', clientId: 'sales-android' }
@@ -111,11 +117,28 @@ function fixture({ android = true, sdk = 35 } = {}) {
     } },
     'kotlin.text.Charsets': { UTF_8: 'utf8' },
   }
-  const compiled = ts.transpileModule(sourceFor(android), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true }, reportDiagnostics: true })
+  const keychain = new Map()
+  const keychainApi = {
+    readSecurePayload(scope, success) {
+      io.push(() => { const value = keychain.get(scope) ?? null; main.push(() => success(value)) })
+    },
+    writeSecurePayload(scope, value, success) {
+      io.push(() => { keychain.set(scope, value); main.push(success) })
+    },
+    clearSecurePayload(scope, success) {
+      io.push(() => { keychain.delete(scope); main.push(success) })
+    },
+  }
+  const compiled = ts.transpileModule(sourceFor(platform), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true }, reportDiagnostics: true })
   assert.deepEqual(compiled.diagnostics, [])
   const context = vm.createContext({
     exports: {}, toNativeBytes: value => bytes(Buffer.from(value)),
-    require: name => name === './config.uts' ? { appEnvironment: env } : name === './secure-storage.uts' ? storageApi : native[name],
+    require: name => {
+      if (name === './config.uts') return { appEnvironment: env }
+      if (name === './secure-storage.uts') return storageApi
+      if (name === '../uni_modules/rigour-session-keychain') return keychainApi
+      return native[name]
+    },
     setTimeout: action => main.push(action),
     UTSAndroid: {
       getAppContext: () => ({ getNoBackupFilesDir: () => '/private/no_backup' }),
@@ -123,7 +146,7 @@ function fixture({ android = true, sdk = 35 } = {}) {
     },
   })
   vm.runInContext(`String.prototype.toByteArray = function() { return toNativeBytes(String(this)) }; JSON.parseObject = function(text) { const value = JSON.parse(text); return { getString: function(key) { return typeof value[key] === 'string' ? value[key] : null } } }`, context)
-  const storageSource = ts.transpileModule(sourceFor(android, 'secure-storage.uts'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true } }).outputText
+  const storageSource = ts.transpileModule(sourceFor(platform, 'secure-storage.uts'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true } }).outputText
   vm.runInContext(storageSource, context)
   const storageApi = context.exports
   context.exports = {}
@@ -212,6 +235,26 @@ test('partial clearing reports failure while still attempting both erasures', ()
     if (fault === 'deleteFile') assert.equal(f.keys.size, 0)
     else assert.equal(f.files.size, 0)
   }
+})
+
+test('the iOS session saves, restores and clears its own scoped Keychain item', () => {
+  const f = fixture({ ios: true })
+  assert.equal(f.api.secureSessionSupported(), true)
+  f.api.writeSecureSession(f.value(), f.success, f.fail)
+  f.api.readSecureSession(f.success, f.fail)
+  f.drain()
+  assert.deepEqual(JSON.parse(JSON.stringify(f.results.at(-1))), f.value())
+  f.env.environment = 'other'
+  f.api.readSecureSession(f.success, f.fail)
+  f.drain()
+  assert.equal(f.results.at(-1), null)
+  f.env.environment = 'development'
+  f.api.clearSecureSession(f.success, f.fail)
+  f.api.readSecureSession(f.success, f.fail)
+  f.drain()
+  assert.equal(f.results.at(-1), null)
+  assert.deepEqual(f.errors, [])
+  assert.equal(f.files.size, 0)
 })
 
 test('unsupported platforms and Android before API 23 have asynchronous explicit failure', () => {

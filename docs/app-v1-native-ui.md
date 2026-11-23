@@ -22,7 +22,7 @@
 源码：
 
 - `app/pages/visits/visits.uvue`：本人正式记录与本机草稿列表。
-- `app/pages/visit/visit.uvue`：`view=select/active/evidence/detail/uploads/plan`。
+- 早期 `pages/visit/visit` 已于 2026-11-16 移除；当前拜访为 `app/pages/crm-visit/crm-visit.uvue`，计划在 `pages/visits`，上传在 `pages/visit-uploads`。
 - `app/services/visits.uts`：只读接口、草稿持久化、照片文件引用、定位和录音会话。
 
 | 页面或流程 | 当前实现 | 尚未接通的部分 |
@@ -56,7 +56,7 @@
 可复跑命令（仓库依赖已安装时）：
 
 ```bash
-node scripts/test-app-v1-visits.cjs
+node --test scripts/test-app-visit-completion.cjs scripts/test-app-recording-review.cjs
 ```
 
 测试依赖项目的 `typescript` 和 `vue/compiler-sfc`。若只安装了 HBuilderX、没有仓库 `node_modules`，可通过 `NODE_PATH` 指向本机 HBuilderX 对应 Node 模块目录；测试脚本本身不依赖临时目录或机器固定路径。2026-10-14 本机执行时使用了 HBuilderX 的 TypeScript 和 Vue 编译器模块，13 项通过。

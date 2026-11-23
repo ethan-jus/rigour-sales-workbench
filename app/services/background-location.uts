@@ -1,11 +1,31 @@
-export type BackgroundPoint = { longitude: number, latitude: number, accuracy: number }
+// #ifdef APP-ANDROID
+import { setNativeFieldMotion, setNativeLocationIdle, startNativeLocation, stopNativeLocation } from './native-location.uts'
+// #endif
+
+export type BackgroundPoint = { longitude: number, latitude: number, accuracy: number, observedAt: number, gps: boolean, motion: number }
 type LocationConsumer = { point: (value: BackgroundPoint) => void, error: (message: string) => void }
 // Fieldwork and auto-departure share one system location subscription.
 const consumers = new Map<string, LocationConsumer>()
+let lastGpsAt = 0
+let lastGpsAccuracy = 0
 let active = false
 let starting: Promise<void> | null = null
 let listener: number | null = null
 let errorListener: number | null = null
+// #ifdef APP-ANDROID
+let fieldworkIdle = false
+let quickWake = false
+function updateLocationCadence(): void {
+  setNativeLocationIdle(fieldworkIdle && consumers.size == 1 && consumers.has('fieldwork'), quickWake)
+}
+// #endif
+export function setFieldworkLocationIdle(idle: boolean, confirmedTrack: boolean = false): void {
+  // #ifdef APP-ANDROID
+  fieldworkIdle = idle
+  quickWake = confirmedTrack
+  updateLocationCadence()
+  // #endif
+}
 function subscribers(): LocationConsumer[] {
   const result: LocationConsumer[] = []
   consumers.forEach((value: LocationConsumer, _key: string) => { result.push(value) })
@@ -13,24 +33,57 @@ function subscribers(): LocationConsumer[] {
 }
 function stopIfUnused(): void {
   if (consumers.size > 0 || starting != null) return
+  // #ifndef APP-ANDROID
   if (listener != null) uni.offLocationChange(listener!)
   if (errorListener != null) uni.offLocationChangeError(errorListener!)
   listener = null; errorListener = null
   if (active) uni.stopLocationUpdate({})
-  active = false
+  // #endif
+  // #ifdef APP-ANDROID
+  stopNativeLocation()
+  // #endif
+  active = false; lastGpsAt = 0; lastGpsAccuracy = 0
 }
-export function releaseBackgroundLocation(key: string): void { consumers.delete(key); stopIfUnused() }
-export function acquireBackgroundLocation(key: string, point: (value: BackgroundPoint) => void, error: (message: string) => void): Promise<void> {
+export function releaseBackgroundLocation(key: string): void {
+  consumers.delete(key)
+  // #ifdef APP-ANDROID
+  if (key == 'fieldwork') { fieldworkIdle = false; setNativeFieldMotion(false) }
+  if (consumers.size > 0) updateLocationCadence()
+  // #endif
+  stopIfUnused()
+}
+export function acquireBackgroundLocation(key: string, point: (value: BackgroundPoint) => void, error: (message: string) => void, monitorMotion: boolean = false): Promise<void> {
   consumers.set(key, { point, error } as LocationConsumer)
-  if (active) return Promise.resolve()
+  // #ifdef APP-ANDROID
+  if (key == 'fieldwork') setNativeFieldMotion(monitorMotion)
+  // #endif
+  if (active) {
+    // #ifdef APP-ANDROID
+    updateLocationCadence()
+    // #endif
+    return Promise.resolve()
+  }
   if (starting != null) return starting!
-  listener = uni.onLocationChange((location: OnLocationChangeResult) => {
-    const value = { longitude: location.longitude, latitude: location.latitude, accuracy: location.accuracy } as BackgroundPoint
-    subscribers().forEach((consumer: LocationConsumer) => consumer.point(value))
-  })
-  errorListener = uni.onLocationChangeError((failure: IGetLocationFail) => { subscribers().forEach((consumer: LocationConsumer) => consumer.error(failure.errMsg)) })
   const request = new Promise<void>((resolve, reject) => {
+    // #ifdef APP-ANDROID
+    try {
+      startNativeLocation((longitude: number, latitude: number, accuracy: number, observedAt: number, gps: boolean, motion: number) => {
+        if (gps) { lastGpsAt = observedAt; lastGpsAccuracy = accuracy }
+        else if (lastGpsAt > 0 && observedAt - lastGpsAt < 30000 && lastGpsAccuracy <= accuracy) return
+        const value = { longitude, latitude, accuracy, observedAt, gps, motion } as BackgroundPoint
+        subscribers().forEach((consumer: LocationConsumer) => consumer.point(value))
+      })
+      active = true; resolve()
+    } catch (failure) { reject(failure) }
+    // #endif
+    // #ifndef APP-ANDROID
+    listener = uni.onLocationChange((location: OnLocationChangeResult) => {
+      const value = { longitude: location.longitude, latitude: location.latitude, accuracy: location.accuracy, observedAt: Date.now(), gps: false, motion: -1 } as BackgroundPoint
+      subscribers().forEach((consumer: LocationConsumer) => consumer.point(value))
+    })
+    errorListener = uni.onLocationChangeError((failure: IGetLocationFail) => { subscribers().forEach((consumer: LocationConsumer) => consumer.error(failure.errMsg)) })
     uni.startLocationUpdateBackground({ provider: 'system', type: 'wgs84', success: (_) => { active = true; resolve() }, fail: (failure) => reject(new Error(failure.errMsg)) })
+    // #endif
   }).finally(() => { starting = null; stopIfUnused() })
   starting = request; return request
 }

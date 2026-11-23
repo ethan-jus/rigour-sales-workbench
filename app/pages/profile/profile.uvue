@@ -1,50 +1,84 @@
 <template>
-  <scroll-view class="page" direction="vertical"><view class="content">
-    <view class="profile-hero" @click="account"><text class="profile-avatar">{{ initial }}</text><view class="grow"><text class="h1">{{ name }}</text><text class="muted">{{ session.authenticated ? session.username : '使用供应链系统账号' }}</text><text class="profile-scope">{{ session.authenticated ? '公司统一管理权限' : '登录后查看个人工作' }}</text></view><text class="arrow">›</text></view>
-    <button v-if="!session.authenticated" class="primary" @click="login">登录公司账号</button>
-    <view class="profile-stats"><view class="stat" @click="customers"><image class="stat-icon" src="/static/tabs/customer.png"/><text class="muted">客户</text></view><view class="stat" @click="visits"><image class="stat-icon" src="/static/tabs/visit.png"/><text class="muted">拜访</text></view><view class="stat" @click="orders"><image class="stat-icon" src="/static/tabs/order.png"/><text class="muted">订单</text></view></view>
-    <text class="section-label">我的成长</text>
-    <view class="menu-row" @click="work('performance')"><image class="menu-icon" src="/static/tabs/chart.png"/><view class="grow"><text class="h3">目标与业绩</text><text class="muted">业务进度与明细</text></view><text class="arrow">›</text></view>
-    <view v-if="canReadPay" class="menu-row" @click="openPay"><image class="menu-icon" src="/static/tabs/wallet.png"/><text class="h3 grow">我的薪酬</text><text class="arrow">›</text></view>
-    <text class="section-label">工作与设置</text>
-    <view v-if="canReadFieldwork" class="menu-row" @click="fieldwork"><image class="menu-icon" src="/static/home/calendar-outline.svg"/><text class="h3 grow">外勤记录</text><text class="arrow">›</text></view>
-    <view class="menu-row" @click="plan"><image class="menu-icon" src="/static/tabs/calendar.png"/><text class="h3 grow">拜访计划</text><text class="arrow">›</text></view>
-    <view class="menu-row" @click="uploads"><image class="menu-icon" src="/static/tabs/upload.png"/><text class="h3 grow">上传任务</text><text class="fine">{{ count > 0 ? count.toString() + ' 份本机草稿' : '' }}</text><text class="arrow">›</text></view>
-    <view class="menu-row" @click="work('messages')"><image class="menu-icon" src="/static/tabs/bell.png"/><text class="h3 grow">消息与待办</text><text class="arrow">›</text></view>
-    <view class="menu-row" @click="account"><image class="menu-icon" src="/static/tabs/shield.png"/><text class="h3 grow">账号与设置</text><text class="arrow">›</text></view>
-    <text class="version">销售工作台 · 内部试用版 0.2.1</text>
-  </view></scroll-view>
+  <scroll-view class="sw-page me-home" direction="vertical">
+    <view class="me-home-header">
+      <view class="me-home-nav"><view class="me-nav-spacer" /><text class="me-home-title">我的</text><view class="me-settings" aria-label="设置" hover-class="sw-pressed" @click="settings"><image class="me-settings-icon" src="/static/profile/settings.svg" /></view></view>
+      <view class="me-identity" hover-class="sw-pressed" @click="account">
+        <text class="me-avatar">{{ initial }}</text><view class="sw-grow"><text class="me-name">{{ name }}</text><text class="me-company">{{ session.authenticated ? session.tenantName : '登录后查看个人工作' }}</text></view>
+        <view class="me-profile-link"><text class="me-profile-link-text">个人资料</text><image class="me-home-chevron" src="/static/home/chevron-right.svg" /></view>
+      </view>
+    </view>
+    <view class="me-home-content">
+      <view v-if="count > 0" class="me-alert" hover-class="sw-pressed" @click="uploads"><text class="me-accent sw-grow">{{ count }} 次拜访的材料待同步</text><text class="me-accent">去处理 ›</text></view>
+      <text v-if="canReadFieldwork || canRegisterVoice || canReadPay" class="me-home-section">个人工作</text>
+      <view v-if="canReadFieldwork || canRegisterVoice || canReadPay" class="me-home-group">
+        <view v-if="canReadPay" class="me-home-row" hover-class="sw-pressed" @click="openPay"><text class="me-home-label sw-grow">我的薪酬</text><image class="me-home-chevron" src="/static/home/chevron-right.svg" /></view>
+        <view v-if="canReadFieldwork" class="me-home-row" hover-class="sw-pressed" @click="fieldwork"><image class="me-home-icon" src="/static/profile/route.svg" /><view class="sw-grow"><text class="me-home-label">外勤记录</text><text class="me-home-description">签到签退 · 拜访轨迹</text></view><image class="me-home-chevron" src="/static/home/chevron-right.svg" /></view>
+        <view v-if="canReadFieldwork && canRegisterVoice" class="me-home-divider" />
+        <view v-if="canRegisterVoice" class="me-home-row" hover-class="sw-pressed" @click="voice"><image class="me-home-icon" src="/static/profile/mic.svg" /><text class="me-home-label sw-grow">声音登记</text><text class="me-home-state">{{ voiceStatus }}</text><image class="me-home-chevron" src="/static/home/chevron-right.svg" /></view>
+      </view>
+      <text class="me-home-section">支持与服务</text>
+      <view class="me-home-group">
+        <view class="me-home-row" hover-class="sw-pressed" @click="uploads"><image class="me-home-icon" src="/static/profile/sync.svg" /><text class="me-home-label sw-grow">材料同步</text><text :class="count > 0 ? 'me-home-state me-home-state-pending' : 'me-home-state'">{{ crmUploadState.busy ? '同步中' : count > 0 ? '待同步' : '已同步' }}</text><image class="me-home-chevron" src="/static/home/chevron-right.svg" /></view>
+        <view class="me-home-divider" />
+        <view class="me-home-row" hover-class="sw-pressed" @click="help"><image class="me-home-icon" src="/static/profile/help.svg" /><text class="me-home-label sw-grow">使用帮助</text><image class="me-home-chevron" src="/static/home/chevron-right.svg" /></view>
+      </view>
+    </view>
+  </scroll-view>
 </template>
 <script setup lang="uts">
 import { session, hasPermission } from '../../services/session.uts'
-import { loadLocalVisits, visitDraftCount } from '../../services/visits.uts'
+import { crmOwner } from '../../services/crm.uts'
+import { crmUploadState } from '../../services/crm-media.uts'
+import { readVoiceProfile } from '../../services/voice-profile.uts'
 function openPay(): void { uni.navigateTo({ url: '/pages/pay-statement/pay-statement' }) }
 const canReadPay = computed((): boolean => hasPermission('hr:payroll:self'))
+const canRegisterVoice = computed((): boolean => hasPermission('sales:context:read') && hasPermission('sales:recording:own:write'))
 const canReadFieldwork = computed((): boolean => hasPermission('sales:context:read'))
 const name = computed((): string => session.authenticated ? session.displayName : '欢迎使用')
 const initial = computed((): string => session.displayName.length > 0 ? session.displayName.substring(0, 1) : '我')
-const count = computed((): number => visitDraftCount())
-function login(): void { uni.navigateTo({ url: '/pages/login/login' }) }
-function customers(): void { uni.switchTab({ url: '/pages/customers/customers' }) }
-function visits(): void { uni.switchTab({ url: '/pages/visits/visits' }) }
-function orders(): void { uni.switchTab({ url: '/pages/orders/orders' }) }
-function plan(): void { uni.navigateTo({ url: '/pages/visit/visit?view=plan' }) }
-function uploads(): void { uni.navigateTo({ url: '/pages/visit/visit?view=uploads' }) }
-function work(view: string): void { uni.navigateTo({ url: '/pages/work/work?view=' + view }) }
+const count = computed((): number => crmUploadState.pending)
+const voiceStatus = ref(''); let generation = 0
+function voice(): void { uni.navigateTo({ url: '/pages/voice-profile/voice-profile' }) }
+function uploads(): void { uni.navigateTo({ url: '/pages/visit-uploads/visit-uploads' }) }
 function fieldwork(): void { uni.navigateTo({ url: '/pages/fieldwork/fieldwork' }) }
-function account(): void { work('account') }
-onShow(() => { loadLocalVisits() })
+function settings(): void { uni.navigateTo({ url: '/pages/work/work?view=account' }) }
+function account(): void { uni.navigateTo({ url: session.authenticated ? '/pages/work/work?view=info' : '/pages/login/login' }) }
+function help(): void { uni.navigateTo({ url: '/pages/profile-help/profile-help' }) }
+async function refreshVoice(): Promise<void> {
+  const version = ++generation; const owner = crmOwner(); voiceStatus.value = ''
+  if (!canRegisterVoice.value) return
+  try { const result = await readVoiceProfile(); if (version == generation && owner == crmOwner()) voiceStatus.value = result.registered ? '已登记' : '未登记' }
+  catch (_) { if (version == generation && owner == crmOwner()) voiceStatus.value = '点击查看' }
+}
+onShow(refreshVoice)
+onHide(() => { generation++ })
+watch((): string => crmOwner(), (_owner: string) => { generation++; voiceStatus.value = '' })
 </script>
 <style>
-.profile-hero { flex-direction: row; align-items: center; padding-top: 8px; padding-bottom: 22px; }
-.profile-avatar { width: 66px; height: 66px; line-height: 66px; text-align: center; border-radius: 33px; background-color: #f7e7d8; color: #9e5d38; font-size: 25px; margin-right: 18px; }
-.profile-scope { color: #a95532; font-size: 11px; margin-top: 7px; }
-.arrow { color: #a5a6a5; font-size: 23px; margin-left: 8px; }
-.profile-stats { flex-direction: row; background-color: #f8f7f4; padding: 20px 0; border-radius: 8px; margin-top: 12px; margin-bottom: 12px; }
-.stat { flex: 1; align-items: center; }
-.stat-icon { width: 25px; height: 25px; margin-bottom: 9px; }
-.section-label { font-size: 13px; color: #888b8d; margin-top: 25px; margin-bottom: 5px; }
-.menu-row { flex-direction: row; align-items: center; padding: 19px 0; border-bottom-width: 1px; border-bottom-color: #ededea; }
-.menu-icon { width: 23px; height: 23px; margin-right: 14px; }
-.version { margin-top: 32px; text-align: center; color: #999c9e; font-size: 11px; }
+@import '../../styles/profile-ui.css';
+.me-home { padding-top: var(--uni-safe-area-inset-top); background-color: var(--sw-surface); }
+.me-home-header { background-color: var(--sw-canvas); }
+.me-home-nav { flex-direction: row; align-items: center; justify-content: space-between; height: 52px; padding: 0 16px; }
+.me-home-title { font-size: 18px; font-weight: 600; color: var(--sw-ink); }
+.me-nav-spacer { width: 48px; }
+.me-settings { width: 48px; height: 48px; align-items: center; justify-content: center; border-radius: 12px; }
+.me-settings-icon { width: 22px; height: 22px; }
+.me-identity { flex-direction: row; align-items: center; padding: 22px 24px 28px; width: 100%; max-width: 560px; align-self: center; }
+.me-avatar { width: 56px; height: 56px; border-radius: 17px; background-color: var(--sw-accent-soft); color: var(--sw-accent); font-size: 23px; font-weight: 600; text-align: center; line-height: 56px; margin-right: 14px; }
+.me-name { font-size: 24px; line-height: 32px; font-weight: 600; color: var(--sw-ink); }
+.me-company { font-size: 12px; line-height: 20px; color: var(--sw-muted); margin-top: 4px; }
+.me-profile-link { flex-direction: row; align-items: center; min-height: 48px; margin-left: 8px; }
+.me-profile-link-text { font-size: 12px; color: var(--sw-muted); }
+.me-home-content { width: 100%; max-width: 560px; align-self: center; padding: 4px 16px 32px; }
+.me-home-section { font-size: 12px; line-height: 20px; color: var(--sw-muted); margin: 20px 8px 8px; }
+.me-home-group { background-color: var(--sw-canvas); border-radius: 14px; overflow: hidden; }
+.me-home-row { flex-direction: row; align-items: center; min-height: 30px; padding: 16px; }
+.me-home-icon { width: 22px; height: 22px; margin-right: 14px; }
+.me-home-label { font-size: 15px; line-height: 22px; color: var(--sw-ink); }
+.me-home-description { font-size: 12px; line-height: 18px; color: var(--sw-muted); margin-top: 3px; }
+.me-home-chevron { width: 14px; height: 14px; margin-left: 8px; opacity: 0.6; }
+.me-home-divider { height: 1px; background-color: #eceef0; margin-left: 52px; margin-right: 16px; }
+.me-home-state { color: var(--sw-muted); font-size: 12px; line-height: 20px; margin-left: 8px; }
+.me-home-state-pending { color: var(--sw-accent); }
+.me-alert { flex-direction: row; align-items: center; background-color: var(--sw-accent-soft); border-radius: 10px; min-height: 48px; padding: 12px; margin-top: 16px; }
 </style>

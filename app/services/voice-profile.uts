@@ -1,0 +1,31 @@
+import { crmCall, crmObject, crmOwner } from './crm.uts'
+import { ensureAccessToken } from './auth.uts'
+import { appEnvironment } from './config.uts'
+import { parseApiJson } from './json.uts'
+export type VoiceProfile = { registered: boolean, employeeName: string, revision: number }
+function profile(data: UTSJSONObject): VoiceProfile {
+  const revision = data.getNumber('revision'); const name = data.getString('employeeName'); const registered = data.getBoolean('registered')
+  if (revision == null || name == null || registered == null) throw new Error('声音登记信息不完整，请刷新')
+  return { registered: registered!, employeeName: name!, revision: revision! } as VoiceProfile
+}
+export async function readVoiceProfile(): Promise<VoiceProfile> { return profile(crmObject(await crmCall('/sales/me/voice-profile'))) }
+export async function deleteVoiceProfile(revision: number): Promise<VoiceProfile> { return profile(crmObject(await crmCall('/sales/me/voice-profile?revision=' + revision.toString(), 'DELETE'))) }
+export function registerVoiceProfile(file: string, revision: number, owner: string, renewed: boolean = false): Promise<VoiceProfile> {
+  return new Promise<VoiceProfile>((resolve, reject) => {
+    if (owner != crmOwner()) { reject(new Error('账号已变更')); return }
+    ensureAccessToken(renewed, (token) => {
+      if (owner != crmOwner()) { reject(new Error('账号已变更')); return }
+      uni.uploadFile({ url: appEnvironment.gatewayOrigin + '/api/v1/sales/me/voice-profile', filePath: file, name: 'file', header: { Authorization: 'Bearer ' + token } as UTSJSONObject,
+        formData: { revision: revision.toString(), consent: 'true' } as UTSJSONObject, timeout: 120000,
+        success: (response) => {
+          if (owner != crmOwner()) { reject(new Error('账号已变更')); return }
+          if (response.statusCode == 401 && !renewed) { registerVoiceProfile(file, revision, owner, true).then(resolve).catch(reject); return }
+          try {
+            const body = parseApiJson(response.data)
+            if (response.statusCode >= 200 && response.statusCode < 300 && body?.getString('code') == 'OK') { resolve(profile(crmObject(body!))); return }
+            reject(new Error(body?.getString('message') ?? '登记失败，请重试'))
+          } catch (error) { reject(error) }
+        }, fail: (_) => reject(new Error('网络中断，请重试登记')) })
+    }, (message) => reject(new Error(message)))
+  })
+}

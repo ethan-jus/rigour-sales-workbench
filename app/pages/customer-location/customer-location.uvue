@@ -1,0 +1,46 @@
+<template>
+  <view class="sw-page">
+    <view v-if="ready" class="sw-grow"><store-location-map :longitude="longitude" :latitude="latitude" :selectable="false" /></view>
+    <view v-else class="location-empty"><text class="location-address">{{ loading ? '正在加载门店位置…' : error }}</text><button v-if="!loading" class="sw-text-button" @click="load">重新加载</button></view>
+    <view v-if="ready" class="location-card"><text class="location-name">{{ name }}</text><text class="location-address">{{ address }}</text><view class="sw-row"><button class="sw-text-button" @click="copyAddress">复制地址</button><!-- #ifdef APP-ANDROID --><button class="location-navigation" @click="navigate">导航到店</button><!-- #endif --></view></view>
+  </view>
+</template>
+<script setup lang="uts">
+import { crmDetail, crmOwner, crmMessage } from '../../services/crm.uts'
+// #ifdef APP-ANDROID
+import Intent from 'android.content.Intent'
+import Uri from 'android.net.Uri'
+// #endif
+const id = ref(''); const source = ref('MINE'); const loading = ref(false); const error = ref(''); const ready = ref(false)
+const name = ref(''); const address = ref(''); const longitude = ref(0); const latitude = ref(0)
+let generation = 0
+async function load(): Promise<void> {
+  const request = ++generation; const owner = crmOwner(); loading.value = true; error.value = ''; ready.value = false
+  try {
+    const store = await crmDetail(id.value, source.value)
+    if (request != generation || owner != crmOwner()) return
+    if (store.longitude == null || store.latitude == null || store.coordinateSystem != 'GCJ02') throw new Error('门店定位待核实')
+    name.value = store.name; address.value = store.address; longitude.value = store.longitude!; latitude.value = store.latitude!; ready.value = true
+  } catch (e) { if (request == generation) error.value = crmMessage(e) }
+  finally { if (request == generation) loading.value = false }
+}
+function copyAddress(): void { uni.setClipboardData({ data: name.value + ' ' + address.value }) }
+// #ifdef APP-ANDROID
+function navigate(): void {
+  const uri = 'androidamap://route/plan/?sourceApplication=' + encodeURIComponent('销售工作台') + '&dlat=' + latitude.value.toString() + '&dlon=' + longitude.value.toString() + '&dname=' + encodeURIComponent(name.value) + '&dev=0&t=0'
+  try { UTSAndroid.getUniActivity()!.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(uri)).setPackage('com.autonavi.minimap')) }
+  catch (_) { uni.showToast({ title: '请先安装高德地图，或复制地址到其他地图中导航', icon: 'none' }) }
+}
+// #endif
+onLoad((options) => { id.value = options['store'] ?? ''; source.value = options['view'] == 'PUBLIC' ? 'PUBLIC' : 'MINE'; load() })
+onUnload(() => { generation++ })
+watch((): string => crmOwner(), (_owner: string) => { generation++; ready.value = false; loading.value = false; name.value = ''; address.value = ''; error.value = '账号已变更，请重新进入' })
+</script>
+<style>
+@import '../../styles/workbench-ui.css';
+.location-empty { flex: 1; align-items: center; justify-content: center; padding: 24px; }
+.location-card { padding: 18px 20px 24px; background-color: #ffffff; }
+.location-name { font-size: 17px; font-weight: 600; color: #252a30; margin-bottom: 8px; }
+.location-address { font-size: 14px; line-height: 22px; color: #687483; margin-bottom: 12px; }
+.location-navigation { flex: 1; margin-left: 20px; height: 44px; line-height: 44px; border-width: 0; border-radius: 8px; background-color: #c64c1c; color: #ffffff; font-size: 15px; }
+</style>

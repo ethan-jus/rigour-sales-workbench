@@ -1,0 +1,22 @@
+[
+  {
+    "screen": "home",
+    "footerVisible": true,
+    "overflow": false
+  },
+  {
+    "screen": "statement",
+    "footerVisible": true,
+    "overflow": false
+  },
+  {
+    "screen": "voice-record",
+    "footerVisible": true,
+    "overflow": false
+  },
+  {
+    "screen": "permissions",
+    "footerVisible": true,
+    "overflow": false
+  }
+]

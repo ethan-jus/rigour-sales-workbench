@@ -1,0 +1,37 @@
+{
+  "errors": [],
+  "results": [
+    {
+      "state": "overview",
+      "overflow": false
+    },
+    {
+      "state": "full",
+      "overflow": false
+    },
+    {
+      "state": "selected",
+      "overflow": false
+    },
+    {
+      "state": "partial",
+      "overflow": false
+    },
+    {
+      "state": "missing",
+      "overflow": false
+    },
+    {
+      "state": "375",
+      "overflow": false
+    }
+  ],
+  "checked": [
+    "全屏打开时间记录",
+    "选择第2家至第3家的具体行程段",
+    "取消选中回到全图",
+    "无轨迹里程原因",
+    "375px宽度"
+  ],
+  "scope": "设计示意，非原生验收"
+}

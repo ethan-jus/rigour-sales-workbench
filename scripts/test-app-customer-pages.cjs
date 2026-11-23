@@ -8,6 +8,7 @@ function fixture(page, nearby = false, deferAreas = false) {
   const request = (...args) => new Promise((resolve, reject) => requests.push({ args, resolve, reject }))
   const owner = () => session.authenticated ? session.revision + ':' + session.permissions.join(',') : ''
   const modules = {
+    '../../services/wecom.uts': { wecomSummary: async () => ({active: '—'}), wecomStoreCount: async () => '—' },
     '../../services/config.uts': {appEnvironment:{environment:'test'}},
     '../../services/session.uts': { session, hasPermission: p => session.authenticated && session.permissions.includes(p), requireSession: () => session.authenticated },
     '../../services/crm.uts': { crmOwner: owner, crmToday: () => '2026-11-12', crmMessage: e => e.message,
@@ -165,48 +166,67 @@ function visitEntryFixture() {
   const policy = { radiusMeters: 200, captureRules: { maximumLocationAccuracyMeters: 100, automaticRecording: false } }
   let prepared = { owner: owner(), requestedAt: Date.now(), receivedAt: Date.now(), location: { getNumber: () => 15 } }
   let policyLoad = () => Promise.resolve(policy), locate = () => Promise.resolve(origin)
+  let day = {id:'day',status:'ACTIVE'}
+  const returns = [], captureReads = []
+  let records = [], captureRead = async () => ({ getString: () => 'CHECKED_IN' })
   let start = () => Promise.resolve({ storeId: '100', visitId: 'visit', captureId: 'capture' })
   const modules = {
+    '../../services/wecom.uts': { wecomSummary: async () => ({active: '—'}), wecomStoreCount: async () => '—' },
     '../../services/api.uts': { apiErrorMessage: () => '请到店后再开始拜访' },
+    '../../services/config.uts': { appEnvironment: { environment: 'test' } },
     '../../services/session.uts': { hasPermission: () => true },
-    '../../services/attendance.uts': { attendanceStatus: async () => { checks.push('attendance'); return 'ACTIVE' }, checkInAttendance: async () => checks.push('checkin') },
-    '../../services/crm.uts': { crmOwner: owner, crmMessage: e => e.message, crmStartVisit: (...args) => { starts.push(args); return start(...args) } },
+    '../../services/visit-return.uts': { signInForStore: (...args) => returns.push(args) },
+    '../../services/attendance.uts': { attendance: {day:null}, refreshAttendance: async () => { checks.push('attendance'); return day }, checkInAttendance: async () => checks.push('checkin') },
+    '../../services/crm.uts': { crmOwner: owner, crmMessage: e => e.message, crmStartVisit: (...args) => { starts.push(args); return start(...args) },
+      crmObject: x=>x, crmCall: async path=>{if(path.startsWith('/sales/me/visits/')) {captureReads.push(path);return captureRead()};return {getString: k=>k==='employeeId'?'employee':'',getNumber:()=>0,getArray:()=>[],getJSON:()=>null}},
+      crmDetail: async()=>({pool:'PRIVATE',ownershipId:'owned',ownerEmployeeId:'employee',name:'Store',holdReason:'',deadline:'',claimBlocked:''}),
+      crmContacts: async()=>[],crmVisitRecords:async()=>records,crmTime:x=>x,crmStorePhase:()=>'',crmVisitStatus:x=>x,crmVisitReason:x=>x },
     '../../services/customer-workbench.uts': {}, '../../services/workbench.uts': {},
     '../../services/visit-policy.uts': { currentVisitEntryPolicy: () => policyLoad(), validateLocationAccuracy: (a,m) => { if(a > m) throw new Error('定位误差超过范围') }, requestVisitMicrophone: async () => checks.push('microphone') },
     '../../services/customer-nearby.uts': { customerNearbyOriginSnapshot: () => origin, customerNearbyVisitLocation: () => prepared,
       customerNearbyLocation: (...args) => { locationCalls.push(args); return locate() }, nearbyDistance: (a,b,c,d) => Math.hypot(a-c,b-d)*100000 }
   }
   const source = fs.readFileSync(path.join(__dirname, '../app/pages/customer-detail/customer-detail.uvue'), 'utf8').split('<script setup lang="uts">')[1].split('</script>')[0]
-  const exports = '\nexports.view={busy,loading,visitPhase,entryOrigin,detail,activeVisit}; exports.visit=visit; exports.ready=()=>{visible=true; own.value=true; id.value="100"; entryOrigin.value=origin;detail.value={longitude:120.005,latitude:30.002,coordinateSystem:"GCJ02",businessStatus:"OPEN"};};'
+  const exports = '\nexports.view={busy,loading,visitPhase,entryOrigin,detail,activeVisit,resumeVisit,visits,error}; exports.reload=reload; exports.visit=visit; exports.prepare=prepareEntry; exports.ready=()=>{visible=true; own.value=true; id.value="100"; entryOrigin.value=origin;detail.value={longitude:120.005,latitude:30.002,coordinateSystem:"GCJ02",businessStatus:"OPEN"};};'
   const ctx = { exports:{}, require:n=>modules[n], origin, policy, ref, computed, watch, Error, setInterval:()=>1,clearInterval:()=>{},
     onLoad:f=>hooks.load=f,onShow:f=>hooks.show=f,onHide:f=>hooks.hide=f,onUnload:f=>hooks.unload=f,
     uni:{showModal:o=>modals.push(o),navigateTo:o=>navigations.push(o)} }
   vm.runInNewContext(ts.transpileModule(source+exports,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,ctx)
   ctx.exports.ready()
-  return {...ctx.exports,session,hooks,modals,navigations,starts,checks,locationCalls,policy,
-    setPrepared:p=>prepared=p,setPolicyLoad:f=>policyLoad=f,setLocate:f=>locate=f,setStart:f=>start=f}
+  return {...ctx.exports,session,hooks,modals,navigations,starts,checks,locationCalls,policy,returns,setDay:d=>day=d,
+    captureReads,setRecords:r=>records=r,setCaptureRead:f=>captureRead=f,setPrepared:p=>prepared=p,setPolicyLoad:f=>policyLoad=f,setLocate:f=>locate=f,setStart:f=>start=f}
 }
 
 test('visit click immediately locks, shows progress, coalesces clicks and keeps lock until navigation completes',async()=>{
   const f=visitEntryFixture();let finish
   f.setStart(()=>new Promise(resolve=>finish=resolve))
-  const first=f.visit();assert.equal(f.view.busy.value,true);assert.equal(f.view.visitPhase.value,'准备拜访…')
+  const first=f.visit();assert.equal(f.view.busy.value,true);assert.equal(f.view.visitPhase.value,'检查上班状态…')
   await f.visit();await flush();assert.equal(f.starts.length,1);assert.equal(f.locationCalls.length,0)
   assert.ok(f.starts[0][2],'recent normalized location is forwarded')
+  assert.equal(f.starts[0][5],'day','the shared attendance receipt is forwarded for server validation')
   f.starts[0][3]('核对拜访…');assert.equal(f.view.visitPhase.value,'核对拜访…')
   finish({storeId:'100',visitId:'visit',captureId:'capture'});await flush()
   assert.equal(f.navigations.length,1);assert.equal(f.view.busy.value,true)
   await f.visit();assert.equal(f.starts.length,1)
   f.navigations[0].success({});await first;assert.equal(f.view.busy.value,false)
 })
-test('known outside-radius visit prompts arrival without exposing distances before attendance, microphone, location or creation',async()=>{
+test('known outside-radius visit prompts arrival without exposing distances before microphone, location or creation',async()=>{
   const f=visitEntryFixture();f.view.detail.value.longitude=120.015
   const pending=f.visit();await flush()
   assert.equal(f.modals.length,1);assert.equal(f.modals[0].content,'请到店后再开始拜访')
-  assert.equal(f.modals[0].cancelText,'我已到店');assert.equal(f.modals[0].confirmText,'知道了')
-  assert.equal(f.starts.length,0);assert.equal(f.locationCalls.length,0);assert.equal(f.checks.length,0)
+  assert.equal(f.modals[0].cancelText,'已到店');assert.equal(f.modals[0].confirmText,'知道了')
+  assert.equal(f.starts.length,0);assert.equal(f.locationCalls.length,0);assert.equal(f.checks.filter(c=>c!=='attendance').length,0)
   assert.equal(f.view.busy.value,true);await f.visit();assert.equal(f.modals.length,1)
   f.modals[0].success({confirm:true});await pending;assert.equal(f.view.busy.value,false)
+})
+test('a valid outside point responds immediately while the next background location is still pending',async()=>{
+  const f=visitEntryFixture();f.view.detail.value.longitude=120.015
+  let finish;f.setLocate(()=>new Promise(resolve=>finish=resolve));f.prepare();await flush()
+  assert.equal(f.locationCalls.length,1)
+  const pending=f.visit();await flush()
+  assert.equal(f.modals.length,1);assert.equal(f.locationCalls.length,1);assert.equal(f.starts.length,0)
+  f.modals[0].success({confirm:true});await pending
+  finish(f.view.entryOrigin.value);await flush();assert.equal(f.modals.length,1)
 })
 test('arrival action forces one new fix despite a cached location and keeps the lock while still outside',async()=>{
   const f=visitEntryFixture();f.view.detail.value.longitude=120.015
@@ -215,7 +235,7 @@ test('arrival action forces one new fix despite a cached location and keeps the 
   assert.equal(f.view.visitPhase.value,'更新位置…');assert.equal(f.view.busy.value,true)
   assert.deepEqual(Array.from(f.locationCalls[0]),['MINE',true]);await f.visit();assert.equal(f.locationCalls.length,1)
   finish(f.view.entryOrigin.value);await flush()
-  assert.equal(f.modals.length,2);assert.equal(f.starts.length,0);assert.equal(f.checks.length,0)
+  assert.equal(f.modals.length,2);assert.equal(f.starts.length,0);assert.equal(f.checks.filter(c=>c!=='attendance').length,0)
   f.modals[1].success({confirm:true,cancel:false});await pending;assert.equal(f.view.busy.value,false)
 })
 test('arrival retry continues normal checks with the fresh location only after reaching the store',async()=>{
@@ -224,7 +244,7 @@ test('arrival retry continues normal checks with the fresh location only after r
   f.setLocate(async()=>{const point=f.view.entryOrigin.value;point.gcjLongitude=120.015;f.setPrepared(fresh);return point})
   const pending=f.visit();await flush();f.modals[0].success({cancel:true,confirm:false});await flush()
   assert.equal(f.locationCalls.length,1);assert.equal(f.starts.length,1);assert.equal(f.starts[0][2],fresh)
-  assert.deepEqual(f.checks,['attendance']);assert.equal(f.navigations.length,1)
+  assert.deepEqual(f.checks,['attendance','attendance']);assert.equal(f.navigations.length,1)
   f.navigations[0].success({});await pending;assert.equal(f.view.busy.value,false)
 })
 test('leaving during arrival refresh cancels continuation and refresh failure gets one ordinary error prompt',async()=>{
@@ -234,7 +254,7 @@ test('leaving during arrival refresh cancels continuation and refresh failure ge
     const pending=f.visit();await flush();f.modals[0].success({cancel:true,confirm:false});await flush()
     if(mode==='leave'){f.hooks.hide();finish(f.view.entryOrigin.value);await pending;assert.equal(f.modals.length,1)}
     else{fail(new Error('定位权限被拒绝'));await flush();assert.equal(f.modals.length,2);assert.equal(f.modals[1].showCancel,false);f.modals[1].success({confirm:true,cancel:false});await pending}
-    assert.equal(f.starts.length,0);assert.equal(f.checks.length,0);assert.equal(f.view.busy.value,false)
+    assert.equal(f.starts.length,0);assert.equal(f.checks.filter(c=>c!=='attendance').length,0);assert.equal(f.view.busy.value,false)
   }
 })
 test('missing recent location has explicit progress; permission failure is visible and permits retry',async()=>{
@@ -250,14 +270,22 @@ test('leaving or switching accounts during visit preparation cannot check in, cr
     f.setPolicyLoad(()=>new Promise(resolve=>finish=resolve));const pending=f.visit();await flush()
     if(leave==='hide')f.hooks.hide();else {f.session.revision++;await nextTick()}
     finish(f.policy);await pending
-    assert.equal(f.checks.length,0);assert.equal(f.starts.length,0);assert.equal(f.navigations.length,0);assert.equal(f.modals.length,0)
+    assert.equal(f.checks.filter(c=>c!=='attendance').length,0);assert.equal(f.starts.length,0);assert.equal(f.navigations.length,0);assert.equal(f.modals.length,0)
   }
 })
 test('existing active visit can resume from outside radius without an unnecessary new GPS fix',async()=>{
   const f=visitEntryFixture();f.view.activeVisit.value=true;f.view.detail.value.longitude=125;f.setPrepared(null)
   f.setPolicyLoad(()=>{throw new Error('new policy must not block resuming the existing capture')})
-  const pending=f.visit();await flush();assert.equal(f.starts.length,1);assert.equal(f.locationCalls.length,0);assert.equal(f.checks.length,0)
+  const pending=f.visit();await flush();assert.equal(f.starts.length,1);assert.equal(f.locationCalls.length,0);assert.equal(f.checks.filter(c=>c!=='attendance').length,0)
   assert.equal(f.navigations.length,1);f.navigations[0].success({});await pending
+})
+test('a known active capture opens directly without rerunning creation preflight',async()=>{
+  const f=visitEntryFixture();f.view.activeVisit.value=true;f.view.resumeVisit.value={storeId:'100',visitId:'existing',captureId:'capture',ownershipId:'owned'}
+  f.view.detail.value.longitude=125;f.setPrepared(null)
+  const pending=f.visit();await flush()
+  assert.equal(f.starts.length,0);assert.equal(f.locationCalls.length,0);assert.equal(f.checks.filter(c=>c!=='attendance').length,0)
+  assert.equal(f.navigations.length,1);assert.match(f.navigations[0].url,/visit=existing&capture=capture$/)
+  f.navigations[0].success({});await pending;assert.equal(f.view.busy.value,false)
 })
 test('server rejection and navigation failure appear in one dismissible visit prompt',async()=>{
   for(const mode of ['server','navigation']) {
@@ -268,3 +296,23 @@ test('server rejection and navigation failure appear in one dismissible visit pr
   }
 })
 
+
+for (const day of [null, {id:'day',status:'ENDED'}]) test('nonworking day routes to existing attendance without GPS, microphone or implicit check-in: '+String(day?.status), async()=>{
+ const f=visitEntryFixture(); f.setDay(day); const pending=f.visit(); await pending;
+ assert.equal(f.returns.length,1); assert.equal(f.returns[0][0],'100'); assert.equal(f.starts.length,0); assert.equal(f.locationCalls.length,0); assert.deepEqual(f.checks,['attendance']); assert.equal(f.modals.length,0);
+});
+
+for (const status of ['CANCELLED','CHECKED_OUT','CHECKED_IN']) test('customer detail verifies Sales state while CRM projection is still in progress: '+status, async()=>{
+  const f=visitEntryFixture();f.setRecords([{id:'visit',captureId:'capture',ownershipId:'owned',salespersonId:'employee',status:'IN_PROGRESS',visitedAt:'now',reviewReason:''}]);
+  f.setCaptureRead(async()=>({getString:()=>status}));await f.reload();
+  assert.deepEqual(f.captureReads,['/sales/me/visits/capture']);
+  assert.equal(f.view.activeVisit.value,status==='CHECKED_IN');
+  assert.equal(f.view.resumeVisit.value?.captureId??'',status==='CHECKED_IN'?'capture':'');
+  assert.equal(f.view.visits.value[0].label,status==='CHECKED_IN'?'IN_PROGRESS':status==='CANCELLED'?'已取消':'已结束');
+});
+test('late Sales capture state cannot restore a resume action after leaving customer detail',async()=>{
+  const f=visitEntryFixture();f.setRecords([{id:'visit',captureId:'capture',ownershipId:'owned',salespersonId:'employee',status:'IN_PROGRESS'}]);
+  let resolve;f.setCaptureRead(()=>new Promise(done=>resolve=done));const load=f.reload();await flush();
+  f.hooks.hide();resolve({getString:()=> 'CHECKED_IN'});await load;
+  assert.equal(f.view.activeVisit.value,false);assert.equal(f.view.resumeVisit.value,null);
+});

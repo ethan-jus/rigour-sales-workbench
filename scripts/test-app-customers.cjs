@@ -11,19 +11,22 @@ function json(value) {
 function fixture() {
  const {reactive,watch}=require('vue')
  const requests=[]; let reply={data:{total:0,items:[]}}
+ let now=Date.now();const locations=[]
+ class Clock extends Date { static now(){return now} }
+ let locate=success=>success({longitude:120,latitude:30,accuracy:20,coordinateSystem:'WGS84',requestedAt:now-3000,receivedAt:now})
  const session=reactive({authenticated:true,tenantId:'tenant',userId:'one',revision:1,permissions:['crm:pool:private-read','crm:pool:public-read']})
  const modules={
   vue:{watch}, './session.uts':{session}, './config.uts':{appEnvironment:{environment:'development',gatewayOrigin:'http://localhost:26880',issuer:'http://localhost:26881'}},
   './api.uts':{requestApi:(url,method,body,success,fail)=>{requests.push(url); if(reply instanceof Error) fail(reply.message); else success(json(reply))}},
-  './workbench.uts':{workbenchMoney:value=>value==null?'—':String(value)},
-  './sales-profile.uts':{}, './location.uts':{requestDeviceLocation:success=>success({longitude:120,latitude:30,accuracy:20,coordinateSystem:'WGS84',requestedAt:Date.now()-3000,receivedAt:Date.now()})}
+  './workbench.uts':{workbenchMoney:value=>value==null?'—':String(value),requestWorkbench:(endpoint,from,to,suffix,success,fail)=>{requests.push('/orders/workbench/'+endpoint+'?ownerEmployeeCode=self&from='+from+'&to='+to+suffix);if(reply instanceof Error)fail(reply.message);else success(json(reply.data))}},
+  './sales-profile.uts':{}, './location.uts':{requestDeviceLocation:(success,fail)=>{locations.push(now);locate(success,fail)}}
  }
  for(const name of ['customer-cache','crm','customer-workbench','customer-nearby']) {
-  const context={exports:{},require:name=>modules[name],uni:{navigateTo:({url})=>requests.push(url)}}
+  const context={exports:{},Date:Clock,console:{log:()=>{}},require:name=>modules[name],uni:{navigateTo:({url})=>requests.push(url)}}
   vm.runInNewContext("Object.defineProperties(Object.prototype,{getNumber:{value:function(k){return typeof this[k]==='number'?this[k]:null}},getString:{value:function(k){return typeof this[k]==='string'?this[k]:null}}});\n" + ts.transpileModule(fs.readFileSync(path.join(__dirname,'../app/services/'+name+'.uts'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,context)
   modules['./'+name+'.uts']=context.exports
  }
- return {nearby:modules['./customer-nearby.uts'],api:modules['./customer-workbench.uts'],crm:modules['./crm.uts'],cache:modules['./customer-cache.uts'],requests,session,respond:value=>{reply=value}}
+ return {nearby:modules['./customer-nearby.uts'],api:modules['./customer-workbench.uts'],crm:modules['./crm.uts'],cache:modules['./customer-cache.uts'],requests,locations,session,now:()=>now,advance:ms=>{now+=ms},locate:value=>{locate=value},respond:value=>{reply=value}}
 }
 test('unavailable metrics and zero-denominator rates stay unknown instead of becoming zero', () => {
  const { api } = fixture()
@@ -34,11 +37,11 @@ test('unavailable metrics and zero-denominator rates stay unknown instead of bec
  assert.equal(api.customerRatio(json({purchasing:5,returning:3,unknownHistory:1})), '—')
 })
 test('metric drilldown retains the exact cohort, period, filter and cursor with encoded input', async () => {
- const f=fixture(); f.respond({data:{total:31,items:[{id:'9',name:'测试店',address:'地址',relation:'TRANSFERRED',orderCount:2,lastOrderAt:'2026-11-12'}],nextCursor:'9'}})
+ const f=fixture(); f.respond({data:{total:31,items:[{key:'C9',name:'测试店',orderCount:2,lastOrderAt:'2026-11-12'}]}})
  const result=await f.api.customerList('RETURNING','2026-11-01','2026-11-12','门店&extra=1','TRANSFERRED','42')
- const url=new URL('https://test'+f.requests[0]); assert.equal(url.pathname,'/crm/customer-workbench'); assert.equal(url.searchParams.get('kind'),'RETURNING'); assert.equal(url.searchParams.get('keyword'),'门店&extra=1');assert.equal(url.searchParams.get('cursor'),'42');assert.equal(url.searchParams.get('from'),'2026-11-01')
- assert.equal(result.total,31);assert.equal(result.items[0].source,'HISTORY');assert.equal(result.items[0].tag,'已转交')
- f.api.customerOpen(result.items[0]);assert.match(f.requests[1],/source=HISTORY&relation=TRANSFERRED/)
+ const url=new URL('https://test'+f.requests[0]); assert.equal(url.pathname,'/orders/workbench/customers'); assert.equal(url.searchParams.get('kind'),'RETURNING'); assert.equal(url.searchParams.get('keyword'),'门店&extra=1');assert.equal(url.searchParams.get('begin'),'42');assert.equal(url.searchParams.get('from'),'2026-11-01')
+ assert.equal(result.total,31);assert.equal(result.items[0].source,'ORDER');assert.equal(result.items[0].tag,'')
+ f.api.customerOpen(result.items[0]);assert.match(f.requests[1],/customerKey=C9/)
 })
 test('transport failure cannot turn into an empty customer or contact list', async () => {
  const f=fixture(); f.respond(new Error('无权限'))
@@ -69,9 +72,9 @@ test('malformed successful lists cannot masquerade as empty data or enter the sh
  const f=fixture()
  for(const data of [{},{total:0},{total:-1,items:[]},{total:0.5,items:[]},{total:'0',items:[]},{total:0,items:{}},{total:1,items:[{}]},{total:0,items:[],nextCursor:4}]) {
   f.respond({data})
-  await assert.rejects(f.api.customerList('COOPERATED','2026-11-01','2026-11-12','','',''),/不完整/)
+  await assert.rejects(f.api.customerList('CONTACT_PENDING','2026-11-01','2026-11-12','','',''),/不完整/)
   await assert.rejects(f.crm.crmList('PUBLIC',''),/不完整/)
-  assert.equal(f.api.customerListSnapshot('COOPERATED','2026-11-01','2026-11-12','',''),null)
+  assert.equal(f.api.customerListSnapshot('CONTACT_PENDING','2026-11-01','2026-11-12','',''),null)
   assert.equal(f.crm.crmListSnapshot('PUBLIC',''),null)
  }
  f.respond({data:{total:0,items:[],nextCursor:null}})
@@ -143,4 +146,67 @@ test('nearby location shares timestamped, accurate normalized evidence with the 
 test('display-only origin without accuracy or collection timestamps cannot become visit evidence',async()=>{
  const f=fixture();await f.cache.refreshCustomerSnapshot('customer-nearby:origin',async()=>json(nearbyOrigin))
  assert.ok(f.nearby.customerNearbyOriginSnapshot());assert.equal(f.nearby.customerNearbyVisitLocation(),null)
+})
+
+test('a newly saved origin with old collection time is refreshed instead of falsely treated as ready',async()=>{
+ const f=fixture();f.respond({data:nearbyOrigin})
+ await f.cache.refreshCustomerSnapshot('customer-nearby:origin',async()=>json({...nearbyOrigin,accuracyMeters:20,requestedAt:f.now()-31000,receivedAt:f.now()-27000}))
+ assert.equal(f.nearby.customerNearbyVisitLocation(),null)
+ await f.nearby.customerNearbyLocation('MINE')
+ assert.equal(f.locations.length,1);assert.equal(f.requests.length,1);assert.ok(f.nearby.customerNearbyVisitLocation())
+})
+
+test('preloading renews before expiry, shares one refresh and keeps valid evidence available during the refresh',async()=>{
+ const f=fixture();f.respond({data:nearbyOrigin});await f.nearby.customerNearbyLocation('MINE')
+ const initial=f.nearby.customerNearbyVisitLocation();f.advance(17000)
+ let finish;f.locate(success=>{finish=success})
+ const first=f.nearby.customerNearbyLocation('MINE'),second=f.nearby.customerNearbyLocation('PUBLIC')
+ assert.equal(f.locations.length,2);assert.equal(f.nearby.customerNearbyVisitLocation().requestedAt,initial.requestedAt)
+ assert.equal(f.requests.length,1,'conversion waits for the single in-flight device fix')
+ f.advance(4000);finish({longitude:120,latitude:30,accuracy:20,coordinateSystem:'WGS84',requestedAt:f.now()-4000,receivedAt:f.now()})
+ await Promise.all([first,second]);assert.equal(f.requests.length,2)
+ assert.ok(f.nearby.customerNearbyVisitLocation().requestedAt>initial.requestedAt)
+ await f.nearby.customerNearbyLocation('MINE');assert.equal(f.locations.length,2)
+ f.advance(30001);assert.equal(f.nearby.customerNearbyVisitLocation(),null,'preloading never extends evidence validity')
+})
+
+test('explicit arrival refresh bypasses a fresh point and invalid timestamps cannot suppress collection',async()=>{
+ const f=fixture();f.respond({data:nearbyOrigin});await f.nearby.customerNearbyLocation('MINE')
+ await f.nearby.customerNearbyLocation('MINE',true);assert.equal(f.locations.length,2)
+ for(const point of [{requestedAt:f.now()+1000,receivedAt:f.now()+1000,accuracyMeters:20},{requestedAt:f.now()-1000,receivedAt:f.now(),accuracyMeters:null}]){
+  await f.cache.refreshCustomerSnapshot('customer-nearby:origin',async()=>json({...nearbyOrigin,...point}))
+  assert.equal(f.nearby.customerNearbyVisitLocation(),null)
+  await f.nearby.customerNearbyLocation('MINE')
+ }
+ assert.equal(f.locations.length,4)
+})
+test('submitted first visit shows its receipt without claiming effectiveness; new ownership stays unvisited', () => {
+ const {api,crm}=fixture()
+ const row=crm.crmStore(json({id:'9',poolType:'PRIVATE',phase:'FIRST_VISIT',lastSubmittedVisitAt:'2026-11-16T09:00:00Z',lastSubmittedVisitStatus:'SUBMITTED'}))
+ assert.equal(api.customerStoreRow(row).tag,'核验中')
+ assert.match(api.customerStoreRow(row).meta,/最近拜访 .*核验中/)
+ assert.equal(row.lastVisit,'')
+ row.phase='FOLLOW_UP'; row.lastVisit='2026-11-15T08:00:00Z'
+ assert.equal(api.customerStoreRow(row).tag,'跟进中')
+ assert.match(api.customerStoreRow(row).meta,/核验中/)
+ row.phase='FIRST_VISIT';row.lastSubmittedVisit='';row.lastSubmittedVisitStatus='';row.lastVisit=''
+ assert.equal(api.customerStoreRow(row).tag,'待首访')
+ assert.equal(api.customerStoreRow(row).meta,'尚未拜访')
+ row.lastSubmittedVisit='2026-11-16T09:00:00Z';row.lastSubmittedVisitStatus='INVALID'
+ assert.equal(api.customerStoreRow(row).tag,'待重新拜访')
+ assert.match(api.customerStoreRow(row).meta,/未通过/)
+})
+
+test('transaction metrics and history use order permissions without inventing store identities', async () => {
+ const f=fixture();f.respond({data:{purchasing:4,newCooperation:2,returning:2,cooperated:5}})
+ assert.equal((await f.api.customerTradeSummary('2026-11-01','2026-11-18')).cooperated,5)
+ assert.match(f.requests[0], /orders\/workbench\/customer-summary/)
+ for (const bad of [{},{purchasing:0,newCooperation:0,returning:null,cooperated:1}]) {
+  f.respond({data:bad});await assert.rejects(f.api.customerTradeSummary('2026-11-01','2026-11-18'),/不完整/)
+ }
+ f.respond({data:{total:1,items:[{key:'S12',name:'门店',lastOrderAt:'2026-11-18',orderCount:1}]}})
+ const page=await f.api.customerList('COOPERATED','2026-11-01','2026-11-18','','','')
+ assert.equal(page.items[0].id,'S12');assert.equal(page.cursor,'');f.api.customerOpen(page.items[0]);assert.match(f.requests.at(-1),/customerKey=S12/)
+ f.respond({data:{total:1,items:[{key:'12',name:'错误身份',orderCount:1}]}})
+ await assert.rejects(f.api.customerList('PURCHASING','2026-11-01','2026-11-18','','',''),/不完整/)
 })

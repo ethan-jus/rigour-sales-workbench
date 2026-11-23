@@ -1,0 +1,31 @@
+import { crmCall, crmObject, crmValidateCount, crmValidatePage, crmMutation } from './crm.uts'
+export type WecomSummary = { active: string, linked: string, pending: string, newly: string, status: string, syncedAt: string }
+export type WecomPerson = { id: string, contactId: string, name: string, linked: boolean, storeNames: string, relationText: string }
+export type WecomPage = { total: number, items: WecomPerson[], cursor: string }
+function count(data: UTSJSONObject, key: string): string { if (!UTSJSONObject.keys(data).includes(key)) throw new Error('企微数量字段缺失'); crmValidateCount(data, key, true); const value = data.getNumber(key); return value == null ? '—' : value!.toString() }
+export async function wecomSummary(): Promise<WecomSummary> {
+  const data = crmObject(await crmCall('/crm/wecom/summary'))
+  const status = data.getString('dataStatus') ?? ''
+  if (!['NOT_CONNECTED', 'READY', 'PARTIAL', 'STALE'].includes(status)) throw new Error('企微同步状态不完整')
+  return { active: count(data, 'activeContacts'), linked: count(data, 'linkedContacts'), pending: count(data, 'pendingContacts'), newly: count(data, 'newContacts'), status: status == 'NOT_CONNECTED' ? '尚未接入企微官方同步' : status == 'STALE' ? '超过24小时未同步，以下为最近结果' : status == 'PARTIAL' ? '当前为已同步范围' : '已同步本人企微关系', syncedAt: data.getString('syncedAt') ?? '' } as WecomSummary
+}
+export async function wecomPeople(pending: boolean, cursor: string = ''): Promise<WecomPage> {
+  const data = crmObject(await crmCall('/crm/wecom/contacts?pending=' + (pending ? 'true' : 'false') + '&size=20' + (cursor.length > 0 ? '&cursor=' + cursor : '')))
+  crmValidatePage(data)
+  const rows = data['items'] as UTSJSONObject[]
+  const items = rows.map((row: UTSJSONObject): WecomPerson => {
+    const stores = (row['stores'] as UTSJSONObject[] | null) ?? [] as UTSJSONObject[]
+    const relations = (row['relations'] as UTSJSONObject[] | null) ?? [] as UTSJSONObject[]
+    const linked = row.getBoolean('linked') ?? false
+    return { id: row.getString('id') ?? '', contactId: row.getString('contactId') ?? '', name: row.getString('name') ?? '', linked: linked, storeNames: stores.length > 0 ? stores.map((s: UTSJSONObject): string => s.getString('name') ?? '').join('、') : linked ? '已关联（当前无查看权限）' : '待关联门店', relationText: relations.map((r: UTSJSONObject): string => (r.getString('employeeName') ?? '') + ' · ' + (r.getString('addedAt') ?? '').substring(0, 10)).join('；') } as WecomPerson
+  })
+  return { total: data.getNumber('total') ?? 0, items: items, cursor: data.getString('nextCursor') ?? '' } as WecomPage
+}
+export function wecomBind(identity: string, store: string, contact: string, name: string, role: string, reason: string): Promise<UTSJSONObject> {
+  return crmMutation('/crm/wecom/contacts/' + identity + '/bind', 'POST', { storeId: store, contactId: contact.length > 0 ? contact : null, name: name, role: role, reason: reason } as UTSJSONObject)
+}
+
+export async function wecomStoreCount(store: string): Promise<string> {
+  const data = crmObject(await crmCall('/crm/wecom/stores/' + store + '/summary'))
+  return count(data, 'wecomContacts')
+}

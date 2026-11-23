@@ -1,0 +1,80 @@
+<template>
+  <view class="sw-page i-page">
+    <intake-location-picker v-if="picking" :initial="point" :area="areaCode" @selected="picked" @close="picking = false" />
+    <template v-else>
+      <scroll-view class="sw-grow" direction="vertical"><view class="i-content">
+        <view class="i-top"><button v-if="selected != null" class="i-link" :disabled="busy" @click="backToList">返回列表</button><button v-else-if="canReadLeads" class="i-link" @click="myLeads">我的提报</button></view>
+        <template v-if="selected == null">
+          <view class="c-search"><image class="c-icon" src="/static/customers/search.svg" /><input class="c-input" v-model="keyword" placeholder="输入店名或地址" confirm-type="search" :maxlength="100" @confirm="search" /><button class="i-link" :disabled="loading" @click="search">搜索</button></view>
+          <view class="sw-between"><text class="i-caption sw-grow" :lines="2">{{ point != null ? point!.address : '请选择地区后搜索，或使用当前位置' }}</text><button class="i-link" :disabled="loading" @click="picking = true">调整位置</button></view>
+          <view class="sw-between"><button class="i-link" @click="areaOpen = !areaOpen">{{ areaLabel }}⌄</button><picker :range="radii" :value="radiusIndex" @change="changeRadius"><view class="c-control"><text class="c-muted">附近 {{ radiusLabel }}⌄</text></view></picker></view>
+          <view v-if="areaOpen" class="i-options"><view class="sw-between"><button class="i-link" @click="areaParent = ''">全部地区</button><button class="i-link" @click="useArea">使用当前地区</button></view><scroll-view style="max-height: 220px" direction="vertical"><view v-for="a in areaOptions" :key="a.code" class="i-option" @click="selectArea(a)"><text class="c-text">{{ a.name }}</text></view></scroll-view></view>
+          <view class="sw-between c-section"><text class="i-name">{{ point == null ? '门店搜索结果' : '附近可开发门店' }}</text><text class="i-caption">高德地图</text></view>
+          <text v-if="loading" class="i-caption c-section">正在查找门店…</text>
+          <view v-for="row in rows" :key="row.poi.id" class="i-row"><text class="i-name">{{ row.poi.name }}</text><text class="i-address">{{ row.poi.address }}</text><view class="sw-between"><view class="sw-row"><text :class="row.state == 'NEW' || row.state == 'REVIEW' ? 'i-tag' : 'i-tag i-tag-blue'">{{ row.label }}</text><text class="i-distance">{{ row.distance }}</text></view><button class="i-action" :disabled="row.state == 'UNAVAILABLE'" @click="open(row)">{{ row.action }}</button></view></view>
+          <view v-if="!loading && searched && rows.length == 0 && error.length == 0" class="i-empty"><text class="i-name">未找到匹配门店</text><text class="i-address">试试门店简称，或手动填写门店。</text></view>
+          <view class="i-empty"><text class="i-caption">{{ rows.length == 20 ? '已显示最近20家，可按店名继续查找' : '没有找到这家门店？' }}</text><button class="i-link" @click="manual">手动填写门店</button></view>
+        </template>
+        <template v-else>
+          <text class="i-tag">{{ selected!.label }}</text><text class="i-title">{{ selected!.poi.name }}</text><text class="i-caption">{{ selected!.distance }}</text>
+          <view class="i-map"><store-location-map :longitude="selected!.poi.longitude" :latitude="selected!.poi.latitude" :selectable="false" /></view>
+          <view class="i-fact"><text class="i-fact-label">门店地址</text><text class="c-text sw-grow">{{ selected!.poi.address }}</text></view><view class="i-fact"><text class="i-fact-label">门店分类</text><text class="c-text sw-grow">{{ typeLabel }}</text></view><view class="i-fact"><text class="i-fact-label">所在地区</text><text class="c-text sw-grow">{{ selectedArea }}</text></view><view v-if="selected!.poi.phone.length > 0" class="i-fact"><text class="i-fact-label">公开电话</text><text class="c-text sw-grow">{{ selected!.poi.phone }}</text></view>
+          <text class="i-caption c-section">资料来源：高德地图</text><button class="i-link" :disabled="busy" @click="manual">资料不符，改为手动填写</button>
+          <view v-if="selected!.state == 'REVIEW'" class="i-notice"><text class="i-notice-text">发现疑似已有门店，请手动提报，由后台核验后处理。</text></view>
+        </template>
+
+      </view></scroll-view>
+        <view v-if="error.length > 0" class="c-error i-inline-error"><text class="c-error-text">{{ error }}</text><button v-if="selected == null" class="i-link" :disabled="loading" @click="retry">重试</button><button v-else class="i-link" :disabled="busy" @click="recheck">重新查重</button></view>
+      <view v-if="selected != null" class="i-footer"><text class="i-caption" style="text-align: center; margin-bottom: 8px">入库后需要认领，才能开始拜访</text><button class="i-primary" :disabled="busy" @click="admit">{{ busy ? '核验并入库…' : selected!.state == 'REVIEW' ? '手动提报核验' : '加入公海' }}</button></view>
+    </template>
+  </view>
+</template>
+<script setup lang="uts">
+import { hasPermission } from '../../services/session.uts'
+import { crmOwner, crmMessage, CrmArea } from '../../services/crm.uts'
+import { IntakePoint, IntakeType, IntakeCandidate, intakeContext, intakeTypes, intakeDiscover, intakeDevicePoint, intakeAdmit, openIntakeStore, intakeManual } from '../../services/store-intake.uts'
+const keyword = ref(''); const rows = ref<IntakeCandidate[]>([]); const selected = ref<IntakeCandidate | null>(null); const point = ref<IntakePoint | null>(null)
+const loading = ref(false); const busy = ref(false); const error = ref(''); const searched = ref(false); const picking = ref(false)
+const areas = ref<CrmArea[]>([]); const types = ref<IntakeType[]>([]); const areaCode = ref(''); const areaParent = ref(''); const areaOpen = ref(false)
+const radii = ['1公里', '3公里', '5公里']; const radiusIndex = ref(1)
+let generation = 0; let account = ''; let initialized = false
+const canReadLeads = computed((): boolean => hasPermission('crm:lead:read'))
+const radiusLabel = computed((): string => radii[radiusIndex.value])
+const areaLabel = computed((): string => areas.value.find((a: CrmArea): boolean => a.code == areaCode.value)?.name ?? '选择地区')
+const areaOptions = computed((): CrmArea[] => areas.value.filter((a: CrmArea): boolean => a.parent == areaParent.value))
+const selectedArea = computed((): string => areas.value.find((a: CrmArea): boolean => a.code == selected.value?.poi.area)?.name ?? '地区待核实')
+const typeLabel = computed((): string => { const codes = (selected.value?.poi.type ?? '').split('|').join(';').split(';'); const match = types.value.find((t: IntakeType): boolean => codes.includes(t.code.replace('POI_', ''))); return match?.name ?? '分类待核验' })
+function current(request: number): boolean { return request == generation && account == crmOwner() }
+async function search(): Promise<void> {
+  if (loading.value || account != crmOwner()) return
+  if (point.value == null && (keyword.value.trim().length == 0 || areaCode.value.length == 0)) { error.value = '请先选择地区并输入店名，或定位附近门店'; return }
+  const request = ++generation; loading.value = true; error.value = ''; rows.value = []; searched.value = true
+  try { const result = await intakeDiscover(keyword.value, areaCode.value, point.value, [1000,3000,5000][radiusIndex.value]); if (current(request)) rows.value = result }
+  catch (e) { if (current(request)) error.value = crmMessage(e) } finally { if (current(request)) loading.value = false }
+}
+async function initialize(): Promise<void> {
+  const request = ++generation; loading.value = true; error.value = ''
+  try { if (!hasPermission('crm:lead:create')) throw new Error('当前账号没有开发门店权限'); const ctx = await intakeContext(); const catalog = await intakeTypes(); if (!current(request)) return; areas.value = ctx.areas; types.value = catalog; if (ctx.reason.length > 0) throw new Error(ctx.reason); initialized = true; const p = await intakeDevicePoint(); if (current(request)) { point.value = p; areaCode.value = p.area } }
+  catch (e) { if (current(request)) error.value = crmMessage(e) } finally { if (current(request)) loading.value = false }
+  if (current(request) && point.value != null) search()
+}
+function retry(): void { if (!initialized) initialize(); else search() }
+function picked(p: IntakePoint): void { point.value = p; areaCode.value = p.area; picking.value = false; search() }
+function useArea(): void { if (areaParent.value.length == 0) return; areaCode.value = areaParent.value; areaOpen.value = false; point.value = null; rows.value = []; searched.value = false; if (keyword.value.trim().length > 0) search() }
+function selectArea(a: CrmArea): void { areaParent.value = a.code; if (!areas.value.some((x: CrmArea): boolean => x.parent == a.code)) useArea() }
+function changeRadius(e: UniPickerChangeEvent): void { radiusIndex.value = e.detail.value as number; search() }
+function open(row: IntakeCandidate): void { if (row.state == 'PUBLIC' || row.state == 'MINE') { openIntakeStore(row.storeId, row.state, false); return }; if (row.state == 'UNAVAILABLE') return; selected.value = row; error.value = ''; uni.setNavigationBarTitle({ title: '核对门店' }) }
+function backToList(): void { selected.value = null; error.value = ''; uni.setNavigationBarTitle({ title: '开发门店' }) }
+function manual(): void { if (!busy.value) intakeManual(selected.value?.poi ?? null) }
+function myLeads(): void { uni.navigateTo({ url: '/pages/store-leads/store-leads' }) }
+async function recheck(): Promise<void> { const item = selected.value; if (item == null || busy.value) return; busy.value = true; error.value = ''; const request = generation; try { const result = await intakeDiscover(item.poi.name, item.poi.area, null, 3000); if (!current(request)) return; const found = result.find((r: IntakeCandidate): boolean => r.poi.id == item.poi.id); if (found == null) { error.value = '未找到原高德门店，请返回列表重新查询'; return }; if (found.state == 'PUBLIC' || found.state == 'MINE') { openIntakeStore(found.storeId, found.state, false); backToList() } else { selected.value = found; if (found.state == 'UNAVAILABLE') { backToList(); error.value = '公司已收录此门店，当前不可重复创建' } } } catch (e) { if (current(request)) error.value = crmMessage(e) } finally { if (current(request)) busy.value = false } }
+async function admit(): Promise<void> { const item = selected.value; if (item == null || busy.value || account != crmOwner()) return; if (item.state == 'REVIEW') { manual(); return }; if (item.state != 'NEW') return; busy.value = true; error.value = ''; const request = generation; try { const id = await intakeAdmit(item.poi.id); if (!current(request)) return; backToList(); openIntakeStore(id, 'PUBLIC', true) } catch (e) { if (current(request)) error.value = crmMessage(e) } finally { if (current(request)) busy.value = false } }
+onLoad(() => { account = crmOwner(); initialize() })
+onShow(() => { if (initialized && !loading.value && selected.value == null && searched.value) search() })
+onBackPress((): boolean => { if (picking.value) { picking.value = false; return true }; if (selected.value != null) { if (!busy.value) backToList(); return true }; return busy.value })
+onUnload(() => { generation++ })
+watch((): string => crmOwner(), (_owner: string) => { generation++; rows.value = []; selected.value = null; point.value = null; areas.value = []; types.value = []; picking.value = false; error.value = '账号已变更，请重新进入'; loading.value = false; busy.value = false })
+</script>
+<style>
+@import '../../styles/store-intake.css';
+</style>

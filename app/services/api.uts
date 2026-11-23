@@ -28,6 +28,15 @@ export function apiErrorMessage(code: string, status: number): string {
   return '服务暂时不可用（' + status.toString() + '），请稍后重试。'
 }
 
+// These two server contracts contain intentional business feedback; framework/unknown errors use local text.
+export function apiResponseErrorMessage(code: string, status: number, response: UTSJSONObject | null): string {
+  if ((code == 'VALIDATION_FAILED' && (status == 400 || status == 422)) || (code == 'CONFLICT' && status == 409)) {
+    const message = response?.getString('message')?.trim() ?? ''
+    if (message.length > 0 && message.length <= 200 && !message.includes('\n')) return message
+  }
+  return apiErrorMessage(code, status)
+}
+
 export function requestApi(path: string, method: string, body: UTSJSONObject | null, success: (data: UTSJSONObject) => void, fail: (message: string) => void): void {
   if (!environmentReady()) {
     fail('公司服务尚未配置，请联系管理员完成接入。')
@@ -69,17 +78,17 @@ function sendAuthenticatedRequest(path: string, method: string, body: UTSJSONObj
       if (appEnvironment.environment == 'development') console.log('[DEV API] ' + method + ' ' + path.split('?')[0] + ' networkMs=' + (receivedAt - startedAt).toString() + ' parseMs=' + (Date.now() - receivedAt).toString() + ' chars=' + (responseText?.length ?? 0).toString())
       const code = result?.getString('code') ?? ''
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        fail(apiErrorMessage(code, response.statusCode))
+        fail(apiResponseErrorMessage(code, response.statusCode, result))
         return
       }
       if (result == null) { fail('服务未返回有效数据，请重试。'); return }
-      if (code.length > 0 && code != 'OK') { fail(apiErrorMessage(code, response.statusCode)); return }
+      if (code.length > 0 && code != 'OK') { fail(apiResponseErrorMessage(code, response.statusCode, result)); return }
       if (method != 'GET' && method != 'HEAD') invalidateHomeCache()
       success(result)
     },
-    fail: (_) => {
+    fail: (error) => {
       if (session.revision != revision) { fail('账号已变更，请重新加载。'); return }
-      fail('无法连接公司服务，请检查网络后重试。')
+      fail((error.errMsg ?? '').toLowerCase().includes('timeout') ? '服务连接超时，请稍后重试。' : '网络连接失败，请检查移动数据或 Wi-Fi 后重试。')
     }
   })
   }, fail)

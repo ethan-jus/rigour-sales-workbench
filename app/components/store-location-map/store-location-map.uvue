@@ -1,0 +1,43 @@
+<template>
+  <view class="store-map">
+    <!-- #ifdef APP-ANDROID -->
+    <amap v-if="consented" class="store-map-native" :longitude="longitude" :latitude="latitude" :scale="17" :markers="markers" :show-location="false" :enable-rotate="false" :enable-poi="true" @tap="pick" />
+    <view v-else class="store-map-consent"><text class="store-map-copy">高德地图用于展示和选择门店位置。</text><text class="store-map-policy" @click="privacy">高德 SDK 隐私政策</text><button class="store-map-enable" @click="agree">同意并查看地图</button></view>
+    <!-- #endif -->
+    <!-- #ifndef APP-ANDROID -->
+    <view class="store-map-consent"><text class="store-map-copy">{{ selectable ? '可使用当前位置或搜索结果确认门店位置' : '门店位置已记录' }}</text></view>
+    <!-- #endif -->
+  </view>
+</template>
+<script setup lang="uts">
+import { session } from '../../services/session.uts'
+import { appEnvironment } from '../../services/config.uts'
+// #ifdef APP-ANDROID
+import Intent from 'android.content.Intent'
+import Uri from 'android.net.Uri'
+import { AmapMarker, AmapAnchor } from '../../uni_modules/uni-map-amap/utssdk/interface.uts'
+import { UniMapTapEvent } from '../../uni_modules/uni-map-amap/components/amap/global.uts'
+// #endif
+type StoreMapProps = { longitude: number, latitude: number, selectable: boolean }
+const props = defineProps<StoreMapProps>()
+const emit = defineEmits<{ (event: 'pick', longitude: number, latitude: number): void }>()
+// #ifdef APP-ANDROID
+const consented = ref(false)
+function key(): string { return 'rigour.amap.consent.v1|' + appEnvironment.environment + '|' + appEnvironment.gatewayOrigin + '|' + session.tenantId + '|' + session.userId }
+function readConsent(): void { consented.value = session.authenticated && uni.getStorageSync(key()) == true }
+function agree(): void { if (!session.authenticated) return; uni.setStorageSync(key(), true); consented.value = true }
+function privacy(): void { UTSAndroid.getUniActivity()!.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse('https://lbs.amap.com/pages/privacy/'))) }
+function pick(event: UniMapTapEvent): void { const point = event.detail; if (props.selectable && point?.longitude != null && point?.latitude != null) emit('pick', point!.longitude!, point!.latitude!) }
+const markers = computed((): AmapMarker[] => [{ id: 1, longitude: props.longitude, latitude: props.latitude, iconPath: '/static/customers/store-pin.png', width: 30, height: 38, anchor: { x: 0.5, y: 1 } as AmapAnchor } as AmapMarker])
+onMounted(readConsent)
+watch((): string => session.tenantId + ':' + session.userId + ':' + session.authenticated.toString(), (_value: string) => readConsent())
+// #endif
+</script>
+<style>
+.store-map { width: 100%; height: 100%; }
+.store-map-native { width: 100%; height: 100%; }
+.store-map-consent { flex: 1; align-items: center; justify-content: center; padding: 12px; }
+.store-map-copy { color: #687483; font-size: 12px; line-height: 20px; text-align: center; }
+.store-map-policy { color: #2263d6; font-size: 12px; line-height: 36px; }
+.store-map-enable { border-width: 0; border-radius: 6px; background-color: #c64c1c; color: #ffffff; font-size: 13px; height: 40px; line-height: 40px; margin: 0; }
+</style>

@@ -1,0 +1,100 @@
+// #ifdef APP-ANDROID
+import { startFieldLocationService, stopFieldLocationService, enableFieldMotion, readFieldMotion } from '../uni_modules/rigour-location-service'
+import Context from 'android.content.Context'
+import LocationManager from 'android.location.LocationManager'
+import LocationListener from 'android.location.LocationListener'
+import Location from 'android.location.Location'
+import Bundle from 'android.os.Bundle'
+import Looper from 'android.os.Looper'
+import SystemClock from 'android.os.SystemClock'
+import Build from 'android.os.Build'
+import { motionUnknown, motionStill, motionMoving } from './track-motion.uts'
+
+type NativeFixCallback = (longitude: number, latitude: number, accuracy: number, observedAt: number, gps: boolean, motion: number) => void
+
+function observedMotion(location: Location, age: number): number {
+  const device = age <= 2500 ? readFieldMotion() : motionUnknown
+  if (Build.VERSION.SDK_INT < 26 || !location.hasSpeed() || !location.hasSpeedAccuracy()) return device
+  const speed = location.getSpeed().toDouble()
+  const error = location.getSpeedAccuracyMetersPerSecond().toDouble()
+  if (!Number.isFinite(speed) || !Number.isFinite(error) || speed < 0 || error < 0 || error > 0.8) return device
+  if (speed + error <= 0.55) return motionStill
+  if (speed - error >= 3) return motionMoving
+  if (device == motionStill && speed - error >= 0.55) return motionUnknown
+  if (speed - error >= 0.55) return motionMoving
+  return device
+}
+
+// Handle both Android single and batch callbacks. Never retimestamp a cached fix.
+class NativeLocationListener extends LocationListener {
+  callback: NativeFixCallback
+  enabled: boolean = true
+  lastGpsFix: number = 0
+  lastNetworkFix: number = 0
+  constructor(callback: NativeFixCallback) { super(); this.callback = callback }
+  override onLocationChanged(locations: List<Location>): void {
+    locations.forEach((location: Location) => { this.onLocationChanged(location) })
+  }
+  override onFlushComplete(_requestCode: Int): void {}
+  override onLocationChanged(location: Location): void {
+    const fix = location.getElapsedRealtimeNanos().toDouble()
+    const age = (SystemClock.elapsedRealtimeNanos().toDouble() - fix) / 1000000
+    const gps = location.getProvider() == LocationManager.GPS_PROVIDER
+    const lastFix = gps ? this.lastGpsFix : this.lastNetworkFix
+    if (!this.enabled || fix <= lastFix || age < 0 || age > 60000 || !location.hasAccuracy() || location.isFromMockProvider()) return
+    const accuracy = location.getAccuracy().toDouble()
+    if (!Number.isFinite(accuracy) || accuracy <= 0) return
+    if (gps) this.lastGpsFix = fix
+    else this.lastNetworkFix = fix
+    this.callback(location.getLongitude(), location.getLatitude(), accuracy, location.getTime().toDouble(), gps, gps ? observedMotion(location, age) : motionUnknown)
+  }
+  override onStatusChanged(_provider: string, _status: Int, _extras: Bundle): void {}
+  override onProviderEnabled(_provider: string): void {}
+  override onProviderDisabled(_provider: string): void {}
+}
+let manager: LocationManager | null = null
+let listener: NativeLocationListener | null = null
+let gpsIdle = false
+
+export function setNativeFieldMotion(enabled: boolean): void { enableFieldMotion(enabled) }
+
+function requestGpsUpdates(interval: Long): void {
+  const currentManager = manager
+  const currentListener = listener
+  if (currentManager == null || currentListener == null || !currentManager.getAllProviders().contains(LocationManager.GPS_PROVIDER)) return
+  currentManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, interval, 0.0.toFloat(), currentListener, Looper.getMainLooper())
+}
+
+export function setNativeLocationIdle(idle: boolean, quickWake: boolean = false): void {
+  if (gpsIdle == idle || listener == null) return
+  try {
+    const interval: Long = idle ? (quickWake ? 5000 : 15000) : 1000
+    requestGpsUpdates(interval)
+    gpsIdle = idle
+  } catch (_) {
+    // Leave the current subscription in place if Android refuses to change its cadence.
+  }
+}
+
+export function stopNativeLocation(): void {
+  if (listener != null) {
+    listener!.enabled = false
+    manager?.removeUpdates(listener!)
+  }
+  listener = null; manager = null; gpsIdle = false
+  stopFieldLocationService()
+}
+export function startNativeLocation(callback: NativeFixCallback): void {
+  stopNativeLocation()
+  const context = UTSAndroid.getAppContext()
+  if (context == null) throw new Error('无法获取系统定位服务')
+  manager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+  listener = new NativeLocationListener(callback)
+  try {
+    startFieldLocationService()
+    requestGpsUpdates(1000)
+    if (manager!.getAllProviders().contains(LocationManager.NETWORK_PROVIDER))
+      manager!.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 10000, 0.0.toFloat(), listener!, Looper.getMainLooper())
+  } catch (failure) { stopNativeLocation(); throw failure }
+}
+// #endif

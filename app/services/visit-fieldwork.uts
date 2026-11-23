@@ -1,0 +1,74 @@
+import { crmCall, crmObject } from './crm.uts'
+export type VisitOption = { code: string, name: string }
+export type VisitDictionary = { code: string, options: VisitOption[] }
+export type VisitBusinessProgress = { businessLineCode: string, intentionLevel: string, cooperationStatus: string }
+export type VisitFieldworkDraft = { storeRevision: number, businessStatus: string, businessStatusReason: string, businessTypeCode: string, contactOutcome: string, contactIds: string[], noIntention: boolean, businesses: VisitBusinessProgress[], noContactReason: string, noContactDetail: string, nextAction: string, nextContactDate: string }
+export type VisitFieldError = { field: string, message: string }
+export type VisitFieldworkForm = { storeRevision: number, businessStatus: string, businessTypeCode: string, businesses: VisitBusinessProgress[], dictionaries: VisitDictionary[], syncStatus: string, visitStatus: string }
+export function emptyVisitFieldwork(): VisitFieldworkDraft {
+  return { storeRevision: 0, businessStatus: '', businessStatusReason: '', businessTypeCode: '', contactOutcome: '', contactIds: [], noIntention: false, businesses: [], noContactReason: '', noContactDetail: '', nextAction: '', nextContactDate: '' } as VisitFieldworkDraft
+}
+export function visitProgressRows(rows: UTSJSONObject[]): VisitBusinessProgress[] {
+  return rows.map((row: UTSJSONObject): VisitBusinessProgress => ({ businessLineCode: row.getString('businessLineCode') ?? '', intentionLevel: row.getString('intentionLevel') ?? '', cooperationStatus: row.getString('cooperationStatus') ?? '' } as VisitBusinessProgress))
+}
+export function visitFieldworkDraft(row: UTSJSONObject): VisitFieldworkDraft {
+  return { storeRevision: row.getNumber('storeRevision') ?? 0, businessStatus: row.getString('businessStatus') ?? '', businessStatusReason: row.getString('businessStatusReason') ?? '', businessTypeCode: row.getString('businessTypeCode') ?? '', contactOutcome: row.getString('contactOutcome') ?? '', contactIds: row.getArray<string>('contactIds') ?? [], noIntention: row.getBoolean('noIntention') ?? false, businesses: visitProgressRows(row.getArray<UTSJSONObject>('businesses') ?? []), noContactReason: row.getString('noContactReason') ?? '', noContactDetail: row.getString('noContactDetail') ?? '', nextAction: row.getString('nextAction') ?? '', nextContactDate: row.getString('nextContactDate') ?? '' } as VisitFieldworkDraft
+}
+export function visitOptions(dictionaries: VisitDictionary[], code: string): VisitOption[] { return dictionaries.find((d: VisitDictionary): boolean => d.code == code)?.options ?? [] as VisitOption[] }
+export function visitOptionName(dictionaries: VisitDictionary[], dictionary: string, code: string): string { return visitOptions(dictionaries, dictionary).find((o: VisitOption): boolean => o.code == code)?.name ?? (code.length > 0 ? '原选项已停用，请重新选择' : '请选择') }
+export async function loadVisitFieldwork(store: string, visit: string): Promise<VisitFieldworkForm> {
+  const data = crmObject(await crmCall('/crm/stores/' + store + '/visits/' + visit + '/fieldwork'))
+  const dictionaries: VisitDictionary[] = []; const raw = data.getJSON('dictionaries')
+  const codes = ['CRM_STORE_BUSINESS_STATUS', 'STORE_BUSINESS_TYPE', 'BUSINESS_LINE', 'CUSTOMER_INTENTION_LEVEL', 'CUSTOMER_COOP_STATUS', 'VISIT_CONTACT_OUTCOME', 'VISIT_NO_CONTACT_REASON', 'VISIT_NEXT_ACTION', 'STORE_CONTACT_ROLE']
+  codes.forEach((code: string) => { const items = raw?.getArray<UTSJSONObject>(code) ?? [] as UTSJSONObject[]; dictionaries.push({ code: code, options: items.map((item: UTSJSONObject): VisitOption => ({ code: item.getString('code') ?? '', name: item.getString('name') ?? '' } as VisitOption)) } as VisitDictionary) })
+  if (dictionaries.some((d: VisitDictionary): boolean => d.options.length == 0)) throw new Error('拜访字典未就绪，请重试或联系管理员')
+  return { storeRevision: data.getNumber('storeRevision') ?? 0, businessStatus: data.getString('businessStatus') ?? '', businessTypeCode: data.getString('businessTypeCode') ?? '', businesses: visitProgressRows(data.getArray<UTSJSONObject>('businesses') ?? []), dictionaries: dictionaries, syncStatus: data.getString('syncStatus') ?? 'NONE', visitStatus: data.getString('visitStatus') ?? '' } as VisitFieldworkForm
+}
+export function validateVisitFieldwork(d: VisitFieldworkDraft, dictionaries: VisitDictionary[], photos: number, requiredPhotos: number): VisitFieldError[] {
+  const errors: VisitFieldError[] = []
+  const select = (field: string, dictionary: string, code: string, message: string): void => { if (!visitOptions(dictionaries, dictionary).some((o: VisitOption): boolean => o.code == code)) errors.push({ field: field, message: message } as VisitFieldError) }
+  select('status', 'CRM_STORE_BUSINESS_STATUS', d.businessStatus, '请选择营业状态')
+  if (['TEMP_CLOSED', 'CLOSED'].includes(d.businessStatus) && d.businessStatusReason.trim().length == 0) errors.push({ field: 'status-reason', message: '请填写停业依据' } as VisitFieldError)
+  select('type', 'STORE_BUSINESS_TYPE', d.businessTypeCode, '请选择经营类型')
+  select('outcome', 'VISIT_CONTACT_OUTCOME', d.contactOutcome, '请选择沟通结果')
+  if (d.contactOutcome == 'CONTACTED') {
+    if (d.contactIds.length == 0) errors.push({ field: 'contacts', message: '请选择接待人' } as VisitFieldError)
+    if (!d.noIntention && d.businesses.length == 0) errors.push({ field: 'businesses', message: '请填写业务进展，或选择暂无合作意向' } as VisitFieldError)
+    d.businesses.forEach((b: VisitBusinessProgress) => {
+      select('businesses', 'BUSINESS_LINE', b.businessLineCode, '请重新选择有效业务')
+      const name = visitOptionName(dictionaries, 'BUSINESS_LINE', b.businessLineCode)
+      if (b.cooperationStatus.length > 0) select('businesses', 'CUSTOMER_COOP_STATUS', b.cooperationStatus, '请选择' + name + '的合作进展')
+      else select('businesses', 'CUSTOMER_INTENTION_LEVEL', b.intentionLevel, '请选择' + name + '的合作进展')
+    })
+  } else if (d.contactOutcome.length > 0) {
+    select('reason', 'VISIT_NO_CONTACT_REASON', d.noContactReason, '请选择未接触原因')
+    if (d.noContactReason == 'OTHER' && d.noContactDetail.trim().length == 0) errors.push({ field: 'reason-detail', message: '请补充未接触原因' } as VisitFieldError)
+  }
+  if (photos < requiredPhotos) errors.push({ field: 'photos', message: '请拍摄至少' + requiredPhotos.toString() + '张门头照' } as VisitFieldError)
+  if (d.nextAction.length > 0 || d.nextContactDate.length > 0) {
+    select('followup', 'VISIT_NEXT_ACTION', d.nextAction, '请选择下次跟进行动')
+    if (d.nextContactDate.length == 0) errors.push({ field: 'followup', message: '请选择下次跟进日期' } as VisitFieldError)
+  }
+  return errors
+}
+export function visitFieldworkBody(d: VisitFieldworkDraft): UTSJSONObject {
+  const contacted = d.contactOutcome == 'CONTACTED'
+  const businesses = contacted && !d.noIntention ? d.businesses : [] as VisitBusinessProgress[]
+  return { storeRevision: d.storeRevision, businessStatus: d.businessStatus, businessStatusReason: d.businessStatusReason.trim(), businessTypeCode: d.businessTypeCode, contactOutcome: d.contactOutcome, contactIds: contacted ? d.contactIds : [] as string[], noIntention: contacted && d.noIntention, businesses: businesses, noContactReason: contacted ? null : d.noContactReason, noContactDetail: contacted ? null : d.noContactDetail.trim(), nextAction: d.nextAction.length > 0 ? d.nextAction : null, nextContactDate: d.nextContactDate.length > 0 ? d.nextContactDate : null } as UTSJSONObject
+}
+
+// Server validation can reject a stale contact or dictionary after the local checks passed.
+export function visitServerFieldError(message: string): VisitFieldError | null {
+  let field = ''
+  if (message.includes('停业依据') || message.includes('营业状态依据')) field = 'status-reason'
+  else if (message.includes('营业状态')) field = 'status'
+  else if (message.includes('经营类型')) field = 'type'
+  else if (message.includes('沟通结果')) field = 'outcome'
+  else if (message.includes('接待人')) field = 'contacts'
+  else if (message.includes('门头照')) field = 'photos'
+  else if (message.includes('补充未接触原因') || message.includes('未接触说明')) field = 'reason-detail'
+  else if (message.includes('未接触原因')) field = 'reason'
+  else if (message.includes('跟进')) field = 'followup'
+  else if (message.includes('业务') || message.includes('合作进展') || message.includes('意向等级')) field = 'businesses'
+  return field.length > 0 ? { field: field, message: message } as VisitFieldError : null
+}

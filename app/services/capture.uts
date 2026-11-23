@@ -126,7 +126,7 @@ export function loadSavedClips(success: (clips: SavedClip[]) => void, fail: (mes
 
 // Persist the original clip and its owner/visit binding before reporting saved.
 // The business layer queues saved segments; an OS kill can still lose the active segment.
-export function createCaptureSession(onChange: (state: CaptureState) => void, binding: CaptureBinding | null = null, maximumDurationMs: number = 7200000, minimumDurationMs: number = 0): CaptureSession {
+export function createCaptureSession(onChange: (state: CaptureState) => void, binding: CaptureBinding | null = null, maximumDurationMs: number = 7200000, minimumDurationMs: number = 0, persist: boolean = true): CaptureSession {
   let phase = 'idle'
   let message = '未开始录音'
   let activeMs = 0
@@ -167,6 +167,11 @@ export function createCaptureSession(onChange: (state: CaptureState) => void, bi
     if (temporaryPath.length == 0 || phase == 'saving') return
     phase = 'saving'; message = '正在复制录音并保存索引'; emit()
     const fs = uni.getFileSystemManager()
+    if (!persist) {
+      // Enrollment uses a temporary sample, never the visit recording index or upload queue.
+      if (disposed) { fs.unlink({ filePath: temporaryPath, fail: (_) => {} }); temporaryPath = ''; return }
+      savedPath = temporaryPath; temporaryPath = ''; phase = 'saved'; message = '录音完成'; emit(); return
+    }
     if (activeMs < minimumDurationMs) {
       // Only this newly recorded short temporary file is discarded; historical files are untouched.
       const metadata = { id: fileId, fileName: '', createdAt: createdAt, savedAt: Date.now(), activeDurationEstimateMs: activeMs, interrupted: interrupted, owner: binding?.owner ?? '', captureId: binding?.captureId ?? '' } as SavedClip
@@ -263,6 +268,7 @@ export function createCaptureSession(onChange: (state: CaptureState) => void, bi
     snapshot: snapshot,
     dispose: () => {
       disposed = true
+      if (!persist && savedPath.length > 0) { uni.getFileSystemManager().unlink({ filePath: savedPath, fail: (_) => {} }); savedPath = '' }
       if (nativeCaptureOwner != sessionId) return
       if (phase == 'starting' || phase == 'recording' || phase == 'paused' || phase == 'interrupted' || phase == 'error') manager.stop()
       else if (phase != 'stopping') detach()

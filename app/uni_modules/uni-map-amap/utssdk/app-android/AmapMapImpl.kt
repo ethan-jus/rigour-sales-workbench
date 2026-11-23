@@ -70,6 +70,8 @@ class AmapMapImpl : IInternalMap, LocationSource, AMapLocationListener {
     private var currentLatitude = 0.0
     private var currentLongitude = 0.0
     private var currentBearing = 0f
+    private var currentAccuracy = 0f
+    private var currentLocationTime = 0L
     private var hasLocation = false
 
     override fun getMap(context: Context): View {
@@ -356,6 +358,7 @@ class AmapMapImpl : IInternalMap, LocationSource, AMapLocationListener {
     override fun setShowLocation(show: Boolean) {
         val aMap = mapView?.map
         if (aMap != null) {
+            aMap.uiSettings.isMyLocationButtonEnabled = false
             val myLocationStyle = MyLocationStyle()
             // 连续定位、蓝点不移动到地图中心点、定位标随设备方向旋转（对齐 Tencent 插件模式与 iOS 行为）
             // 不能使用 LOCATION_TYPE_LOCATE（单次定位）：首启定位失败（GPS 冷启动/权限弹窗未批准/室内弱网）后无重试，蓝点永远不显示
@@ -395,7 +398,7 @@ class AmapMapImpl : IInternalMap, LocationSource, AMapLocationListener {
         // 先回填最后已知位置，让蓝点尽快上屏（冷启动提速）
         try {
             val last = locationClient?.getLastKnownLocation()
-            if (last != null && last.errorCode == 0) {
+            if (last != null && last.errorCode == 0 && isFreshLocation(last.time)) {
                 updateCurrentLocation(last)
                 locationChangedListener?.onLocationChanged(toAndroidLocation())
             }
@@ -407,10 +410,11 @@ class AmapMapImpl : IInternalMap, LocationSource, AMapLocationListener {
     override fun deactivate() {
         locationClient?.stopLocation()
         locationChangedListener = null
+        hasLocation = false
     }
 
     override fun onLocationChanged(location: AMapLocation?) {
-        if (location == null || location.errorCode != 0) {
+        if (location == null || location.errorCode != 0 || !isFreshLocation(location.time)) {
             return
         }
         updateCurrentLocation(location)
@@ -421,14 +425,20 @@ class AmapMapImpl : IInternalMap, LocationSource, AMapLocationListener {
         currentLatitude = location.latitude
         currentLongitude = location.longitude
         currentBearing = location.bearing
+        currentAccuracy = location.accuracy
+        currentLocationTime = location.time
         hasLocation = true
     }
+
+    private fun isFreshLocation(time: Long): Boolean = System.currentTimeMillis() - time in 0L..30_000L
 
     private fun toAndroidLocation(): Location {
         val l = Location("")
         l.latitude = currentLatitude
         l.longitude = currentLongitude
         l.bearing = currentBearing
+        if (currentAccuracy > 0) l.accuracy = currentAccuracy
+        l.time = currentLocationTime
         return l
     }
 
@@ -646,11 +656,18 @@ class AmapMapImpl : IInternalMap, LocationSource, AMapLocationListener {
             return
         }
         // 移动到当前定位点：依赖定位源回填的最近定位结果
-        if (!hasLocation) {
+        if (!hasLocation || !isFreshLocation(currentLocationTime)) {
             callback.callback(false)
             return
         }
-        setCenter(currentLatitude, currentLongitude, true)
+        val aMap = mapView?.map
+        if (aMap == null) {
+            callback.callback(false)
+            return
+        }
+        isSetUpdate = true
+        val target = LatLng(currentLatitude, currentLongitude)
+        aMap.animateCamera(CameraUpdateFactory.newLatLngZoom(target, maxOf(16f, aMap.cameraPosition.zoom)))
         callback.callback(true)
     }
 

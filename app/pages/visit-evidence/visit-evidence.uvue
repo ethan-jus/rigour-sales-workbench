@@ -1,104 +1,152 @@
 <template>
-  <view class="evidence-page">
-    <view class="evidence-heading"><text class="evidence-title">{{ store }}</text><button class="evidence-text" :disabled="loading" @click="load">刷新</button></view>
-    <view class="evidence-tabs"><view v-for="item in tabs" :key="item" class="evidence-tab" @click="tab = item"><text :class="tab == item ? 'evidence-tab-label evidence-selected' : 'evidence-tab-label'">{{ item }}</text><view v-if="tab == item" class="evidence-underline" /></view></view>
-    <view v-if="clips.length > 0" class="clip-row"><picker class="clip-picker" :range="clipNames" :value="selectedIndex" @change="selectClip"><text class="clip-name">{{ selectedName }}⌄</text></picker><text class="evidence-muted">{{ clipStatus }}</text></view>
-    <text v-if="error.length > 0" class="evidence-error">{{ error }}</text>
-    <scroll-view class="evidence-body" scroll-y>
-      <text v-if="loading" class="evidence-empty">正在读取…</text>
-      <view v-else-if="clips.length == 0" class="evidence-empty"><text class="evidence-muted">暂无已同步录音</text></view>
-      <view v-else-if="tab == '摘要'" class="summary-section"><text v-if="summary.length > 0" class="summary-note">AI 整理 · 待复核</text><text class="summary-text">{{ summary.length > 0 ? summary : '暂无摘要' }}</text></view>
-      <view v-else-if="tab == '原文'" class="transcript-section"><view v-for="line in lines" :key="line.startMs" :class="position >= line.startMs && position < line.endMs ? 'transcript-line transcript-active' : 'transcript-line'" @click="playAt(line.startMs)"><text class="transcript-time">{{ line.clock }}</text><view class="transcript-content"><text v-if="line.speaker.length > 0" class="evidence-muted">{{ line.speaker }}</text><text class="transcript-text">{{ line.text }}</text></view></view><text v-if="lines.length == 0" class="summary-text">{{ plain.length > 0 ? plain : transcriptEmpty }}</text></view>
-      <view v-else class="recording-list"><view v-for="(clip, index) in clips" :key="clip.id" class="recording-row" @click="chooseRecording(index)"><image class="audio-icon" src="/static/visits/mic.svg" /><text class="clip-name">片段 {{ clip.index }}</text><text class="evidence-muted">{{ clip.statusLabel }}</text><image class="audio-arrow" src="/static/home/chevron-right.svg" /></view></view>
-    </scroll-view>
-    <view v-if="clips.length > 0" class="audio-panel"><view class="audio-bar"><button class="audio-button" aria-label="播放或暂停录音" :disabled="downloading" @click="togglePlay"><image class="audio-icon" :src="playing ? '/static/visits/pause.svg' : '/static/visits/play.svg'" /></button><text class="audio-time">{{ clock }}</text><slider class="audio-slider" :value="position" :max="duration" :disabled="duration <= 1 || downloading" activeColor="#b65028" backgroundColor="#e4e7eb" :block-size="14" @change="seek" /><text class="audio-time">{{ durationLabel }}</text></view><text v-if="downloading" class="evidence-muted">读取录音中…</text></view>
+  <view class="sw-page">
+    <view class="evidence-header">
+      <view class="evidence-heading"><text class="evidence-title">{{ store }}</text><button class="evidence-action" hover-class="sw-pressed" :disabled="loading" @click="load">{{ loading ? '刷新中…' : '刷新' }}</button></view>
+      <text v-if="timeText.length > 0" class="evidence-small">{{ timeText }}</text>
+      <text v-if="clips.length > 0" class="evidence-small">完整录音 · {{ durationLabel }}</text>
+      <view class="evidence-tabs"><view v-for="item in tabs" :key="item" class="evidence-tab" hover-class="sw-pressed" @click="tab = item"><text :class="tab == item ? 'evidence-tab-label evidence-selected' : 'evidence-tab-label'">{{ item }}</text><view v-if="tab == item" class="evidence-underline" /></view></view>
+    </view>
+    <scroll-view class="evidence-body" direction="vertical"><view class="evidence-content">
+      <view v-if="error.length > 0" class="evidence-error"><text class="evidence-error-text">{{ error }}</text><button class="evidence-action" :disabled="loading" @click="load">重试</button></view>
+      <text v-if="loading" class="evidence-muted evidence-loading">正在读取录音与原文…</text>
+      <view v-else-if="clips.length == 0" class="evidence-empty"><image class="evidence-empty-icon" src="/static/visits/mic.svg" /><text class="evidence-subtitle">暂无已同步录音</text><text class="evidence-muted evidence-empty-note">材料同步完成后会在这里显示。</text><button class="evidence-action" @click="load">刷新</button></view>
+      <view v-else-if="tab == '原文'">
+        <view v-for="line in lines" :key="line.startMs" :class="position >= line.startMs && position < line.endMs ? 'transcript-line transcript-active' : 'transcript-line'" hover-class="sw-pressed" @click="playAt(line.startMs)"><text class="transcript-time">{{ line.clock }}</text><view class="transcript-content"><text v-if="line.speaker.length > 0" class="transcript-speaker">{{ line.speaker }}</text><text class="transcript-text">{{ line.text }}</text></view></view>
+        <text v-if="lines.length == 0 && plain.length > 0" class="transcript-text">{{ plain }}</text>
+        <view v-else-if="lines.length == 0" class="evidence-empty"><text class="evidence-subtitle">{{ transcriptEmpty }}</text><text class="evidence-muted evidence-empty-note">录音已保存，可先收听完整录音。</text><button class="evidence-action" @click="load">刷新原文</button></view>
+      </view>
+      <view v-else>
+        <view class="recording-row" hover-class="sw-pressed" @click="togglePlay"><image class="audio-icon" src="/static/visits/mic.svg" /><view class="sw-grow"><text class="evidence-subtitle">本次拜访完整录音</text><text class="evidence-small">{{ durationLabel }}</text></view><image class="audio-arrow" src="/static/home/chevron-right.svg" /></view>
+        <text class="evidence-muted evidence-recording-note">分段录音会连续播放，可拖动下方进度条定位。</text>
+      </view>
+    </view></scroll-view>
+    <view v-if="clips.length > 0" class="audio-panel"><view class="audio-inner">
+      <slider class="audio-slider" :value="position" :max="duration" :disabled="duration <= 1 || downloading" activeColor="#c64c1c" backgroundColor="#d6dbdf" :block-size="16" @change="seek" />
+      <view class="audio-bar"><text class="audio-time">{{ clock }}</text><view class="audio-control"><button class="audio-button" aria-label="播放或暂停录音" :disabled="downloading" @click="togglePlay" /><image class="audio-play-icon" :src="playing ? '/static/visits/pause-white.svg' : '/static/visits/play-white.svg'" @click="togglePlay" /></view><text class="audio-time">{{ durationLabel }}</text></view>
+      <text v-if="downloading" class="evidence-small audio-reading">读取录音中…</text>
+    </view></view>
   </view>
 </template>
 <script setup lang="uts">
-import { readRecordingReview, downloadRecording, removePlaybackFile, recordingClock, ReviewClip, TranscriptLine } from '../../services/recording-review.uts'
+import { readRecordingReview, downloadRecording, removePlaybackFile, recordingClock, recordingDuration, recordingPosition, recordingTranscript, ReviewClip, TranscriptLine } from '../../services/recording-review.uts'
 import { crmOwner, crmMessage } from '../../services/crm.uts'
-const visit = ref(''); const store = ref('拜访详情'); const tab = ref('摘要'); const tabs = ['摘要', '原文', '录音']
-const clips = ref<ReviewClip[]>([]); const enabled = ref(false); const selectedIndex = ref(0); const loading = ref(false); const error = ref('')
-const position = ref(0); const playing = ref(false); const downloading = ref(false); const actualDuration = ref(0)
-let audio: InnerAudioContext | null = null; let path = ''; let generation = 0; let seekTarget = 0; let visible = true; let prepared = false
-const current = computed((): ReviewClip | null => clips.value.length > selectedIndex.value ? clips.value[selectedIndex.value] : null)
-const lines = computed((): TranscriptLine[] => current.value?.lines ?? [] as TranscriptLine[])
-const summary = computed((): string => current.value?.summary ?? ''); const plain = computed((): string => current.value?.transcript ?? '')
-const clipStatus = computed((): string => current.value?.statusLabel ?? '')
-const selectedName = computed((): string => '片段 ' + (current.value?.index ?? 0).toString() + ' ')
-const clipNames = computed((): string[] => clips.value.map((clip: ReviewClip): string => '片段 ' + clip.index.toString()))
-const clock = computed((): string => recordingClock(position.value)); const duration = computed((): number => Math.max(1, actualDuration.value > 0 ? actualDuration.value : current.value?.durationMs ?? 0))
-const durationLabel = computed((): string => recordingClock(duration.value))
-const transcriptEmpty = computed((): string => !enabled.value ? '暂未启用转写' : current.value?.status == 'FAILED' ? '转写失败，原录音已保留' : current.value?.status == 'SUCCEEDED' ? '未识别到可读文字' : '原文处理中')
-function dispose(): void { generation++; audio?.stop(); audio?.destroy(); audio = null; removePlaybackFile(path); path = ''; position.value = 0; playing.value = false; downloading.value = false; actualDuration.value = 0; prepared = false }
+const visit = ref(''); const store = ref('本次拜访'); const timeText = ref(''); const tab = ref('原文'); const tabs = ['原文', '录音']
+const clips = ref<ReviewClip[]>([]); const enabled = ref(false); const loading = ref(false); const error = ref('')
+const position = ref(0); const playing = ref(false); const downloading = ref(false)
+let audio: InnerAudioContext | null = null; let path = ''; let generation = 0; let visible = true; let currentIndex = -1
+let nextIndex = -1; let nextPath = ''; let nextDownload: Promise<string> | null = null; let prefetchRevision = 0
+const lines = computed((): TranscriptLine[] => recordingTranscript(clips.value))
+const plain = computed((): string => clips.value.map((clip: ReviewClip): string => clip.transcript).filter((value: string): boolean => value.length > 0).join('\n'))
+const clock = computed((): string => recordingClock(position.value))
+const duration = computed((): number => Math.max(1, recordingDuration(clips.value)))
+const durationLabel = computed((): string => (clips.value.some((clip: ReviewClip): boolean => clip.durationEstimated) ? '约 ' : '') + recordingClock(recordingDuration(clips.value)))
+const transcriptEmpty = computed((): string => !enabled.value ? '暂未启用转写' : clips.value.some((clip: ReviewClip): boolean => clip.status == 'FAILED') ? '转写失败，原录音已保留' : clips.value.length > 0 && clips.value.every((clip: ReviewClip): boolean => clip.status == 'SUCCEEDED') ? '未识别到清晰语音' : '原文处理中')
+function clearPrefetch(): void { prefetchRevision++; removePlaybackFile(nextPath); nextPath = ''; nextIndex = -1; nextDownload = null }
+function stopAudio(): void { audio?.stop(); audio?.destroy(); audio = null; removePlaybackFile(path); path = ''; currentIndex = -1; playing.value = false }
+function dispose(): void { generation++; stopAudio(); clearPrefetch(); downloading.value = false }
+function prefetch(index: number): void {
+  clearPrefetch()
+  if (index >= clips.value.length) return
+  nextIndex = index; const revision = prefetchRevision; const owner = crmOwner()
+  nextDownload = downloadRecording(visit.value, clips.value[index].id).then((file: string): string => {
+    if (revision != prefetchRevision || owner != crmOwner() || !visible) { removePlaybackFile(file); return '' }
+    nextPath = file; return file
+  }).catch((_e): string => { return '' })
+}
 async function load(): Promise<void> {
-  dispose(); const version = generation; const owner = crmOwner(); loading.value = true; error.value = ''
-  try { const result = await readRecordingReview(visit.value); if (version != generation || owner != crmOwner()) return; clips.value = result.clips; enabled.value = result.enabled; error.value = result.analysisError; selectedIndex.value = 0 }
+  dispose(); position.value = 0; const version = generation; const owner = crmOwner(); loading.value = true; error.value = ''
+  try { const result = await readRecordingReview(visit.value); if (version != generation || owner != crmOwner()) return; clips.value = result.clips; enabled.value = result.enabled; error.value = result.analysisError }
   catch (e) { if (version == generation) { clips.value = []; error.value = crmMessage(e) } }
   finally { if (version == generation) loading.value = false }
 }
 async function playAt(ms: number): Promise<void> {
-  if (current.value == null || downloading.value) return
-  error.value = ''; seekTarget = Math.max(0, ms) / 1000
-  if (audio != null) { audio!.seek(seekTarget); audio!.play(); return }
-  const version = generation; const owner = crmOwner(); const id = current.value!.id; downloading.value = true
+  if (downloading.value || !visible) return
+  const target = recordingPosition(clips.value, ms); if (target == null) return
+  error.value = ''; position.value = target.localMs + target.offsetMs
+  if (audio != null && currentIndex == target.index) { audio!.seek(target.localMs / 1000); audio!.play(); return }
+  const version = ++generation; const owner = crmOwner(); stopAudio(); downloading.value = true
   try {
-    const localPath = await downloadRecording(visit.value, id)
-    if (version != generation || owner != crmOwner() || !visible) { removePlaybackFile(localPath); return }
-    path = localPath; audio = uni.createInnerAudioContext()
-    audio!.onCanplay(() => { if (version == generation && visible && audio != null && !prepared) { prepared = true; actualDuration.value = audio!.duration * 1000; audio!.seek(seekTarget); audio!.play() } })
+    let file = ''
+    if (nextIndex == target.index && nextDownload != null) { file = await nextDownload!; if (version != generation || owner != crmOwner() || !visible) return; nextPath = ''; nextIndex = -1; nextDownload = null }
+    else clearPrefetch()
+    if (file.length == 0) file = await downloadRecording(visit.value, clips.value[target.index].id)
+    if (version != generation || owner != crmOwner() || !visible) { removePlaybackFile(file); return }
+    path = file; currentIndex = target.index; audio = uni.createInnerAudioContext(); let prepared = false
+    audio!.onCanplay(() => {
+      if (version != generation || !visible || audio == null || prepared) return
+      prepared = true
+      if (audio!.duration > 0) { clips.value[target.index].durationMs = audio!.duration * 1000; clips.value[target.index].durationEstimated = false }
+      audio!.seek(target.localMs / 1000); audio!.play()
+    })
     audio!.onPlay(() => { if (version == generation) playing.value = true })
     audio!.onPause(() => { if (version == generation) playing.value = false })
-    audio!.onEnded(() => { if (version == generation) playing.value = false })
-    audio!.onTimeUpdate(() => { if (version == generation && audio != null) { position.value = audio!.currentTime * 1000; actualDuration.value = audio!.duration * 1000 } })
-    audio!.onError((_) => { if (version == generation) { dispose(); error.value = '录音播放失败，请重试' } })
-    audio!.src = path
+    audio!.onEnded(() => {
+      if (version != generation) return
+      playing.value = false
+      const next = target.index + 1
+      if (next < clips.value.length) playAt(target.offsetMs + clips.value[target.index].durationMs)
+      else position.value = recordingDuration(clips.value)
+    })
+    audio!.onTimeUpdate(() => {
+      if (version != generation || audio == null) return
+      if (audio!.duration > 0 && clips.value[target.index].durationEstimated) { clips.value[target.index].durationMs = audio!.duration * 1000; clips.value[target.index].durationEstimated = false }
+      position.value = target.offsetMs + Math.min(clips.value[target.index].durationMs, audio!.currentTime * 1000)
+    })
+    audio!.onError((_e) => { if (version == generation) { dispose(); error.value = '录音播放失败，请重试' } })
+    audio!.src = path; prefetch(target.index + 1)
   } catch (e) { if (version == generation) error.value = crmMessage(e) }
   finally { if (version == generation) downloading.value = false }
 }
 function togglePlay(): void { if (playing.value) audio?.pause(); else playAt(position.value >= duration.value - 500 ? 0 : position.value) }
-function selectClip(event: UniPickerChangeEvent): void { dispose(); selectedIndex.value = parseInt(event.detail.value as string) }
-function chooseRecording(index: number): void { dispose(); selectedIndex.value = index; playAt(0) }
 function seek(event: UniSliderChangeEvent): void { playAt(event.detail.value) }
-onLoad((options) => { visit.value = options['visit'] ?? ''; store.value = options['store'] ?? '拜访详情'; load() })
+onLoad((options) => { visit.value = options['visit'] ?? ''; store.value = options['store'] ?? '本次拜访'; timeText.value = options['time'] ?? ''; load() })
 onShow(() => { visible = true })
 onHide(() => { visible = false; dispose() })
 onUnload(dispose)
 watch((): string => crmOwner(), (_owner: string) => { dispose(); clips.value = []; error.value = '账号已变更，请返回重新进入' })
 </script>
 <style>
-.evidence-page { flex: 1; background-color: #ffffff; }
-.evidence-heading { flex-direction: row; align-items: center; padding: 16px 20px 8px; }
-.evidence-title { flex: 1; font-size: 21px; font-weight: 600; color: #24282d; }
-.evidence-text { margin: 0; padding: 10px 0 10px 16px; border-width: 0; background-color: transparent; font-size: 14px; color: #b65028; }
-.evidence-tabs { flex-direction: row; padding: 0 20px; border-bottom-width: 1px; border-bottom-color: #e7eaee; }
-.evidence-tab { margin-right: 32px; padding: 12px 0 0; }
-.evidence-tab-label { font-size: 16px; color: #626970; }
-.evidence-selected { color: #b65028; font-weight: 600; }
-.evidence-underline { height: 3px; background-color: #b65028; margin-top: 10px; border-radius: 2px; }
-.clip-row { flex-direction: row; align-items: center; padding: 12px 20px; }
-.clip-picker { flex: 1; }
-.clip-name { flex: 1; font-size: 15px; color: #24282d; }
-.evidence-muted { font-size: 13px; color: #697078; }
-.evidence-error { font-size: 13px; color: #b54721; margin: 10px 20px; }
+@import '../../styles/workbench-ui.css';
+.evidence-header { width: 100%; max-width: 560px; align-self: center; padding: 12px 20px 0; }
+.evidence-heading { flex-direction: row; align-items: center; }
+.evidence-title { flex: 1; color: var(--sw-ink); font-size: 17px; line-height: 26px; font-weight: bold; }
+.evidence-action { min-height: 48px; line-height: 24px; margin: 0; padding: 12px 8px; border-width: 0; background-color: transparent; color: var(--sw-accent); font-size: 14px; }
+.evidence-small { color: var(--sw-muted); font-size: 12px; line-height: 20px; }
+.evidence-subtitle { color: var(--sw-ink); font-size: 16px; line-height: 24px; font-weight: bold; }
+.evidence-muted { color: var(--sw-muted); font-size: 14px; line-height: 24px; }
+.evidence-tabs { flex-direction: row; border-bottom-width: 1px; border-bottom-color: var(--sw-border); margin-top: 8px; }
+.evidence-tab { min-width: 48px; margin-right: 24px; padding-top: 12px; }
+.evidence-tab-label { font-size: 16px; line-height: 24px; color: var(--sw-muted); }
+.evidence-selected { color: var(--sw-accent); font-weight: bold; }
+.evidence-underline { height: 3px; width: 32px; background-color: var(--sw-accent); margin-top: 10px; border-radius: 2px; }
 .evidence-body { flex: 1; }
-.evidence-empty { padding: 60px 20px; align-items: center; }
-.summary-section { padding: 12px 20px; }
-.summary-note { font-size: 12px; color: #697078; margin-bottom: 12px; }
-.summary-text { font-size: 15px; line-height: 26px; color: #30353b; padding: 4px 0; }
-.transcript-section { padding: 0 12px 20px; }
-.transcript-line { flex-direction: row; align-items: flex-start; border-radius: 8px; padding: 12px 8px; }
-.transcript-active { background-color: #fff3eb; }
-.transcript-time { width: 52px; font-size: 13px; line-height: 26px; color: #b65028; }
-.transcript-content { flex: 1; }
-.transcript-text { font-size: 15px; line-height: 26px; color: #30353b; }
-.recording-list { padding: 0 20px; }
-.recording-row { flex-direction: row; align-items: center; min-height: 60px; border-bottom-width: 1px; border-bottom-color: #e8eaed; }
-.audio-arrow { width: 18px; height: 18px; margin-left: 8px; }
-.audio-panel { padding: 12px 20px 28px; border-top-width: 1px; border-top-color: #e8eaed; }
-.audio-bar { flex-direction: row; align-items: center; }
-.audio-button { width: 44px; height: 44px; padding: 10px; margin: 0 8px 0 0; border-width: 0; border-radius: 22px; background-color: #fff1e7; }
+.evidence-content { width: 100%; max-width: 560px; align-self: center; padding: 20px; }
+.evidence-error { padding: 12px; background-color: var(--sw-accent-soft); border-radius: 8px; margin-bottom: 12px; }
+.evidence-error-text { color: var(--sw-error); font-size: 14px; line-height: 22px; }
+.evidence-loading { padding: 24px 0; }
+.evidence-empty { padding: 48px 12px; align-items: center; }
+.evidence-empty-icon { width: 40px; height: 40px; margin-bottom: 16px; }
+.evidence-empty-note { margin-top: 8px; text-align: center; }
+.transcript-line { flex-direction: row; align-items: flex-start; border-radius: 8px; padding: 16px 12px; }
+.transcript-active { background-color: var(--sw-accent-soft); }
+.transcript-time { width: 46px; color: var(--sw-accent); font-size: 12px; line-height: 26px; }
+.transcript-content { flex: 1; min-width: 0; }
+.transcript-speaker { color: var(--sw-muted); font-size: 12px; line-height: 20px; margin-bottom: 4px; }
+.transcript-text { color: var(--sw-ink); font-size: 15px; line-height: 27px; }
+.recording-row { flex-direction: row; align-items: center; min-height: 48px; padding: 14px 16px; background-color: var(--sw-surface); border-radius: 10px; }
+.evidence-recording-note { margin-top: 22px; }
 .audio-icon { width: 24px; height: 24px; margin-right: 12px; }
-.audio-time { color: #697078; font-size: 12px; }
-.audio-slider { flex: 1; margin: 0 10px; }
+.audio-arrow { width: 16px; height: 16px; margin-left: 8px; }
+.audio-panel { padding-bottom: env(safe-area-inset-bottom); border-top-width: 1px; border-top-color: var(--sw-border); }
+.audio-inner { width: 100%; max-width: 560px; align-self: center; padding: 12px 20px; }
+.audio-slider { margin: 0; }
+.audio-bar { flex-direction: row; align-items: center; justify-content: space-between; margin-top: 8px; }
+.audio-control { width: 48px; height: 48px; }
+.audio-button { width: 48px; height: 48px; padding: 0; margin: 0; border-width: 0; border-radius: 24px; background-color: var(--sw-accent); }
+.audio-play-icon { position: absolute; left: 12px; top: 12px; width: 24px; height: 24px; }
+.audio-time { width: 72px; line-height: 20px; color: var(--sw-muted); font-size: 12px; text-align: center; }
+.audio-reading { text-align: center; margin-top: 8px; }
+/* #ifdef APP-ANDROID */
+.evidence-title,.evidence-subtitle { font-family: sans-serif; }
+/* #endif */
 </style>

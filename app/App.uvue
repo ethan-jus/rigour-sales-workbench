@@ -12,9 +12,9 @@ watch((): boolean => session.authenticated, (authenticated: boolean, previous: b
   if (authenticated && !previous) resumeFieldTracking()
   if (!authenticated && previous) uni.reLaunch({ url: '/pages/login/login' })
 })
-onLaunch(() => { startCrmUploadQueue(); startCrmDeparture(); startSalesProfileSync(); startVisitPolicyPreload(); startFieldTracking(); restoreCompanySession() })
+onLaunch(() => { startCrmUploadQueue(); startCrmDeparture(); startSalesProfileSync(); startVisitPolicyPreload(); startFieldTracking(); uni.onNetworkStatusChange((network) => { if (network.isConnected) restoreCompanySession() }); restoreCompanySession() })
 onHide(() => { pauseVisitPolicyPreload() })
-onShow(() => { resumeVisitPolicyPreload(); resumeCrmUploadQueue(); resumeCrmDeparture(); resumeFieldTracking() })
+onShow(() => { restoreCompanySession(); resumeVisitPolicyPreload(); resumeCrmUploadQueue(); resumeCrmDeparture(); resumeFieldTracking() })
 // #endif
 // #ifdef WEB
 onLaunch(() => {})

@@ -40,3 +40,17 @@ export async function submitFieldStatement(id: string, note: string): Promise<Fi
   if (owner != crmOwner()) throw new Error('账号已变更')
   return result
 }
+
+export async function requestAttendanceAdjustment(dayId: string, note: string): Promise<FieldCase> {
+  const owner = crmOwner(); const scope = fieldStorageScope(); const key = 'attendance-adjustment:' + dayId
+  if (note.trim().length == 0 || note.length > 2000) throw new Error('请填写2000字以内的补正说明')
+  let command = await readFieldValue(scope, key)
+  if (owner != crmOwner()) throw new Error('账号已变更')
+  if (command == null || command!.getString('note') != note.trim()) command = { requestId: crmId(), note: note.trim() } as UTSJSONObject
+  await writeFieldValue(scope, key, command!)
+  if (owner != crmOwner()) throw new Error('账号已变更')
+  const result = parseFieldCase(crmObject(await crmCall('/sales/me/work-days/' + dayId + '/adjustments', 'POST', command)))
+  try { await clearFieldValue(scope, key) } catch (_) {}
+  if (owner != crmOwner()) throw new Error('账号已变更')
+  return result
+}

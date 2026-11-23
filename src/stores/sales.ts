@@ -608,9 +608,12 @@ export const useSalesStore = defineStore('sales', () => {
 
   async function uploadLocationPoints(workDayId: string, points: LocationPointCommand[]): Promise<LocationBatchResult | null> {
     attendanceError.value = null;
+    const locationSessionId = workDay.value?.id === workDayId ? workDay.value.locationSessionId : null;
+    if (!locationSessionId) return null;
     try {
       const result = (await salesApi.uploadLocationPoints(workDayId, {
         idempotencyKey: createIdempotencyKey('location'),
+        locationSessionId,
         points,
       })).data;
       if (workDay.value?.id === workDayId) {

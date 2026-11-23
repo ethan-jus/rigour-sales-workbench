@@ -50,6 +50,8 @@
 | 命令 | 能验证的范围 |
 |---|---|
 | `pnpm app:v1:test` | 原生接口、认证、状态和 CRM 等自动化测试；包含测试替身，不等于真机验收 |
+| `pnpm app:build:android` | 本地正式 APK 构建与既有签名校验，不走云打包 |
+| `pnpm app:install:android` | 本地构建后校验手机原包签名，覆盖安装并保留数据 |
 | `pnpm app:g0:test` | 原生采集状态测试；已包含在 `app:v1:test` 中，无变化时不用重复运行 |
 | `pnpm app:g0:check:android` | Android 目标编译，不安装设备 |
 | `pnpm app:g0:check:ios` | iOS 模拟器目标编译，不代表真机签名包验收 |
@@ -62,7 +64,7 @@
 
 - 根据变更选择已有定向测试；跨端代码修改执行受影响平台的编译，公共原生代码变更验证三端。仅修改文档时检查内容、引用和命令即可，不启动应用或重复构建。根目录 `pnpm build` / `pnpm typecheck` 面向旧 H5，不能替代上述原生检查。
 - Mr-xun 的 `scripts/audit.sh <目标文件或目录> official` 只读检查可用于改动范围。默认 `official` 检查覆盖有限，有告警也可能退出 0，必须读输出；不默认启用 `conservative-app`，不将其告警当成官方编译错误或直接作为 CI 阻断依据。
-- HBuilderX CLI 通过已有 `scripts/app-g0.mjs` 调用；不要猜测 CLI 参数。确认编译成功日志及对应产物，不能只看进程退出码。当前脚本不执行云打包或发布。
+- HBuilderX CLI 通过已有 `scripts/app-g0.mjs` 调用；不要猜测 CLI 参数。确认编译成功日志及对应产物，不能只看进程退出码。`app-g0.mjs` 不执行云打包或发布。正式 Android 发布默认使用 `build-android-local.py`，详见 [本地正式打包](../docs/app-android-local-release.md)，不再默认提交云构建。
 - Android 本地真机调试优先使用 `app:dev:android`；手动 HBuilderX 会话配合 `app:dev:bridge`，避免无线重连或调试工具重建连接后丢失业务转发。通道存活不代表服务正常或登录成功，仍需分别核查；不自行启动后端。
 - 定位、相机、录音、锁屏/后台、断网重试、上传及账号切换按改动范围进行真实设备验证。浏览器、测试替身、模拟器通过，不等于 Android/iOS/鸿蒙真机均通过。
 - 联调使用 DEV 和可识别测试数据，提交结果核对真实 API 与持久化事实。报告分别写清静态检查、编译、设备运行、接口/持久化验收及未验证项；本地通过不代表已发布。

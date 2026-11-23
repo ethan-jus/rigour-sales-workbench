@@ -316,9 +316,18 @@ describe('salesStore 拜访闭环', () => {
       lastReceivedAt: '2026-08-09T04:00:00Z',
     }));
     const store = useSalesStore();
+    store.workDay = {
+      id: 'wd-1', employeeId: 'employee-1', salesProfileId: 'sp-1', businessDate: '2026-08-09',
+      timezoneId: 'Asia/Shanghai', fieldPolicyVersionId: 'policy-1', status: 'ACTIVE',
+      checkedInAt: '2026-08-09T03:00:00Z', checkedOutAt: null, locationSessionId: 'location-session-1',
+      locationPointCount: 0, interruptionCount: 0, verifiedWorkMinutes: 0, evidenceQuality: 'PENDING',
+    };
 
     await expect(store.ensureLocationTracking('wd-1')).resolves.toBe(true);
     await vi.waitFor(() => expect(mocks.uploadLocationPoints).toHaveBeenCalledTimes(1));
+    expect(mocks.uploadLocationPoints).toHaveBeenCalledWith('wd-1', expect.objectContaining({
+      locationSessionId: 'location-session-1',
+    }));
     expect(store.locationStatus).toBe('active');
     expect(store.trackingWorkDayId).toBe('wd-1');
 

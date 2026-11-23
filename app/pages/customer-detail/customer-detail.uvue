@@ -1,35 +1,49 @@
 <template>
   <view class="sw-page">
-    <scroll-view class="sw-grow" direction="vertical"><view class="c-content">
+    <scroll-view class="sw-grow" direction="vertical"><view class="c-content"><view v-if="admissionNotice.length > 0" class="c-intake-notice"><text class="c-text">{{ admissionNotice }}</text></view>
       <view class="sw-between"><text class="c-detail-name sw-grow">{{ name }}</text><view v-if="canManage && own" class="c-control" @click="editProfile"><text class="c-text c-orange">编辑</text></view><view v-if="own && (canStatus || canRelease)" class="c-control" @click="moreActions"><text class="c-more">···</text></view></view>
       <view class="c-detail-tags"><text class="c-tag">{{ relationLabel }}</text><text v-if="phase.length > 0" class="c-tag">{{ phase }}</text><text v-if="workBlocked" class="c-tag">{{ detail?.businessStatus == 'CLOSED' ? '已停业' : '暂停营业' }}</text></view>
       <view class="sw-row c-control" @click="navigate"><image class="c-icon" src="/static/home/map-pin.svg" /><text class="c-text sw-grow">{{ address }}</text><image class="c-arrow" src="/static/home/chevron-right.svg" /></view><text v-if="deadline.length > 0" class="c-muted">{{ deadline }}</text>
+      <view v-if="own && (businessTypeLabel.length > 0 || businessProgress.length > 0)" class="c-fieldwork-profile"><text v-if="businessTypeLabel.length > 0" class="c-muted">经营类型 · {{ businessTypeLabel }}</text><view v-for="item in businessProgress" :key="item.code" class="sw-between c-progress-row"><text class="c-text">{{ item.name }}</text><text :class="item.cooperated ? 'c-cooperated' : 'c-orange'">{{ item.progress }}</text></view></view>
       <view v-if="canOrders" class="c-money-row"><view class="c-money-cell" @click="showOrders(false)"><view class="sw-row"><text class="c-muted">累计成交</text><image class="c-arrow" src="/static/home/chevron-right.svg" /></view><text class="c-money">{{ amount }}</text></view><view class="c-money-cell c-money-right" @click="showOrders(true)"><view class="sw-row"><text class="c-muted">待回款</text><image class="c-arrow" src="/static/home/chevron-right.svg" /></view><text class="c-money">{{ unpaid }}</text></view></view>
       <view v-if="orderError.length > 0" class="c-error"><text class="c-error-text">{{ orderError }}</text><button class="sw-text-button" :disabled="orderLoading" @click="retryOrders">重试订单</button></view>
       <view class="c-tabs c-section"><view v-if="own" class="c-tab" @click="tab = 'contacts'"><text :class="tab == 'contacts' ? 'c-tab-text c-tab-active' : 'c-tab-text'">联系人</text><view v-if="tab == 'contacts'" class="c-tab-line" /></view><view v-if="own" class="c-tab" @click="tab = 'visits'"><text :class="tab == 'visits' ? 'c-tab-text c-tab-active' : 'c-tab-text'">拜访</text><view v-if="tab == 'visits'" class="c-tab-line" /></view><view v-if="canOrders" class="c-tab" @click="showOrders(false)"><text :class="tab == 'orders' ? 'c-tab-text c-tab-active' : 'c-tab-text'">订单</text><view v-if="tab == 'orders'" class="c-tab-line" /></view></view>
-      <template v-if="own && tab == 'contacts'"><view v-if="canVisit" class="sw-between"><view class="c-control" @click="linkContact"><text class="c-muted">关联已有</text></view><view class="c-control" @click="newContact"><text class="c-text c-orange">＋ 联系人</text></view></view><view v-for="person in people" :key="person.id" class="c-person"><view class="sw-row"><text class="c-name">{{ person.name }} · {{ person.role }}</text><text v-if="person.primary || person.status == 'LEFT'" class="c-tag">{{ person.status == 'LEFT' ? '已离职' : '主要' }}</text><view v-if="canVisit" class="c-control" @click="editContact(person)"><image class="c-icon" src="/static/customers/edit.svg" /></view></view><view v-for="method in person.methods" :key="method.id" class="c-phone"><view class="sw-grow"><text class="c-text">{{ method.value }}</text><text class="c-muted">{{ method.status == 'VERIFIED' ? '✓ 电话已核实' : method.status == 'INVALID' ? '号码已失效' : method.type == 'PHONE' ? '电话待核实' : '微信线索 · 未确认建联' }}</text></view><view v-if="canVisit && method.type == 'PHONE' && person.status == 'ACTIVE'" class="c-control" @click="verify(person, method)"><text class="c-muted">核实</text></view><view v-if="method.type == 'PHONE' && method.status != 'INVALID' && person.status == 'ACTIVE'" class="c-control" @click="phone(method.value)"><image class="c-icon" src="/static/customers/phone.svg" /></view></view></view><view v-if="!loading && people.length == 0" class="c-empty"><text class="c-muted">暂无联系人</text></view></template>
+      <template v-if="own && tab == 'contacts'"><view v-if="canVisit" class="sw-between"><view class="c-control" @click="linkContact"><text class="c-muted">关联已有</text></view><view class="c-control" @click="newContact"><text class="c-text c-orange">＋ 联系人</text></view></view><view class="wc-filters"><view class="wc-filter" @click="contactFilter = 'all'"><text :class="contactFilter == 'all' ? 'c-orange' : 'c-muted'">全部 {{ loading ? '—' : people.length.toString() }}</text></view><view class="wc-filter" @click="contactFilter = 'wecom'"><image class="wc-mark" src="/static/wecom/wecom.png" /><text :class="contactFilter == 'wecom' ? 'c-orange' : 'c-muted'">企微 {{ wecomCount }}</text></view><view class="wc-filter" @click="contactFilter = 'phone'"><text :class="contactFilter == 'phone' ? 'c-orange' : 'c-muted'">有电话 {{ loading ? '—' : phonePeople.length.toString() }}</text></view></view><view v-for="person in filteredPeople" :key="person.id" class="c-person"><view class="sw-row"><text class="c-name">{{ person.name }} · {{ person.role }}</text><text v-if="person.primary || person.status == 'LEFT'" class="c-tag">{{ person.status == 'LEFT' ? '已离职' : '主要' }}</text><view v-if="canVisit" class="c-control" @click="editContact(person)"><image class="c-icon" src="/static/customers/edit.svg" /></view></view><view v-if="person.wecom" class="wc-channel"><image class="wc-mark" src="/static/wecom/wecom.png" /><text class="c-text">企微联系人</text></view><text v-if="person.wecom" class="c-muted">{{ person.relationText }}</text><view v-for="method in person.methods" :key="method.id" class="c-phone"><view class="sw-grow"><text class="c-text">{{ method.value }}</text><text class="c-muted">{{ method.status == 'VERIFIED' ? '✓ 电话已核实' : method.status == 'INVALID' ? '号码已失效' : method.type == 'PHONE' ? '电话待核实' : '微信线索 · 未确认建联' }}</text></view><view v-if="canVisit && method.type == 'PHONE' && person.status == 'ACTIVE'" class="c-control" @click="verify(person, method)"><text class="c-muted">核实</text></view><view v-if="method.type == 'PHONE' && method.status != 'INVALID' && person.status == 'ACTIVE'" class="c-control" @click="phone(method.value)"><image class="c-icon" src="/static/customers/phone.svg" /></view></view></view><view v-if="!loading && people.length == 0" class="c-empty"><text class="c-muted">暂无联系人</text></view></template>
       <template v-if="own && tab == 'visits'"><view v-for="record in visits" :key="record.id" class="c-list-row" @click="openVisit(record)"><view class="sw-row"><text class="c-name">{{ record.label }}</text><image class="c-arrow" src="/static/home/chevron-right.svg" /></view><text class="c-muted">{{ record.time }}</text><text v-if="record.reason.length > 0" class="c-muted">{{ record.reason }}</text></view><view v-if="!loading && visits.length == 0" class="c-empty"><text class="c-muted">暂无拜访记录</text></view></template>
       <template v-if="tab == 'orders'"><view class="c-filters"><view class="c-filter" @click="showOrders(!unpaidOnly)"><text class="c-muted">{{ unpaidOnly ? '待回款' : '全部订单' }}⌄</text></view><text class="c-muted">{{ orderLoading || orderError.length > 0 ? '—' : orderTotal.toString() }}笔</text></view><view v-for="order in orders" :key="order.id" class="c-list-row" @click="openOrder(order.id)"><view class="sw-between"><text class="c-text">{{ order.number }}</text><text class="c-text">¥{{ order.amount }}</text></view><view class="sw-between"><text class="c-muted">{{ order.time }}</text><text class="c-muted">{{ order.status }}</text></view></view><view v-if="!orderLoading && orders.length == 0 && orderError.length == 0" class="c-empty"><text class="c-muted">暂无已关联订单</text></view><button v-if="orders.length < orderTotal" class="sw-text-button" :disabled="orderLoading" @click="moreOrders">加载更多</button><text v-if="orderLoading" class="c-muted c-section">加载中…</text></template>
       <view v-if="error.length > 0" class="c-error"><text class="c-error-text">{{ error }}</text><button class="sw-text-button" :disabled="loading" @click="reload">重试</button></view><text v-if="loading" class="c-muted c-section">加载中…</text>
     </view></scroll-view>
     <view v-if="own || publicStore" class="c-detail-footer">
-    <view class="c-bottom"><view v-if="own && canVisit" class="c-bottom-control"><image v-if="visitPhase.length == 0" class="c-bottom-icon" src="/static/home/visit.svg" @click="visit" /><button :class="busy || loading ? 'c-bottom-button c-visit-disabled' : 'c-bottom-button'" :loading="visitPhase.length > 0" :disabled="busy || loading || (workBlocked && !activeVisit)" @click="visit">{{ visitPhase.length > 0 ? visitPhase : activeVisit ? '继续拜访' : '去拜访' }}</button></view><view v-if="own && canProducts" class="c-bottom-control c-bottom-gap"><image class="c-bottom-icon" src="/static/customers/bag-orange.svg" /><button class="c-bottom-button c-bottom-secondary" :disabled="busy || loading || workBlocked" @click="startOrder">下单</button></view><button v-if="publicStore && canClaim" class="c-bottom-button c-bottom-claim" :disabled="busy || loading || blocked.length > 0" @click="claim">{{ blocked.length > 0 ? '暂不可认领' : '认领' }}</button></view></view>
+    <view v-if="own && needsAttendance" class="c-intake-attendance"><text class="c-muted sw-grow">{{ attendance.day == null ? '签到后即可开始拜访' : '当天作业已结束，恢复后可继续拜访' }}</text></view><view class="c-bottom"><view v-if="own && canVisit" class="c-bottom-control"><image v-if="visitPhase.length == 0" class="c-bottom-icon" src="/static/home/visit.svg" @click="visit" /><button :class="busy || loading ? 'c-bottom-button c-visit-disabled' : 'c-bottom-button'" :loading="visitPhase.length > 0" :disabled="busy || loading || (workBlocked && !activeVisit)" @click="visit">{{ visitPhase.length > 0 ? visitPhase : activeVisit ? '继续拜访' : needsAttendance ? attendanceLabel : '开始拜访' }}</button></view><view v-if="own && canProducts" class="c-bottom-control c-bottom-gap"><image class="c-bottom-icon" src="/static/customers/bag-orange.svg" /><button class="c-bottom-button c-bottom-secondary" :disabled="busy || loading || workBlocked" @click="startOrder">下单</button></view><button v-if="publicStore && canClaim" class="c-bottom-button c-bottom-claim" :disabled="busy || loading || blocked.length > 0" @click="claim">{{ blocked.length > 0 ? '暂不可认领' : '认领' }}</button></view></view>
   </view>
 </template>
 <script setup lang="uts">
-import { attendanceStatus, checkInAttendance } from '../../services/attendance.uts'
+import { attendance, refreshAttendance } from '../../services/attendance.uts'
+import { signInForStore } from '../../services/visit-return.uts'
 import { apiErrorMessage } from '../../services/api.uts'
 import { hasPermission } from '../../services/session.uts'
-import { crmOwner, crmDetail, crmContacts, crmVisitRecords, crmVisitStatus, crmVisitReason, crmTime, crmMessage, crmMutation, crmStartVisit, crmCall, crmObject, CrmStore, CrmContact, CrmMethod, CrmVisitRecord, CrmVisitLocation } from '../../services/crm.uts'
+import { crmOwner, crmDetail, crmContacts, crmVisitRecords, crmVisitStatus, crmVisitReason, crmTime, crmMessage, crmMutation, crmStartVisit, crmCall, crmObject, CrmStore, crmStorePhase, CrmContact, CrmMethod, CrmVisit, CrmVisitRecord, CrmVisitLocation } from '../../services/crm.uts'
+import { wecomStoreCount } from '../../services/wecom.uts'
 import { customerOrders } from '../../services/customer-workbench.uts'
 import { workbenchMoney, parseWorkbenchRow, WorkbenchRow } from '../../services/workbench.uts'
 import { currentVisitEntryPolicy, VisitEntryPolicy, validateLocationAccuracy, requestVisitMicrophone } from '../../services/visit-policy.uts'
 import { NearbyOrigin, customerNearbyOriginSnapshot, customerNearbyLocation, customerNearbyVisitLocation, nearbyDistance } from '../../services/customer-nearby.uts'
+import { appEnvironment } from '../../services/config.uts'
 type DetailVisit = { id: string, capture: string, label: string, time: string, reason: string }
-const id = ref(''); const source = ref('MINE'); const relation = ref(''); const name = ref(''); const address = ref(''); const detail = ref<CrmStore | null>(null)
+const admissionNotice = ref('')
+const needsAttendance = ref(false)
+const attendanceLabel = computed((): string => attendance.day == null ? '前往签到' : '恢复作业后拜访')
+const visitPlanId = ref(''); const id = ref(''); const source = ref('MINE'); const relation = ref(''); const name = ref(''); const address = ref(''); const detail = ref<CrmStore | null>(null)
+function goToAttendance(): void { signInForStore(id.value, name.value, visitPlanId.value) }
 const own = ref(false); const publicStore = ref(false); const phase = ref(''); const deadline = ref(''); const blocked = ref(''); const people = ref<CrmContact[]>([]); const visits = ref<DetailVisit[]>([]); const activeVisit = ref(false)
+const contactFilter = ref('all'); const wecomCount = ref('—')
+const activePeople = computed((): CrmContact[] => people.value.filter((p: CrmContact): boolean => p.status == 'ACTIVE'))
+const wecomPeople = computed((): CrmContact[] => activePeople.value.filter((p: CrmContact): boolean => p.wecom))
+const phonePeople = computed((): CrmContact[] => activePeople.value.filter((p: CrmContact): boolean => p.hasPhone))
+const filteredPeople = computed((): CrmContact[] => contactFilter.value == 'wecom' ? wecomPeople.value : contactFilter.value == 'phone' ? phonePeople.value : people.value)
 const tab = ref('contacts'); const loading = ref(false); const busy = ref(false); const error = ref(''); const amount = ref('—'); const unpaid = ref('—'); const orders = ref<WorkbenchRow[]>([]); const orderTotal = ref(0); const orderLoading = ref(false); const orderError = ref(''); const unpaidOnly = ref(false)
 const visitPhase = ref('')
+const resumeVisit = ref<CrmVisit | null>(null)
 const entryOrigin = ref<NearbyOrigin | null>(null)
 let visible = false; let entryGeneration = 0; let visitGeneration = 0; let entryTimer = 0
 const canRelease = computed((): boolean => hasPermission('crm:pool:release')); const workBlocked = computed((): boolean => detail.value?.businessStatus == 'TEMP_CLOSED' || detail.value?.businessStatus == 'CLOSED');
@@ -53,19 +67,36 @@ async function updateEntryLocation(force: boolean = false): Promise<void> {
   entryOrigin.value = point
 }
 function prepareEntry(): void {
-  if (!own.value || !canVisit.value || !visible) return
+  if (!own.value || !canVisit.value || !visible || activeVisit.value) return
   // Preload quietly; an explicit visit attempt owns retry and error feedback.
   getEntryPolicy().catch((_) => {})
+  const account = crmOwner(); const version = entryGeneration
+  refreshAttendance().then((day) => { if (visible && account == crmOwner() && version == entryGeneration) needsAttendance.value = day == null || day.status != 'ACTIVE' }).catch((_) => {})
   updateEntryLocation().catch((_) => {})
 }
+type StoreProgressRow = { code: string, name: string, progress: string, cooperated: boolean }
+const businessTypeLabel = ref(''); const businessProgress = ref<StoreProgressRow[]>([])
+function profileLabel(raw: UTSJSONObject, dictionary: string, code: string): string { return (raw.getArray<UTSJSONObject>(dictionary) ?? [] as UTSJSONObject[]).find((o: UTSJSONObject): boolean => o.getString('code') == code)?.getString('name') ?? '待核实' }
 let generation = 0; let orderGeneration = 0; let owner = ''
+async function loadFieldworkProfile(request: number): Promise<void> {
+  try {
+    const data = crmObject(await crmCall('/crm/stores/' + id.value + '/fieldwork-profile?view=MINE'))
+    if (request != generation) return
+    const dictionaries = data.getJSON('dictionaries') ?? {} as UTSJSONObject; const type = data.getString('businessTypeCode') ?? ''
+    businessTypeLabel.value = type.length == 0 ? '' : profileLabel(dictionaries, 'STORE_BUSINESS_TYPE', type)
+    businessProgress.value = (data.getArray<UTSJSONObject>('businesses') ?? [] as UTSJSONObject[]).map((row: UTSJSONObject): StoreProgressRow => {
+      const code = row.getString('businessLineCode') ?? ''; const cooperation = row.getString('cooperationStatus') ?? ''; const intention = row.getString('intentionLevel') ?? ''
+      return { code: code, cooperated: cooperation == 'COOPERATED', name: profileLabel(dictionaries, 'BUSINESS_LINE', code), progress: profileLabel(dictionaries, cooperation.length > 0 ? 'CUSTOMER_COOP_STATUS' : 'CUSTOMER_INTENTION_LEVEL', cooperation.length > 0 ? cooperation : intention) } as StoreProgressRow
+    })
+  } catch (e) { if (request == generation) error.value = crmMessage(e) }
+}
 async function loadOrders(append: boolean): Promise<void> {
   const request = ++orderGeneration; orderLoading.value = true; orderError.value = ''; if (!append) { orders.value = []; orderTotal.value = 0 }
   try { const response = crmObject(await crmCall('/orders/customers/' + id.value + '?unpaid=' + (unpaidOnly.value ? 'true' : 'false') + '&begin=' + (append ? orders.value.length.toString() : '0'))); if (request != orderGeneration) return; const rows = (response['items'] as UTSJSONObject[] | null) ?? [] as UTSJSONObject[]; const parsed = rows.map((r: UTSJSONObject): WorkbenchRow => parseWorkbenchRow(r)); orders.value = append ? orders.value.concat(parsed) : parsed; orderTotal.value = response.getNumber('total') ?? 0; if (!unpaidOnly.value) { amount.value = '¥' + workbenchMoney(response.getNumber('amount')); unpaid.value = '¥' + workbenchMoney(response.getNumber('unpaid')) } }
   catch (e) { if (request == orderGeneration) orderError.value = crmMessage(e) } finally { if (request == orderGeneration) orderLoading.value = false }
 }
 async function reload(): Promise<void> {
-  const request = ++generation; loading.value = true; error.value = ''; detail.value = null; own.value = false; publicStore.value = false; phase.value = ''; deadline.value = ''; blocked.value = ''; people.value = []; visits.value = []; activeVisit.value = false
+  const request = ++generation; loading.value = true; wecomCount.value = '—'; error.value = ''; detail.value = null; own.value = false; publicStore.value = false; phase.value = ''; deadline.value = ''; blocked.value = ''; people.value = []; visits.value = []; activeVisit.value = false; resumeVisit.value = null; businessTypeLabel.value = ''; businessProgress.value = []
   try {
     let employee = ''
     if (hasPermission('crm:pool:private-read')) { const context = crmObject(await crmCall('/crm/stores/context?view=MINE')); if (request != generation) return; employee = context.getString('employeeId') ?? '' }
@@ -82,9 +113,25 @@ async function reload(): Promise<void> {
       detail.value = store; own.value = employee.length > 0 && store.pool == 'PRIVATE' && store.ownerEmployeeId == employee; publicStore.value = store.pool == 'PUBLIC'
     }
     const store = detail.value
-    if (store != null) { name.value = store.name; address.value = store.displayAddress; phase.value = store.phase == 'FIRST_VISIT' ? '待首访' : store.phase == 'FOLLOW_UP' ? '跟进中' : store.phase == 'COOPERATING' ? '维护中' : ''; deadline.value = own.value ? store.holdReason.length > 0 ? '保护保留' : '保护至' + crmTime(store.deadline) : ''; blocked.value = store.claimBlocked }
+    if (store != null) { name.value = store.name; address.value = store.displayAddress; phase.value = crmStorePhase(store); deadline.value = own.value ? store.holdReason.length > 0 ? '保护保留' : '保护至' + crmTime(store.deadline) : ''; blocked.value = store.claimBlocked }
     prepareEntry()
-    if (own.value) { const contacts = await crmContacts(id.value); if (request != generation) return; people.value = contacts; const records = await crmVisitRecords(id.value); if (request != generation) return; visits.value = records.filter((r: CrmVisitRecord): boolean => r.salespersonId == employee).map((r: CrmVisitRecord): DetailVisit => ({ id: r.id, capture: r.captureId, label: crmVisitStatus(r.status), time: crmTime(r.visitedAt), reason: crmVisitReason(r.reviewReason) } as DetailVisit)); activeVisit.value = records.some((r: CrmVisitRecord): boolean => r.status == 'IN_PROGRESS' && r.ownershipId == store?.ownershipId) }
+    if (own.value) {
+      loadFieldworkProfile(request)
+      const contacts = await crmContacts(id.value); if (request != generation) return; people.value = contacts
+      const count = await wecomStoreCount(id.value); if (request != generation) return; wecomCount.value = count
+      const records = await crmVisitRecords(id.value); if (request != generation) return
+      const active = records.find((r: CrmVisitRecord): boolean => r.status == 'IN_PROGRESS' && r.ownershipId == store?.ownershipId && r.salespersonId == employee)
+      let captureStatus = ''
+      // CRM receives completion asynchronously; Sales owns whether the capture can still resume.
+      if (canVisit.value && active != null && active.captureId.length > 0) {
+        const capture = crmObject(await crmCall('/sales/me/visits/' + encodeURIComponent(active.captureId)))
+        if (request != generation || !visible) return
+        captureStatus = capture.getString('status') ?? ''
+      }
+      visits.value = records.filter((r: CrmVisitRecord): boolean => r.salespersonId == employee).map((r: CrmVisitRecord): DetailVisit => ({ id: r.id, capture: r.captureId, label: r.id == active?.id && ['CANCELLED', 'CHECKED_OUT'].includes(captureStatus) ? (captureStatus == 'CANCELLED' ? '已取消' : '已结束') : crmVisitStatus(r.status), time: crmTime(r.visitedAt), reason: crmVisitReason(r.reviewReason) } as DetailVisit))
+      activeVisit.value = captureStatus == 'CHECKED_IN'
+      if (activeVisit.value && active != null) resumeVisit.value = { visitId: active.id, captureId: active.captureId, storeId: id.value, ownershipId: active.ownershipId } as CrmVisit
+    }
     else tab.value = 'orders'
     if (canOrders.value) { unpaidOnly.value = false; loadOrders(false) }
   } catch (e) { if (request == generation) error.value = crmMessage(e) } finally { if (request == generation) loading.value = false }
@@ -101,25 +148,32 @@ function linkContact(): void { editor('link') }
 function editContact(person: CrmContact): void { uni.showActionSheet({ itemList: ['编辑联系人', '补充联系方式', '变更记录'], success: (result) => { editor(result.tapIndex == 0 ? 'edit' : result.tapIndex == 1 ? 'method' : 'history', person.id) } }) }
 function verify(person: CrmContact, method: CrmMethod): void { editor('verify', person.id, method.id) }
 function phone(value: string): void { uni.makePhoneCall({ phoneNumber: value }) }
-function navigate(): void { const store = detail.value; if (store == null || store.longitude == null || store.latitude == null || store.coordinateSystem != 'GCJ02') { uni.showToast({ title: '门店定位待核实', icon: 'none' }); return }; uni.openLocation({ longitude: store.longitude!, latitude: store.latitude!, name: store.name, address: store.address, fail: (_) => { uni.showToast({ title: '地图暂时无法打开', icon: 'none' }) } }) }
+function navigate(): void { const store = detail.value; if (store == null || store.longitude == null || store.latitude == null || store.coordinateSystem != 'GCJ02') { uni.showToast({ title: '门店定位待核实', icon: 'none' }); return }; uni.navigateTo({ url: '/pages/customer-location/customer-location?store=' + encodeURIComponent(store.id) + '&view=' + (store.pool == 'PUBLIC' ? 'PUBLIC' : 'MINE') }) }
 function openVisit(record: DetailVisit): void { if (record.capture.length > 0 && hasPermission('sales:visit:own:read')) uni.navigateTo({ url: '/pages/crm-visit/crm-visit?store=' + id.value + '&visit=' + record.id + '&capture=' + record.capture }) }
 async function visit(): Promise<void> {
   if (busy.value || loading.value || !own.value || !canVisit.value || (workBlocked.value && !activeVisit.value)) return
+  if (needsAttendance.value && !activeVisit.value) { goToAttendance(); return }
   busy.value = true; visitPhase.value = '准备拜访…'
   const version = ++visitGeneration; const account = crmOwner()
   const current = (): boolean => visible && version == visitGeneration && account == crmOwner()
   let refreshLocation = false
   try {
     while (current()) {
+      const attemptStartedAt = Date.now(); let located = false
       try {
         visitPhase.value = refreshLocation ? '更新位置…' : '准备拜访…'
         let prepared: CrmVisitLocation | null = null
         let maximumAccuracy: number | null = null
+        let workDayId = ''
         if (!activeVisit.value) {
+          visitPhase.value = '检查上班状态…'
+          const day = await refreshAttendance(true); if (!current()) return
+          if (day == null || day.status != 'ACTIVE') { needsAttendance.value = true; goToAttendance(); return }
+          workDayId = day.id
           const policy = await getEntryPolicy(); if (!current()) return
           const rules = policy.captureRules; maximumAccuracy = rules.maximumLocationAccuracyMeters
           prepared = customerNearbyVisitLocation()
-          if (refreshLocation || prepared == null) { visitPhase.value = refreshLocation ? '更新位置…' : '获取位置…'; await updateEntryLocation(true); if (!current()) return; prepared = customerNearbyVisitLocation() }
+          if (refreshLocation || prepared == null) { located = true; visitPhase.value = refreshLocation ? '更新位置…' : '获取位置…'; await updateEntryLocation(true); if (!current()) return; prepared = customerNearbyVisitLocation() }
           if (prepared == null) throw new Error('暂时无法获取位置，请稍后重试')
           validateLocationAccuracy(prepared.location.getNumber('accuracyMeters'), rules.maximumLocationAccuracyMeters)
           entryOrigin.value = customerNearbyOriginSnapshot()
@@ -127,25 +181,20 @@ async function visit(): Promise<void> {
           if (distance == null) throw new Error('门店定位待核实，请先补全门店定位')
           // Leave a conservative margin at the boundary; the server remains authoritative.
           if (distance! > policy.radiusMeters + 1) throw new Error(apiErrorMessage('CRM_STORE_VISIT_OUTSIDE_RADIUS', 409))
-          visitPhase.value = '检查上班状态…'
-          const status = await attendanceStatus(); if (!current()) return
-          if (status != 'ACTIVE') {
-            const confirmed = await new Promise<boolean>((resolve) => { uni.showModal({ title: '先完成上班签到', content: '签到后继续本次拜访。', confirmText: '签到', success: (r) => resolve(r.confirm), fail: (_) => resolve(false) }) })
-            if (!confirmed || !current()) return
-            visitPhase.value = '正在上班签到…'; await checkInAttendance(); if (!current()) return
-          }
           if (rules.automaticRecording) { visitPhase.value = '检查录音权限…'; await requestVisitMicrophone(); if (!current()) return }
         }
-        const result = await crmStartVisit(id.value, maximumAccuracy, prepared, (stage: string) => { if (current()) visitPhase.value = stage }, current)
+        const result = activeVisit.value && resumeVisit.value != null ? resumeVisit.value! : await crmStartVisit(id.value, maximumAccuracy, prepared, (stage: string) => { if (current()) visitPhase.value = stage }, current, workDayId, visitPlanId.value)
         if (!current()) return
         visitPhase.value = '正在进入…'
+        if (appEnvironment.environment == 'development') console.log('[DEV VISIT ENTRY] navigationReadyMs=' + (Date.now() - attemptStartedAt).toString() + ' resume=' + (activeVisit.value && resumeVisit.value != null).toString())
         await new Promise<void>((resolve, reject) => { uni.navigateTo({ url: '/pages/crm-visit/crm-visit?store=' + result.storeId + '&visit=' + result.visitId + '&capture=' + result.captureId, success: (_) => resolve(), fail: (_) => reject(new Error('页面打开失败，请点击继续拜访重试')) }) })
         return
       } catch (e) {
         if (!current()) return
         const message = crmMessage(e); visitPhase.value = ''
         const outside = message == apiErrorMessage('CRM_STORE_VISIT_OUTSIDE_RADIUS', 409)
-        const retry = await new Promise<boolean>((resolve) => { uni.showModal({ title: '拜访提示', content: message, cancelText: '我已到店', confirmText: '知道了', showCancel: outside, success: (r) => resolve(outside && r.cancel), fail: (_) => resolve(false) }) })
+        if (outside && appEnvironment.environment == 'development') console.log('[DEV VISIT ENTRY] outsidePromptMs=' + (Date.now() - attemptStartedAt).toString() + ' located=' + located.toString())
+        const retry = await new Promise<boolean>((resolve) => { uni.showModal({ title: '拜访提示', content: message, cancelText: '已到店', confirmText: '知道了', showCancel: outside, success: (r) => resolve(outside && r.cancel), fail: (_) => resolve(false) }) })
         if (!retry || !current()) return
         refreshLocation = true
       }
@@ -153,18 +202,25 @@ async function visit(): Promise<void> {
   } finally { if (version == visitGeneration) { busy.value = false; visitPhase.value = '' } }
 }
 
-async function claim(): Promise<void> { const store = detail.value; if (store == null || busy.value) return; const confirmed = await new Promise<boolean>((resolve) => { uni.showModal({ title: '认领' + store.name, content: '认领后需在24小时内完成首访。', confirmText: '认领', success: (r) => resolve(r.confirm), fail: (_) => resolve(false) }) }); if (!confirmed) return; busy.value = true; try { await crmMutation('/crm/stores/' + id.value + '/claim', 'POST', { revision: store.revision } as UTSJSONObject); source.value = 'MINE'; tab.value = 'contacts'; await reload() } catch (e) { error.value = crmMessage(e) } finally { busy.value = false } }
+async function claim(): Promise<void> {
+  const store = detail.value; if (store == null || busy.value || !canClaim.value) return
+  busy.value = true; error.value = ''; const account = crmOwner()
+  try { await crmMutation('/crm/stores/' + id.value + '/claim', 'POST', { revision: store.revision } as UTSJSONObject); if (account != crmOwner()) return; source.value = 'MINE'; tab.value = 'contacts'; admissionNotice.value = '已认领到我的客户'; await reload() }
+  catch (e) { if (account == crmOwner()) error.value = crmMessage(e) } finally { if (account == crmOwner()) busy.value = false }
+}
 function startOrder(): void { uni.navigateTo({ url: '/pages/ordering-customers/ordering-customers?store=' + id.value + '&name=' + encodeURIComponent(name.value) }) }
 function stopEntry(): void { visible = false; entryGeneration++; visitGeneration++; clearInterval(entryTimer); busy.value = false; visitPhase.value = '' }
-onLoad((options) => { id.value = options['id'] ?? ''; source.value = options['source'] ?? 'MINE'; relation.value = options['relation'] ?? ''; name.value = options['name'] ?? ''; address.value = options['address'] ?? '' })
-onShow(() => { visible = true; owner = crmOwner(); entryOrigin.value = customerNearbyOriginSnapshot(); if (owner.length > 0) reload(); clearInterval(entryTimer); entryTimer = setInterval(() => { if (visible && !busy.value) prepareEntry() }, 30000) })
+onLoad((options) => { admissionNotice.value = options['admitted'] == 'true' ? '门店已加入公海，认领后开始开发' : '';  visitPlanId.value = options['plan'] ?? ''; id.value = options['id'] ?? ''; source.value = options['source'] ?? 'MINE'; relation.value = options['relation'] ?? ''; name.value = options['name'] ?? ''; address.value = options['address'] ?? '' })
+onShow(() => { visible = true; owner = crmOwner(); entryOrigin.value = customerNearbyOriginSnapshot(); if (owner.length > 0) reload(); clearInterval(entryTimer); entryTimer = setInterval(() => { if (visible && !busy.value) prepareEntry() }, 10000) })
 
 onHide(() => { stopEntry() })
 onUnload(() => { stopEntry(); generation++; orderGeneration++ })
-watch((): string => crmOwner(), (_value: string) => { stopEntry(); entryOrigin.value = null; generation++; orderGeneration++; detail.value = null; people.value = []; visits.value = []; orders.value = []; own.value = false; publicStore.value = false; name.value = ''; address.value = ''; amount.value = '—'; unpaid.value = '—'; error.value = '账号已变更，请重新进入' })
+watch((): string => crmOwner(), (_value: string) => { stopEntry(); entryOrigin.value = null; resumeVisit.value = null; generation++; orderGeneration++; admissionNotice.value = ''; needsAttendance.value = false; detail.value = null; people.value = []; visits.value = []; orders.value = []; own.value = false; publicStore.value = false; name.value = ''; address.value = ''; amount.value = '—'; unpaid.value = '—'; error.value = '账号已变更，请重新进入' })
 </script>
 <style>
 @import '../../styles/customers.css';
+.c-intake-notice { padding: 12px; margin-bottom: 12px; border-radius: 6px; background-color: #edf5f1; }
+.c-intake-attendance { flex-direction: row; align-items: center; padding: 8px 20px; }
 .c-detail-footer { background-color: #ffffff; }
 .c-visit-disabled { background-color: #df9a7d; color: #ffffff; }
 .c-bottom { padding-bottom: var(--uni-safe-area-inset-bottom); min-height: 70px; }
@@ -175,4 +231,11 @@ watch((): string => crmOwner(), (_value: string) => { stopEntry(); entryOrigin.v
 .c-bottom-claim { padding-left: 0; }
 .c-money-right { padding-left: 14px; border-left-width: 1px; border-left-style: solid; border-left-color: #e4e7e9; }
 .c-bottom-icon { position: absolute; z-index: 1; left: 18px; top: 13px; width: 22px; height: 22px; }
+.c-fieldwork-profile { padding: 14px 0; }
+.c-progress-row { min-height: 36px; }
+.c-cooperated { font-size: 16px; color: #267C5A; }
+.wc-filters { flex-direction: row; margin-top: 12px; margin-bottom: 8px; }
+.wc-filter { flex-direction: row; align-items: center; margin-right: 20px; min-height: 44px; }
+.wc-mark { width: 18px; height: 18px; margin-right: 5px; }
+.wc-channel { flex-direction: row; align-items: center; margin-top: 10px; margin-bottom: 6px; }
 </style>

@@ -9,13 +9,10 @@ export interface FieldPolicyView {
   publishStatus: string;
   timezoneId: string;
   businessDayCutoff: string;
-  checkInWindowStart: string | null;
-  checkInWindowEnd: string | null;
-  checkOutWindowStart: string | null;
-  checkOutWindowEnd: string | null;
   standardWorkMinutes: number;
   minimumWorkMinutes: number;
-  requireCheckOut: boolean;
+  allowResume: boolean;
+  workHoursEnabled: boolean;
   allowAdjustment: boolean;
   adjustmentDeadlineHours: number | null;
   locationEnabled: boolean;
@@ -522,7 +519,7 @@ export const salesApi = {
     return apiClient.post<WorkDayView>('/sales/work-days/check-in', command);
   },
 
-  uploadLocationPoints(workDayId: string, command: { idempotencyKey: string; points: LocationPointCommand[] }): Promise<ApiResponse<LocationBatchResult>> {
+  uploadLocationPoints(workDayId: string, command: { idempotencyKey: string; locationSessionId: string; points: LocationPointCommand[] }): Promise<ApiResponse<LocationBatchResult>> {
     return apiClient.post<LocationBatchResult>(`/sales/work-days/${workDayId}/location-points:batch`, command);
   },
 

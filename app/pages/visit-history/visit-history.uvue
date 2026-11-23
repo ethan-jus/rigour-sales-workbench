@@ -23,7 +23,7 @@ import { hasPermission, requireSession } from '../../services/session.uts'
 import { crmMessage } from '../../services/crm.uts'
 import { visitToday, visitReadKey } from '../../services/visits.uts'
 import { workbenchPeriod, WorkbenchPeriod } from '../../services/workbench.uts'
-import { VisitBoardRow, visitBoardLabel, parseVisitBoardRow, loadVisitBoard, openVisitBoardRow } from '../../services/visit-workbench.uts'
+import { visitRefresh, VisitBoardRow, visitBoardLabel, parseVisitBoardRow, loadVisitBoard, openVisitBoardRow } from '../../services/visit-workbench.uts'
 const today = ref(visitToday()); const period = ref('today'); const month = ref(''); const selectedDay = ref(''); const selectedFrom = ref(''); const selectedTo = ref(''); const dateMenu = ref(false)
 const keyword = ref(''); const kind = ref('all'); const state = ref('ALL'); const rows = ref<VisitBoardRow[]>([])
 const visits = ref('—'); const effective = ref('—'); const first = ref('—'); const total = ref(0); const loading = ref(false); const loaded = ref(false); const error = ref('')
@@ -35,10 +35,10 @@ const range = computed((): WorkbenchPeriod => {
 })
 const filterLabel = computed((): string => kind.value == 'first' ? '新增拜访' : kind.value == 'effective' ? '有效拜访' : state.value == 'ALL' ? '全部状态' : visitBoardLabel(state.value))
 const totalLabel = computed((): string => loaded.value ? total.value.toString() + (kind.value == 'first' ? '家' : '次') : '—')
-async function load(append: boolean = false): Promise<void> {
+async function load(append: boolean = false, quiet: boolean = false): Promise<void> {
   if (!requireSession() || (append && loading.value)) return
   const version = ++request; const owner = visitReadKey(); loading.value = true; error.value = ''
-  if (!append) { loaded.value = false; rows.value = []; total.value = 0; visits.value = '—'; effective.value = '—'; first.value = '—' }
+  if (!append && !quiet) { loaded.value = false; rows.value = []; total.value = 0; visits.value = '—'; effective.value = '—'; first.value = '—' }
   try {
     if (!hasPermission('sales:visit:own:read') || !hasPermission('crm:store:history-read')) throw new Error('当前账号没有拜访记录权限')
     const data = await loadVisitBoard(range.value.from, range.value.to, kind.value, state.value, keyword.value, append ? Math.floor(rows.value.length / 20) + 1 : 1)
@@ -59,7 +59,7 @@ function selectPeriod(value: string): void { period.value = value; dateMenu.valu
 function chooseMonth(e: UniPickerChangeEvent): void { month.value = e.detail.value as string; selectPeriod('custom') }
 function chooseDay(e: UniPickerChangeEvent): void { selectedDay.value = e.detail.value as string; selectPeriod('day') }
 function metric(value: string): void { kind.value = value; state.value = 'ALL'; reload() }
-function chooseFilter(): void { uni.showActionSheet({ itemList: ['全部状态','进行中','待提交','待核验','有效','未通过','已撤销'], success: (r) => { const values = ['ALL','IN_PROGRESS','PENDING_SUBMIT','SUBMITTED','EFFECTIVE','INVALID','VOID']; state.value = values[r.tapIndex]; kind.value = 'all'; reload() } }) }
+function chooseFilter(): void { uni.showActionSheet({ itemList: ['全部状态','进行中','待提交','核验中','证据不足','处理异常','申诉中','有效','未通过','已撤销','已取消'], success: (r) => { const values = ['ALL','IN_PROGRESS','PENDING_SUBMIT','PROCESSING','INSUFFICIENT','ERROR','APPEALED','EFFECTIVE','INVALID','VOID','CANCELLED']; state.value = values[r.tapIndex]; kind.value = 'all'; reload() } }) }
 function search(): void { clearTimeout(searchTimer); reload() }
 function searchChanged(): void { clearTimeout(searchTimer); searchTimer = setTimeout(() => { reload() }, 350) }
 function openRecord(row: VisitBoardRow): void { openVisitBoardRow(row) }
@@ -73,12 +73,13 @@ onLoad((query) => {
     else if (from == previousMonth.from && to == previousMonth.to) period.value = 'lastMonth'
   }
   if (['all','effective','first'].includes(selectedKind)) kind.value = selectedKind
-  if (['ALL','IN_PROGRESS','PENDING_SUBMIT','SUBMITTED','EFFECTIVE','INVALID','VOID'].includes(selectedState)) state.value = selectedState
+  if (['ALL','IN_PROGRESS','PENDING_SUBMIT','PROCESSING','INSUFFICIENT','ERROR','APPEALED','EFFECTIVE','INVALID','VOID','CANCELLED'].includes(selectedState)) state.value = selectedState
 })
 onShow(() => { visible = true; today.value = visitToday(); reload() })
 onHide(() => { visible = false; clearTimeout(searchTimer) })
 onUnload(() => { request++; clearTimeout(searchTimer) })
 watch((): string => visitReadKey(), () => { request++; loaded.value = false; total.value = 0; loading.value = false; rows.value = []; visits.value = '—'; effective.value = '—'; first.value = '—'; error.value = ''; if (visible) reload() })
+watch((): number => visitRefresh.revision, (_revision: number) => { if (visible) load(false, true) })
 </script>
 <style>
 @import "../../styles/workbench-ui.css";

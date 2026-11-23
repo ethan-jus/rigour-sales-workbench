@@ -1,18 +1,18 @@
 <template>
   <scroll-view class="sw-page c-overview" direction="vertical">
     <view class="c-content">
-      <view class="c-header"><text class="c-title">客户</text><view class="c-control" @click="more"><text class="c-more">···</text></view></view>
+      <view class="c-header"><text class="c-title sw-grow">客户</text><view v-if="canDevelop" class="c-control" style="margin-right: 12px" @click="develop"><text class="c-text c-orange">开发门店</text></view><view class="c-control" @click="more"><text class="c-more">···</text></view></view>
       <template v-if="session.authenticated">
         <view v-if="error.length > 0" class="c-error"><text class="c-error-text">{{ error }}</text><button class="sw-text-button" :disabled="loading" @click="reload">重试</button></view>
         <template v-if="canPrivate">
           <view class="c-period-row"><view class="c-segment"><button :class="period == 'today' ? 'c-period c-period-active' : 'c-period'" @click="selectPeriod('today')">今日</button><button :class="period == 'month' ? 'c-period c-period-active' : 'c-period'" @click="selectPeriod('month')">本月</button><button :class="period == 'lastMonth' ? 'c-period c-period-active' : 'c-period'" @click="selectPeriod('lastMonth')">上月</button></view><view class="c-date" @click="dateMenu = !dateMenu"><text class="c-muted">{{ range.dateLabel }}</text><image class="c-arrow" src="/static/home/chevron-down.svg" /></view></view>
           <view v-if="dateMenu" class="c-menu"><view class="c-menu-row" @click="selectPeriod('year')"><text class="c-text">本年</text></view><picker mode="date" fields="month" :value="range.from.substring(0, 7)" :end="today.substring(0, 7)" @change="chooseMonth"><view class="c-menu-row"><text class="c-text">选择月份</text></view></picker></view>
           <view v-if="canOrders" class="c-stat-panel"><view class="c-stats"><view v-for="metric in metrics" :key="metric.key" :class="metric.key == 'PURCHASING' ? 'c-stat c-stat-top c-stat-left' : metric.key == 'NEW' ? 'c-stat c-stat-top' : metric.key == 'RETURNING' ? 'c-stat c-stat-left' : 'c-stat'" hover-class="sw-pressed" @click="openMetric(metric.key)"><view class="sw-row"><text class="c-muted">{{ metric.title }}</text><image class="c-arrow" src="/static/home/chevron-right.svg" /></view><text class="c-stat-value">{{ metric.value }}</text></view></view></view>
-          <view class="c-section"><view class="sw-between"><text class="c-heading">联系人</text><view class="c-control" @click="people(false)"><text class="c-muted">查看 ›</text></view></view><view class="c-contact-row"><view class="c-contact-stat" @click="people(true)"><text class="c-text sw-grow">新增联系人</text><text class="c-small-value">{{ contacts }}</text><image class="c-arrow" src="/static/home/chevron-right.svg" /></view><view class="c-contact-stat c-contact-right" @click="wecomInfo"><text class="c-text sw-grow">新增企微</text><text class="c-small-value">—</text><image class="c-arrow" src="/static/home/chevron-right.svg" /></view></view></view>
+          <view class="c-section"><view class="sw-between"><text class="c-heading">联系人</text><view class="c-control" @click="people(false)"><text class="c-muted">查看 ›</text></view></view><view class="c-contact-row"><view class="c-contact-stat" @click="people(true)"><text class="c-text sw-grow">新增联系人</text><text class="c-small-value">{{ contacts }}</text><image class="c-arrow" src="/static/home/chevron-right.svg" /></view><view class="c-contact-stat c-contact-right" @click="wecomInfo"><text class="c-text sw-grow">企微联系人</text><text class="c-small-value">{{ wecomCount }}</text><image class="c-arrow" src="/static/home/chevron-right.svg" /></view></view></view>
         </template>
         <view class="c-section"><view class="sw-between"><text class="c-heading">客户管理</text><text class="c-muted">当前</text></view><view class="c-manage"><view v-if="canPrivate" class="c-manage-item" @click="list('MINE')"><view class="sw-row"><text class="c-text sw-grow">我的客户</text><image class="c-arrow" src="/static/home/chevron-right.svg" /></view><text class="c-manage-number">{{ mine }}</text></view><view v-if="canPrivate && canOrders" class="c-manage-item c-manage-middle" @click="list('COOPERATED')"><view class="sw-row"><text class="c-text sw-grow">合作客户</text><image class="c-arrow" src="/static/home/chevron-right.svg" /></view><text class="c-manage-number">{{ cooperated }}</text></view><view v-if="canPublic" class="c-manage-item" @click="list('PUBLIC')"><view class="sw-row"><text class="c-text sw-grow">公海</text><image class="c-arrow" src="/static/home/chevron-right.svg" /></view><text class="c-manage-number">{{ publicCount }}</text></view></view></view>
         <view v-if="canPrivate" class="c-section"><text class="c-heading">待关注</text><view v-for="task in tasks" :key="task.key" class="c-task" hover-class="sw-pressed" @click="openMetric(task.key)"><image class="c-icon" :src="task.key == 'DUE_SOON' ? '/static/customers/clock.svg' : task.key == 'DORMANT' ? '/static/customers/bag.svg' : '/static/home/contact-round.svg'" /><text class="c-task-label">{{ task.title }}</text><text :class="task.key == 'DUE_SOON' ? 'c-task-number c-orange' : 'c-task-number'">{{ task.value }}</text><image class="c-arrow" src="/static/home/chevron-right.svg" /></view></view>
-        <view v-if="canPrivate && canOrders && data != null" class="c-note" @click="scopeInfo"><text class="c-muted">已关联订单 · 统计范围 ›</text></view>
+        <view v-if="canPrivate && canOrders && data != null" class="c-note" @click="scopeInfo"><text class="c-muted">有效成交订单 · 统计范围 ›</text></view>
         <text v-if="loading" class="c-muted c-section">{{ data != null || publicCount != '—' ? '正在更新…' : '加载中…' }}</text>
       </template>
       <view v-else class="c-empty"><button class="sw-text-button" @click="login">登录</button></view>
@@ -20,24 +20,40 @@
   </scroll-view>
 </template>
 <script setup lang="uts">
+import { wecomSummary } from '../../services/wecom.uts'
 import { session, hasPermission, requireSession } from '../../services/session.uts'
 import { crmOwner, crmToday, crmMessage } from '../../services/crm.uts'
-import { customerSummary, customerSummarySnapshot, customerPublicCount, customerPublicCountSnapshot, customerCount, customerRatio, customerPeriodQuery, CustomerMetric } from '../../services/customer-workbench.uts'
+import { customerSummary, customerSummarySnapshot, customerTradeSummary, customerPublicCount, customerPublicCountSnapshot, customerCount, customerRatio, customerPeriodQuery, CustomerMetric } from '../../services/customer-workbench.uts'
 import { workbenchPeriod } from '../../services/workbench.uts'
+const canDevelop = computed((): boolean => hasPermission('crm:lead:create'))
+function develop(): void { uni.navigateTo({ url: '/pages/store-development/store-development' }) }
+const wecomCount = ref('—')
 const period = ref('today'); const month = ref(''); const today = ref(crmToday()); const dateMenu = ref(false)
+const trades = ref<UTSJSONObject | null>(null)
 const data = ref<UTSJSONObject | null>(null); const error = ref(''); const loading = ref(false); const publicCount = ref('—')
 const canPrivate = computed((): boolean => hasPermission('crm:pool:private-read')); const canPublic = computed((): boolean => hasPermission('crm:pool:public-read')); const canOrders = computed((): boolean => hasPermission('order:read'))
 const range = computed(() => workbenchPeriod(period.value, today.value, month.value))
-const mine = computed((): string => customerCount(data.value, 'mine')); const cooperated = computed((): string => customerCount(data.value, 'cooperated')); const contacts = computed((): string => customerCount(data.value, 'contacts'))
-const metrics = computed((): CustomerMetric[] => [ { key: 'PURCHASING', title: '成交客户', value: customerCount(data.value, 'purchasing') } as CustomerMetric, { key: 'NEW', title: '新增合作', value: customerCount(data.value, 'newCooperation') } as CustomerMetric, { key: 'RETURNING', title: '复购客户', value: customerCount(data.value, 'returning') } as CustomerMetric, { key: 'RATIO', title: '复购率', value: customerRatio(data.value) } as CustomerMetric ])
-const tasks = computed((): CustomerMetric[] => [ { key: 'DUE_SOON', title: '即将掉落', value: customerCount(data.value, 'dueSoon') } as CustomerMetric, { key: 'DORMANT', title: '60天未购', value: customerCount(data.value, 'dormant') } as CustomerMetric, { key: 'CONTACT_PENDING', title: '联系待完善', value: customerCount(data.value, 'contactPending') } as CustomerMetric ])
+const mine = computed((): string => customerCount(data.value, 'mine')); const cooperated = computed((): string => customerCount(trades.value, 'cooperated')); const contacts = computed((): string => customerCount(data.value, 'contacts'))
+const metrics = computed((): CustomerMetric[] => [ { key: 'PURCHASING', title: '成交客户', value: customerCount(trades.value, 'purchasing') } as CustomerMetric, { key: 'NEW', title: '新增合作', value: customerCount(trades.value, 'newCooperation') } as CustomerMetric, { key: 'RETURNING', title: '复购客户', value: customerCount(trades.value, 'returning') } as CustomerMetric, { key: 'RATIO', title: '复购率', value: customerRatio(trades.value) } as CustomerMetric ])
+const tasks = computed((): CustomerMetric[] => [ { key: 'DUE_SOON', title: '即将掉落', value: customerCount(data.value, 'dueSoon') } as CustomerMetric, { key: 'DORMANT', title: '长期未购', value: customerCount(data.value, 'dormant') } as CustomerMetric, { key: 'CONTACT_PENDING', title: '联系待完善', value: customerCount(data.value, 'contactPending') } as CustomerMetric ])
 let generation = 0; let owner = ''; let visible = false
 let pendingKey = ''
+async function loadWecom(request: number): Promise<void> {
+  wecomCount.value = '—'
+  if (!canPrivate.value) return
+  try { const stats = await wecomSummary(); if (request == generation) wecomCount.value = stats.active } catch (e) { if (request == generation) wecomCount.value = '—' }
+}
+async function loadTrades(request: number): Promise<void> {
+  trades.value = null
+  if (!canOrders.value) return
+  try { const result = await customerTradeSummary(range.value.from, range.value.to); if (request == generation) trades.value = result }
+  catch (e) { if (request == generation) error.value = crmMessage(e) }
+}
 async function reload(): Promise<void> {
   const key = crmOwner() + (canPrivate.value ? ':' + range.value.from + ':' + range.value.to : ':public')
   if (loading.value && pendingKey == key) return
   pendingKey = key
-  const request = ++generation; loading.value = true; error.value = ''
+  const request = ++generation; loading.value = true; error.value = ''; loadWecom(request); loadTrades(request)
   data.value = canPrivate.value ? customerSummarySnapshot(range.value.from, range.value.to) : null
   const publicSnapshot = canPrivate.value ? null : customerPublicCountSnapshot()
   publicCount.value = data.value != null ? customerCount(data.value, 'publicPool') : customerCount(publicSnapshot, 'total')
@@ -47,15 +63,15 @@ async function reload(): Promise<void> {
 function selectPeriod(next: string): void { if (next == period.value && next != 'custom') { dateMenu.value = false; return }; period.value = next; dateMenu.value = false; if (canPrivate.value) reload() }
 function chooseMonth(event: UniPickerChangeEvent): void { month.value = event.detail.value as string; selectPeriod('custom') }
 function list(kind: string): void { uni.navigateTo({ url: '/pages/customer-list/customer-list?kind=' + kind }) }
-function openMetric(kind: string): void { const selected = kind == 'RATIO' ? 'RETURNING' : kind; uni.navigateTo({ url: '/pages/customer-list/customer-list?kind=' + selected + '&' + customerPeriodQuery(range.value.from, range.value.to) + (kind == 'RATIO' ? '&denominator=' + customerCount(data.value, 'purchasing') : '') }) }
+function openMetric(kind: string): void { const selected = kind == 'RATIO' ? 'RETURNING' : kind; uni.navigateTo({ url: '/pages/customer-list/customer-list?kind=' + selected + '&' + customerPeriodQuery(range.value.from, range.value.to) + (kind == 'RATIO' ? '&denominator=' + customerCount(trades.value, 'purchasing') : '') }) }
 function people(newly: boolean): void { uni.navigateTo({ url: '/pages/customer-contacts/customer-contacts?newly=' + (newly ? 'true' : 'false') + '&' + customerPeriodQuery(range.value.from, range.value.to) }) }
-function wecomInfo(): void { uni.showModal({ title: '新增企微', content: '官方企微关系尚未接入，暂不提供统计。手填微信线索不计入建联。', showCancel: false }) }
-function scopeInfo(): void { uni.showModal({ title: '统计范围', content: '按已关联统一门店的本人有效订单统计。新增合作为公司首单归属本人；复购为本期开始前已成交的老客。未关联历史订单尚未计入。首次时间待核对：' + customerCount(data.value, 'unknownHistory') + '家。联系人仅展示当前有权查看的本人新增联系人。', showCancel: false }) }
+function wecomInfo(): void { uni.navigateTo({ url: '/pages/wecom/wecom' }) }
+function scopeInfo(): void { uni.showModal({ title: '统计范围', content: '成交客户按有效订单中的客户身份去重，包含历史订单，查询遵循当前角色的数据权限。新增合作为本期公司首单归属本人；复购为本期有成交且本期开始前已成交的老客。草稿和作废订单不计入。联系人按当前客户权限展示。', showCancel: false }) }
 function more(): void { uni.showActionSheet({ itemList: ['订货客户与购物草稿', '统计口径'], success: (result) => { if (result.tapIndex == 0) uni.navigateTo({ url: '/pages/ordering-customers/ordering-customers' }); else scopeInfo() } }) }
 function login(): void { requireSession() }
-function showPage(): void { const next = crmOwner(); if (owner != next) { owner = next; generation++; data.value = null; error.value = ''; publicCount.value = '—'; period.value = 'today'; month.value = '' }; today.value = crmToday(); if (session.authenticated) reload() }
+function showPage(): void { const next = crmOwner(); if (owner != next) { owner = next; generation++; wecomCount.value = '—'; trades.value = null; data.value = null; error.value = ''; publicCount.value = '—'; period.value = 'today'; month.value = '' }; today.value = crmToday(); if (session.authenticated) reload() }
 onShow(() => { visible = true; showPage() }); onHide(() => { visible = false; generation++; loading.value = false; pendingKey = '' }); onUnload(() => { generation++ })
-watch((): string => crmOwner(), (_value: string) => { generation++; data.value = null; publicCount.value = '—'; if (visible) showPage() })
+watch((): string => crmOwner(), (_value: string) => { generation++; wecomCount.value = '—'; trades.value = null; data.value = null; publicCount.value = '—'; if (visible) showPage() })
 </script>
 <style>
 @import '../../styles/customers.css';

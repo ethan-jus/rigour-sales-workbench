@@ -11,12 +11,13 @@
           <view class="statement-date"><image class="statement-icon" src="/static/home/calendar.svg" /><text class="statement-date-text">{{ date }} {{ evidenceTime }}</text></view>
           <text v-if="kind == 'TRACK_GAP'" class="statement-context">检测时该时段未收到连续有效位置。</text>
           <view v-if="history.length > 0" class="statement-history"><text class="statement-section">说明与处理</text><view v-for="event in history" :key="event.id" class="statement-event"><view class="statement-event-heading"><text class="statement-event-title">{{ event.employee ? '我的说明' : '风控反馈' }}</text><text class="statement-muted">{{ event.time }}</text></view><text class="statement-event-note">{{ event.note }}</text></view></view>
-          <view class="statement-reason"><text class="statement-label">原因</text><picker class="statement-picker" :range="reasons" :value="reasonIndex" @change="selectReason"><view class="statement-picker-inner"><text class="statement-picker-text">{{ reasonLabel }}</text><image class="statement-chevron" src="/static/home/chevron-right.svg" /></view></picker></view>
-          <textarea v-model="note" class="statement-input" placeholder="填写实际情况" :maxlength="1900" :disabled="submitting" />
+          <template v-if="editing"><view class="statement-reason"><text class="statement-label">原因</text><picker class="statement-picker" :range="reasons" :value="reasonIndex" @change="selectReason"><view class="statement-picker-inner"><text class="statement-picker-text">{{ reasonLabel }}</text><image class="statement-chevron" src="/static/home/chevron-right.svg" /></view></picker></view>
+          <textarea v-model="note" class="statement-input" placeholder="填写实际情况" :maxlength="1900" :disabled="submitting" /><text class="statement-counter">{{ note.length }}/1900</text></template>
+          <text v-if="!editing" class="statement-submitted">说明已记录，核查结论以处理结果为准。</text>
         </template>
       </view>
     </scroll-view>
-    <view v-if="ready" class="statement-footer"><button class="statement-submit" :disabled="submitting || note.trim().length == 0" :loading="submitting" @click="submit">{{ submitting ? '提交中' : '提交说明' }}</button></view>
+    <view v-if="ready" class="statement-footer"><button v-if="!editing" class="statement-submit" @click="editing = true">继续补充说明</button><button v-else class="statement-submit" :disabled="submitting || note.trim().length == 0" :loading="submitting" @click="submit">{{ submitting ? '提交中' : '提交说明' }}</button></view>
   </view>
 </template>
 <script setup lang="uts">
@@ -26,6 +27,7 @@ import { attendanceClock } from '../../services/attendance.uts'
 import { readOwnFieldCases, readStatementDraft, submitFieldStatement, fieldCaseStatus, FieldCase, FieldCaseEvent } from '../../services/fieldwork-review.uts'
 type StatementHistory = { id: string, employee: boolean, note: string, time: string }
 const id = ref(''); const date = ref(crmToday()); const item = ref<FieldCase | null>(null)
+const editing = ref(true)
 const loading = ref(false); const submitting = ref(false); const error = ref(''); const note = ref(''); const reasonIndex = ref(0)
 const reasons: string[] = ['请选择', '地下室信号弱', '网络中断', '定位权限或系统限制', '设备临时异常', '其他']
 const ready = computed((): boolean => item.value != null)
@@ -49,6 +51,7 @@ async function load(): Promise<void> {
     if (version != generation || owner != crmOwner()) return
     item.value = rows.find((row: FieldCase): boolean => row.id == id.value) ?? null
     if (item.value == null) throw new Error('该核查事项已不可查看')
+    editing.value = draft.length > 0 || !item.value!.events.some((event: FieldCaseEvent): boolean => event.employee)
     if (draft.length > 0) { note.value = draft; reasonIndex.value = 0 }
   } catch (e) { if (version == generation && owner == crmOwner()) error.value = crmMessage(e) }
   finally { if (version == generation) loading.value = false }
@@ -61,7 +64,7 @@ async function submit(): Promise<void> {
     const text = (reasonIndex.value > 0 ? reasonLabel.value + '：' : '') + note.value.trim()
     const updated = await submitFieldStatement(id.value, text)
     if (owner != crmOwner()) return
-    item.value = updated; note.value = ''; reasonIndex.value = 0
+    item.value = updated; note.value = ''; reasonIndex.value = 0; editing.value = false
     uni.showToast({ title: '说明已提交', icon: 'success' })
   } catch (e) { if (owner == crmOwner()) error.value = crmMessage(e) }
   finally { submitting.value = false }
@@ -71,11 +74,12 @@ onUnload(() => { generation++; item.value = null; note.value = '' })
 watch((): string => crmOwner(), (_owner: string) => { generation++; item.value = null; note.value = ''; if (!session.authenticated) uni.reLaunch({ url: '/pages/login/login' }) })
 </script>
 <style>
+@import "../../styles/workbench-ui.css";
 .statement-scroll { flex: 1; }
 .statement-content { padding: 20px; }
 .statement-status { align-self: flex-start; background-color: #fff1e6; border-radius: 5px; padding: 4px 10px; margin-bottom: 12px; }
 .statement-status-text { color: #b45125; font-size: 13px; font-weight: 600; }
-.statement-title { color: #24282d; font-size: 26px; line-height: 34px; font-weight: 600; }
+.statement-title { color: #24282d; font-size: 23px; line-height: 32px; font-weight: 600; }
 .statement-date { flex-direction: row; align-items: center; margin-top: 18px; margin-bottom: 20px; }
 .statement-icon { width: 20px; height: 20px; margin-right: 10px; }
 .statement-date-text { color: #343a40; font-size: 15px; }
@@ -87,8 +91,8 @@ watch((): string => crmOwner(), (_owner: string) => { generation++; item.value =
 .statement-event-title { font-size: 13px; color: #626970; }
 .statement-event-note { font-size: 15px; line-height: 24px; color: #343a40; }
 .statement-reason { flex-direction: row; align-items: center; margin-top: 22px; margin-bottom: 16px; }
-.statement-label { flex: 1; font-size: 18px; font-weight: 600; color: #24282d; }
-.statement-picker { width: 228px; }
+.statement-label { flex: 1; font-size: 15px; font-weight: 600; color: #24282d; }
+.statement-picker { flex: 2; }
 .statement-picker-inner { flex-direction: row; align-items: center; padding: 10px 12px; border-width: 1px; border-color: #dadddf; border-radius: 7px; }
 .statement-picker-text { flex: 1; font-size: 15px; color: #343a40; }
 .statement-chevron { width: 16px; height: 16px; transform: rotate(90deg); }
@@ -97,4 +101,6 @@ watch((): string => crmOwner(), (_owner: string) => { generation++; item.value =
 .statement-error { font-size: 13px; color: #b45125; margin-bottom: 12px; }
 .statement-footer { padding: 12px 20px 24px; background-color: #ffffff; }
 .statement-submit { height: 50px; line-height: 50px; padding: 0; background-color: #b45125; color: #ffffff; font-size: 17px; font-weight: 600; border-radius: 9px; }
+.statement-counter { font-size: 12px; color: #787f85; text-align: right; margin-top: 8px; }
+.statement-submitted { font-size: 13px; line-height: 22px; color: #626970; padding-top: 20px; }
 </style>

@@ -1,0 +1,19 @@
+plugins {
+    id 'com.android.library'
+    id 'org.jetbrains.kotlin.android'
+    id 'io.dcloud.uts.kotlin'
+}
+android {
+    namespace 'PLUGIN_NAMESPACE'
+    compileSdk 36
+    defaultConfig { minSdk 21 }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_1_8; targetCompatibility JavaVersion.VERSION_1_8 }
+    kotlinOptions { jvmTarget = '1.8' }
+}
+dependencies {
+    compileOnly fileTree(dir: '../libs', include: ['*.aar', '*.jar'])
+    compileOnly 'androidx.core:core-ktx:1.10.1'
+    compileOnly 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.6.4'
+    compileOnly 'com.alibaba:fastjson:1.2.83'
+}
+apply from: 'dependencies.gradle'

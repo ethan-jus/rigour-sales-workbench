@@ -6,14 +6,13 @@ export type AppEnvironment = {
   redirectUri: string
 }
 
-// DEV reaches the main IDEA Gateway/IAM through ADB reverse.
-// Production must use HTTPS and a company-signed App callback.
+// Standalone Android package uses the production HTTPS gateway and dedicated native client.
 export const appEnvironment: AppEnvironment = {
-  environment: 'development',
-  gatewayOrigin: 'http://localhost:26880',
-  issuer: 'http://localhost:26881',
-  clientId: 'rigour-sales-app-android-dev',
-  redirectUri: 'uniappx://rigour-sales/auth/callback'
+  environment: 'production',
+  gatewayOrigin: 'https://scm.wpbsaedu.cn',
+  issuer: 'https://scm.wpbsaedu.cn/auth',
+  clientId: 'rigour-sales-app-android',
+  redirectUri: 'com.rigour.workbench://auth/callback'
 }
 
 export function serviceOrigin(value: string): string {

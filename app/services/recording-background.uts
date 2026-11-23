@@ -1,0 +1,13 @@
+// #ifdef APP-ANDROID
+import { startVisitRecordingService, stopVisitRecordingService } from '../uni_modules/rigour-recording-service'
+// #endif
+export function retainVisitRecording(): void {
+  // #ifdef APP-ANDROID
+  startVisitRecordingService()
+  // #endif
+}
+export function releaseVisitRecording(): void {
+  // #ifdef APP-ANDROID
+  stopVisitRecordingService()
+  // #endif
+}

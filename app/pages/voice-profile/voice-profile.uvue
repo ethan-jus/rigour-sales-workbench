@@ -1,0 +1,98 @@
+<template>
+  <scroll-view class="sw-page" direction="vertical"><view class="me-content">
+    <template v-if="!editing">
+      <view class="voice-status"><image class="voice-symbol" src="/static/profile/mic.svg" /><text class="me-title">{{ loading ? '读取登记状态…' : profile?.registered == true ? '声音已登记' : profile == null ? '暂时无法读取' : '尚未登记声音' }}</text><text class="me-note">{{ profile?.employeeName ?? '' }}</text></view>
+      <text class="me-note">登记后，公司拜访录音中识别到你的声音时，会显示你的姓名。</text>
+      <view class="me-panel"><text class="me-label">仅用于本公司拜访录音身份识别</text><text class="me-note me-spacer">由本人在安静环境中录制20–30秒。你可以随时重新登记或删除。</text></view>
+      <button v-if="profile != null" class="me-primary" :disabled="loading || busy" @click="begin">{{ profile!.registered ? '重新登记声音' : '开始声音登记' }}</button>
+      <button v-if="profile?.registered == true" class="sw-text-button me-spacer" :disabled="busy" @click="remove">删除声音登记</button>
+      <button v-if="profile == null && !loading" class="me-secondary" @click="load">重新加载</button>
+    </template>
+    <template v-else>
+      <text class="me-title">{{ sample.length > 0 ? '确认这段声音' : active ? '请自然朗读' : '登记前，请先确认' }}</text>
+      <text class="me-note">{{ sample.length > 0 ? '录音已保存在本机，确认后上传登记。' : '仅由你一个人说话，避免背景音乐和他人声音。' }}</text>
+      <view v-if="sample.length == 0" class="me-panel"><text class="voice-reading">您好，我是{{ profile?.employeeName ?? '' }}。今天到店了解一下经营情况，您店里目前有多少张球台？平时客人主要在什么时间过来？我们可以围绕门店推广、零售商品和经营服务，结合您的需要一起沟通。有合适的方案，我会再联系您。</text></view>
+      <text v-if="active || sample.length > 0" class="voice-clock">{{ clock }}</text><text v-if="active || sample.length > 0" class="voice-caption">{{ caption }}</text>
+      <view v-if="!active && sample.length == 0" class="voice-consent" aria-label="同意声音识别用途" @click="toggleConsent"><text class="voice-check">{{ consent ? '✓' : '○' }}</text><text class="voice-consent-text">我同意将本次声音特征用于本公司拜访录音身份识别，可随时删除登记。</text></view>
+      <button v-if="active" class="me-primary" :disabled="stopping" @click="stop">结束录音</button>
+      <button v-else-if="sample.length > 0" class="me-primary" :loading="busy" :disabled="busy" @click="submit">确认登记</button>
+      <button v-else :class="consent ? 'me-primary' : 'me-primary voice-disabled'" :disabled="loading || busy || !consent" @click="start">开始录制</button>
+      <button v-if="sample.length > 0" class="me-secondary" :disabled="busy" @click="resetSample">重新录制</button>
+      <button v-if="!active" class="sw-text-button" :disabled="busy" @click="cancel">取消</button>
+    </template>
+    <text v-if="error.length > 0" class="me-error">{{ error }}</text>
+  </view></scroll-view>
+</template>
+<script setup lang="uts">
+import { createCaptureSession, CaptureSession, CaptureState, CaptureBinding } from '../../services/capture.uts'
+import { crmOwner, crmMessage } from '../../services/crm.uts'
+import { crmRecording } from '../../services/crm-media.uts'
+import { readVoiceProfile, registerVoiceProfile, deleteVoiceProfile, VoiceProfile } from '../../services/voice-profile.uts'
+const editing = ref(false)
+const profile = ref<VoiceProfile | null>(null)
+const loading = ref(false); const busy = ref(false); const consent = ref(false); const error = ref('')
+const sample = ref(''); const phase = ref('idle'); const duration = ref(0); const completed = ref(false)
+let capture: CaptureSession | null = null; let timer = 0; let owner = ''; let visible = true
+const active = computed((): boolean => ['starting', 'recording', 'paused', 'interrupted', 'stopping', 'saving'].includes(phase.value))
+const stopping = computed((): boolean => phase.value == 'stopping' || phase.value == 'saving' || phase.value == 'starting')
+const clock = computed((): string => '00:' + Math.floor(duration.value / 1000).toString().padStart(2, '0'))
+const caption = computed((): string => completed.value ? '声音已登记' : phase.value == 'recording' ? '正在录音 · 最长 30 秒' : sample.value.length > 0 ? '录音完成，确认后登记' : '录制 20–30 秒，只需你一个人说话')
+function resetSample(): void { capture?.dispose(); capture = null; sample.value = ''; phase.value = 'idle'; duration.value = 0; completed.value = false; if (timer != 0) { clearInterval(timer); timer = 0 } }
+function begin(): void { editing.value = true; consent.value = false; error.value = ''; resetSample() }
+function cancel(): void { resetSample(); editing.value = false; consent.value = false }
+function toggleConsent(): void { if (!busy.value && !active.value) consent.value = !consent.value }
+async function load(): Promise<void> {
+  if (loading.value) return
+  const current = crmOwner(); if (owner != current) { profile.value = null; consent.value = false; editing.value = false; resetSample() }; owner = current; loading.value = true; error.value = ''
+  try { const result = await readVoiceProfile(); if (visible && current == crmOwner()) profile.value = result }
+  catch (e) { if (visible) error.value = crmMessage(e) } finally { loading.value = false }
+}
+function update(state: CaptureState): void {
+  if (!visible || owner != crmOwner()) { resetSample(); return }
+  phase.value = state.phase; duration.value = state.activeDurationEstimateMs
+  if (state.phase == 'saved') {
+    if (duration.value < 15000) { resetSample(); error.value = '录音太短，请朗读至少 15 秒'; return }
+    sample.value = state.savedPath
+  }
+  if (['error', 'busy', 'unsupported', 'save-error'].includes(state.phase)) error.value = state.message
+  if (state.phase == 'paused' || state.phase == 'interrupted') { resetSample(); error.value = '录音被中断，请重新录制' }
+}
+function start(): void {
+  if (busy.value || loading.value || active.value || profile.value == null || !consent.value) return
+  if (crmRecording()) { error.value = '请先结束当前拜访录音'; return }
+  resetSample(); error.value = ''; owner = crmOwner()
+  capture = createCaptureSession(update, { owner, captureId: 'voice-profile' } as CaptureBinding, 30000, 0, false)
+  capture!.start()
+  timer = setInterval(() => { if (capture != null) update(capture!.snapshot()) }, 500)
+}
+function stop(): void { capture?.stop() }
+async function submit(): Promise<void> {
+  if (busy.value || profile.value == null || sample.value.length == 0 || !consent.value) return
+  busy.value = true; error.value = ''
+  try { const result = await registerVoiceProfile(sample.value, profile.value!.revision, owner); if (visible && owner == crmOwner()) { profile.value = result; resetSample(); completed.value = true; editing.value = false; consent.value = false } }
+  catch (e) { if (visible) error.value = crmMessage(e) } finally { busy.value = false }
+}
+function remove(): void {
+  if (busy.value || active.value || profile.value == null) return
+  uni.showModal({ title: '删除声音登记？', content: '之后将不再通过这份声音特征识别你的姓名。', confirmText: '删除', success: (answer) => {
+    if (!answer.confirm || profile.value == null || owner != crmOwner()) return
+    busy.value = true; error.value = ''
+    deleteVoiceProfile(profile.value!.revision).then((result: VoiceProfile) => { if (visible && owner == crmOwner()) { profile.value = result; resetSample() } }).catch((e) => { if (visible) error.value = e == null ? '删除未完成，请重试' : crmMessage(e!) }).finally(() => { busy.value = false })
+  } })
+}
+onShow(() => { visible = true; load() })
+onHide(() => { visible = false; resetSample(); editing.value = false; consent.value = false })
+onUnload(() => { visible = false; resetSample(); editing.value = false; consent.value = false })
+</script>
+<style>
+@import '../../styles/profile-ui.css';
+.voice-status { align-items: center; padding: 30px 0; }
+.voice-symbol { width: 36px; height: 36px; }
+.voice-reading { font-size: 16px; line-height: 28px; color: #323a42; }
+.voice-clock { font-size: 42px; font-weight: 600; color: #252a31; text-align: center; margin-top: 20px; }
+.voice-caption { font-size: 13px; color: #626970; text-align: center; margin-top: 8px; margin-bottom: 12px; }
+.voice-consent { flex-direction: row; align-items: center; min-height: 48px; }
+.voice-check { font-size: 24px; color: #c64c1c; margin-right: 12px; }
+.voice-consent-text { flex: 1; font-size: 13px; color: #626970; line-height: 21px; }
+.voice-disabled { background-color: #e6e8eb; color: #787f85; }
+</style>

@@ -1,0 +1,85 @@
+<template>
+  <view class="sw-page i-page">
+    <intake-location-picker v-if="picking" :initial="point" :area="area" @selected="picked" @close="picking = false" />
+    <template v-else-if="choice.length > 0">
+      <view class="i-content"><view class="sw-between"><text class="i-name">{{ choice == 'area' ? '选择地区' : '选择门店分类' }}</text><button class="i-link" @click="choice = ''">返回</button></view><input v-model="choiceKeyword" class="i-field" placeholder="搜索名称" /><button v-if="choiceParent.length > 0" class="i-link" @click="choiceParent = ''; choiceKeyword = ''">返回全部</button></view>
+      <scroll-view class="sw-grow" direction="vertical"><view class="i-content"><view v-for="option in choiceOptions" :key="option.code" class="i-option" @click="choose(option)"><text class="c-text">{{ option.name }}</text></view><text v-if="choiceOptions.length == 0" class="i-caption">没有匹配选项</text></view></scroll-view>
+    </template>
+    <template v-else>
+      <scroll-view class="sw-grow" direction="vertical"><view class="i-content">
+        <text v-if="loading" class="i-caption">正在加载…</text>
+        <view v-if="error.length > 0" class="c-error"><text class="c-error-text">{{ error }}</text><button v-if="!ready" class="i-link" :disabled="loading" @click="load">重新加载</button></view>
+        <template v-if="!editing && lead != null">
+          <text :class="lead!.status == 'REJECTED' ? 'i-tag' : 'i-tag i-tag-blue'">{{ lead!.statusLabel }}</text><text class="i-title">{{ lead!.name }}</text>
+          <view v-if="lead!.reason.length > 0" class="i-notice"><text class="i-notice-text">{{ lead!.reason }}</text></view>
+          <view class="i-fact"><text class="i-fact-label">门店地址</text><text class="c-text sw-grow">{{ lead!.address }}</text></view><view class="i-fact"><text class="i-fact-label">所在地区</text><text class="c-text sw-grow">{{ areaLabel }}</text></view><view class="i-fact"><text class="i-fact-label">门店分类</text><text class="c-text sw-grow">{{ typeLabel }}</text></view><view v-if="phone.length > 0" class="i-fact"><text class="i-fact-label">公开电话</text><text class="c-text sw-grow">{{ phone }}</text></view>
+          <text class="i-caption c-section">资料来源：手动提报</text><text class="i-name c-section">提报进度</text><text class="c-text c-section">{{ lead!.statusLabel }}</text><text class="i-caption">{{ reviewTime }}</text><text class="c-text c-section">提交门店资料</text><text class="i-caption">{{ submitTime }}</text>
+        </template>
+        <template v-if="editing && ready">
+          <text class="i-caption">资料审核通过后进入公海。</text>
+          <text class="i-label">门店名称 *</text><input v-model="name" class="i-field" :disabled="busy" :maxlength="200" placeholder="与门头名称一致" />
+          <text class="i-label">所在地区 *</text><view class="i-selector" @click="openChoice('area')"><text class="c-text sw-grow">{{ areaLabel }}</text><image class="c-arrow" src="/static/home/chevron-right.svg" /></view>
+          <text class="i-label">详细地址 *</text><input v-model="address" class="i-field" :disabled="busy" :maxlength="500" placeholder="道路、门牌号及楼层" />
+          <text class="i-label">门店位置 *</text><view class="i-selector" @click="openLocation"><text class="c-text sw-grow">{{ point == null ? '在地图上确认位置' : point!.address }}</text><image class="c-icon" src="/static/home/map-pin.svg" /></view>
+          <text class="i-label">门店分类 *</text><view class="i-selector" @click="openChoice('type')"><text class="c-text sw-grow">{{ typeLabel }}</text><image class="c-arrow" src="/static/home/chevron-right.svg" /></view>
+          <text class="i-label">公开电话 · 选填</text><input v-model="phone" class="i-field" :disabled="busy" :maxlength="50" placeholder="门店公开联系电话" />
+          <view v-if="lead?.status == 'REJECTED'" class="i-notice"><text class="i-notice-text">退回原因：{{ lead!.reason }}</text></view>
+        </template>
+
+
+      </view></scroll-view>
+      <view v-if="ready" class="i-footer"><button v-if="editing" class="i-primary" :disabled="busy || loading" @click="submit">{{ busy ? '提交中…' : '提交审核' }}</button><button v-else-if="lead?.status == 'REJECTED' && canCreate" class="i-primary" @click="edit">修改后重提</button><button v-else-if="lead?.status == 'APPROVED' && lead!.storeId.length > 0" class="i-primary" @click="openStore">查看门店档案</button><button v-else class="i-primary" @click="back">返回我的提报</button></view>
+    </template>
+  </view>
+</template>
+<script setup lang="uts">
+import { hasPermission } from '../../services/session.uts'
+import { crmOwner, crmMessage, crmTime, CrmArea } from '../../services/crm.uts'
+import { IntakePoint, IntakeType, StoreLead, LeadDraft, intakeContext, intakeTypes, intakeLead, intakeSubmit, intakeResolve, takeIntakeSeed, openIntakeStore } from '../../services/store-intake.uts'
+type Choice = { code: string, name: string, parent: string }
+const id = ref(''); const lead = ref<StoreLead | null>(null); const editing = ref(true); const ready = ref(false); const loading = ref(false); const busy = ref(false); const error = ref(''); const picking = ref(false)
+const name = ref(''); const address = ref(''); const area = ref(''); const type = ref(''); const phone = ref(''); const point = ref<IntakePoint | null>(null)
+const areas = ref<CrmArea[]>([]); const types = ref<IntakeType[]>([]); const choice = ref(''); const choiceParent = ref(''); const choiceKeyword = ref('')
+let account = ''; let generation = 0
+const canCreate = computed((): boolean => hasPermission('crm:lead:create'))
+const areaLabel = computed((): string => areas.value.find((a: CrmArea): boolean => a.code == area.value)?.name ?? (area.value.length > 0 ? area.value : '选择地区'))
+const typeLabel = computed((): string => types.value.find((t: IntakeType): boolean => t.code == type.value)?.name ?? (type.value.length > 0 ? type.value : '选择门店分类'))
+const submitTime = computed((): string => crmTime(lead.value?.submittedAt ?? ''))
+const reviewTime = computed((): string => lead.value?.status == 'PENDING_REVIEW' ? '等待后台审核，审核通过后可认领' : crmTime(lead.value?.reviewedAt ?? ''))
+const options = computed((): Choice[] => choice.value == 'area' ? areas.value.map((a: CrmArea): Choice => ({ code: a.code, name: a.name, parent: a.parent } as Choice)) : types.value.map((t: IntakeType): Choice => ({ code: t.code, name: t.name, parent: t.parent } as Choice)))
+const choiceOptions = computed((): Choice[] => options.value.filter((o: Choice): boolean => choiceKeyword.value.trim().length > 0 ? o.name.includes(choiceKeyword.value.trim()) : o.parent == choiceParent.value).slice(0, 50))
+function current(request: number): boolean { return generation == request && account == crmOwner() }
+async function load(): Promise<void> {
+  const request = ++generation; loading.value = true; error.value = ''; ready.value = false
+  try {
+    if (id.value.length > 0) { const result = await intakeLead(id.value); if (!current(request)) return; lead.value = result; name.value = result.name; address.value = result.address; area.value = result.area; phone.value = result.phone; type.value = result.type; editing.value = false; uni.setNavigationBarTitle({ title: '提报详情' }) }
+    if (canCreate.value) { const ctx = await intakeContext(); const catalog = await intakeTypes(); if (!current(request)) return; areas.value = ctx.areas; types.value = catalog; if (id.value.length == 0 && !catalog.some((t: IntakeType): boolean => t.code == type.value)) type.value = ''; if (ctx.reason.length > 0) throw new Error(ctx.reason) }
+    else if (id.value.length == 0) throw new Error('当前账号没有提报门店权限')
+    if (!current(request)) return; ready.value = true
+  } catch (e) { if (current(request)) error.value = crmMessage(e) } finally { if (current(request)) loading.value = false }
+}
+function openChoice(kind: string): void { if (busy.value) return; error.value = ''; choice.value = kind; choiceParent.value = ''; choiceKeyword.value = '' }
+function choose(option: Choice): void { const hasChildren = options.value.some((o: Choice): boolean => o.parent == option.code); if (hasChildren) { choiceParent.value = option.code; choiceKeyword.value = ''; return }; if (choice.value == 'area') { if (area.value != option.code) point.value = null; area.value = option.code } else type.value = option.code; choice.value = '' }
+function picked(p: IntakePoint): void { point.value = p; area.value = p.area; if (address.value.trim().length == 0) address.value = p.address; picking.value = false }
+function openLocation(): void { if (busy.value) return; if (area.value.length == 0) { error.value = '请先选择所在地区'; return }; choice.value = ''; picking.value = true }
+async function edit(): Promise<void> { const row = lead.value; if (row == null || row.status != 'REJECTED' || busy.value) return; busy.value = true; error.value = ''; const request = generation; try { const p = row.coordinateSystem == 'GCJ02' ? { longitude: row.longitude, latitude: row.latitude, area: row.area, address: row.address } as IntakePoint : await intakeResolve(row.longitude, row.latitude, row.coordinateSystem); if (!current(request)) return; point.value = p; editing.value = true; uni.setNavigationBarTitle({ title: '修改门店提报' }) } catch (e) { if (current(request)) error.value = crmMessage(e) } finally { if (current(request)) busy.value = false } }
+async function submit(): Promise<void> {
+  if (busy.value || !ready.value || !canCreate.value || account != crmOwner()) return
+  error.value = ''
+  if (name.value.trim().length == 0 || address.value.trim().length == 0 || area.value.length == 0 || type.value.length == 0) { error.value = '请填写门店名称、地区、详细地址和分类'; return }
+  const p = point.value; if (p == null || p.area != area.value) { error.value = '请在地图上确认当前地区的门店位置'; return }
+  busy.value = true; const request = generation
+  try { const draft = { name: name.value.trim(), address: address.value.trim(), areaCode: area.value, longitude: p!.longitude, latitude: p!.latitude, coordinateSystem: 'GCJ02', publicPhone: phone.value.trim().length == 0 ? null : phone.value.trim(), storeTypeCode: type.value } as LeadDraft
+    const result = await intakeSubmit(draft, id.value, lead.value?.revision ?? 0); if (!current(request)) return; lead.value = result; id.value = result.id; editing.value = false; uni.setNavigationBarTitle({ title: '提报详情' })
+  } catch (e) { if (current(request)) error.value = crmMessage(e) } finally { if (current(request)) busy.value = false }
+}
+function openStore(): void { if (lead.value != null) openIntakeStore(lead.value!.storeId, 'MINE', false) }
+function back(): void { uni.redirectTo({ url: '/pages/store-leads/store-leads' }) }
+onLoad((params) => { account = crmOwner(); id.value = params['id'] ?? ''; if (id.value.length == 0) { const seed = takeIntakeSeed(); if (seed != null) { name.value = seed.name; address.value = seed.address; area.value = seed.area; phone.value = seed.phone; type.value = 'POI_' + seed.type.split(';')[0]; point.value = { longitude: seed.longitude, latitude: seed.latitude, area: seed.area, address: seed.address } as IntakePoint } }; load() })
+onBackPress((): boolean => { if (picking.value) { picking.value = false; return true }; if (choice.value.length > 0) { choice.value = ''; return true }; return busy.value })
+onUnload(() => { generation++ })
+watch((): string => crmOwner(), (_owner: string) => { generation++; lead.value = null; name.value = ''; address.value = ''; phone.value = ''; point.value = null; picking.value = false; ready.value = false; busy.value = false; loading.value = false; error.value = '账号已变更，请重新进入' })
+</script>
+<style>
+@import '../../styles/store-intake.css';
+</style>

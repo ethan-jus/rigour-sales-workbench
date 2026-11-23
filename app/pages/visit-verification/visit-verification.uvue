@@ -1,0 +1,46 @@
+<template>
+  <view class="sw-page">
+    <scroll-view class="vr-scroll" direction="vertical"><view class="vr-content">
+      <view class="vr-top"><text class="vr-title">{{ storeName }}</text><button class="vr-action" hover-class="sw-pressed" :disabled="loading" @click="load">{{ loading ? '刷新中…' : '刷新' }}</button></view>
+      <text v-if="timeText.length > 0" class="vr-time">{{ timeText }}</text>
+      <view v-if="error.length > 0" class="vr-error"><text class="vr-error-text">{{ error }}</text><button class="vr-action" :disabled="loading" @click="load">重新加载</button></view>
+      <text v-if="loading && result == null" class="vr-loading">正在读取核验结果…</text>
+      <template v-if="result != null">
+        <view class="vr-state"><text :class="symbolClass">{{ symbol }}</text><text class="vr-heading sw-grow">{{ result!.label }}</text></view>
+        <view class="vr-section"><text class="vr-heading">核验说明</text><text class="vr-body vr-reason">{{ result!.reason.length > 0 ? result!.reason : '暂无补充说明' }}</text><text v-if="result!.state == 'ERROR'" class="vr-muted vr-reason">系统处理未完成，请稍后刷新，原始录音已保留。</text></view>
+      </template>
+      <view v-if="capture.length > 0" class="vr-row" hover-class="sw-pressed" @click="evidence"><text class="vr-body">录音与原文</text><text class="vr-value">查看</text><image class="vr-arrow" src="/static/home/chevron-right.svg" /></view>
+      <view v-if="appeals.length > 0" class="vr-form"><text class="vr-heading">申诉记录</text>
+        <view v-for="item in appeals" :key="item.id" class="vr-history"><view class="vr-history-row"><view class="vr-history-dot" /><text class="vr-history-status">{{ item.status }}</text></view><text class="vr-time">{{ item.time }}</text><text class="vr-body vr-reason">{{ item.reason }}</text><text v-if="item.decision.length > 0" class="vr-heading vr-reason">{{ item.decision }}</text><text v-if="item.note.length > 0" class="vr-body vr-reason">{{ item.note }}</text></view>
+      </view>
+    </view></scroll-view>
+    <view v-if="result?.canAppeal == true" class="vr-footer"><view class="vr-footer-inner"><button class="vr-primary" hover-class="sw-pressed" :disabled="loading || error.length > 0" @click="openAppeal">发起申诉</button></view></view>
+  </view>
+</template>
+<script setup lang="uts">
+import { crmOwner, crmMessage } from '../../services/crm.uts'
+import { readVisitVerification, VisitVerification, VisitAppeal } from '../../services/visit-verification.uts'
+const result = ref<VisitVerification | null>(null); const error = ref(''); const loading = ref(false); const capture = ref('')
+const storeName = ref('本次拜访'); const timeText = ref('')
+const appeals = computed((): VisitAppeal[] => result.value?.appeals ?? [] as VisitAppeal[])
+const symbol = computed((): string => result.value?.state == 'PASSED' ? '✓' : result.value?.state == 'FAILED' ? '!' : '·')
+const symbolClass = computed((): string => result.value?.state == 'PASSED' ? 'vr-symbol vr-passed' : result.value?.state == 'FAILED' ? 'vr-symbol vr-failed' : 'vr-symbol')
+let store = ''; let visit = ''; let owner = ''; let disposed = false
+async function load(): Promise<void> {
+  if (loading.value || disposed || store.length == 0 || visit.length == 0) return
+  loading.value = true; error.value = ''; const current = owner
+  try { const value = await readVisitVerification(store, visit); if (!disposed && current == crmOwner()) result.value = value }
+  catch (e) { if (!disposed && current == crmOwner()) error.value = crmMessage(e) } finally { loading.value = false }
+}
+function evidence(): void { uni.navigateTo({ url: '/pages/visit-evidence/visit-evidence?visit=' + encodeURIComponent(capture.value) + '&store=' + encodeURIComponent(storeName.value) + '&time=' + encodeURIComponent(timeText.value) }) }
+function openAppeal(): void {
+  if (loading.value || error.value.length > 0 || result.value?.canAppeal != true) return
+  uni.navigateTo({ url: '/pages/visit-appeal/visit-appeal?store=' + encodeURIComponent(store) + '&visit=' + encodeURIComponent(visit) + '&capture=' + encodeURIComponent(capture.value) + '&name=' + encodeURIComponent(storeName.value) + '&time=' + encodeURIComponent(timeText.value) })
+}
+onLoad((query) => { store = query['store'] ?? ''; visit = query['visit'] ?? ''; capture.value = query['capture'] ?? ''; storeName.value = query['name'] ?? '本次拜访'; timeText.value = query['time'] ?? ''; owner = crmOwner() })
+onShow(() => { if (owner.length > 0 && owner != crmOwner()) { result.value = null; disposed = true; uni.navigateBack(); return }; load() })
+onUnload(() => { disposed = true })
+</script>
+<style>
+@import '../../styles/visit-review.css';
+</style>

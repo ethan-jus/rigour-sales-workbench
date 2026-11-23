@@ -1,0 +1,81 @@
+<template>
+  <view class="sw-page"><scroll-view class="sw-grow" direction="vertical"><view class="c-content">
+    <view v-if="selected == null">
+      <view class="wc-hero"><view class="sw-row"><image class="wc-logo" src="/static/wecom/wecom.png" /><text class="wc-hero-label">我的有效企微联系人</text></view><text class="wc-number">{{ summary?.active ?? '—' }}</text><text class="wc-hero-label">包含已关联和待关联门店的联系人</text></view>
+      <text class="c-muted c-section">{{ summary?.status ?? '正在获取同步状态' }}</text>
+      <view class="wc-metrics"><view class="wc-metric"><text class="c-money">{{ summary?.newly ?? '—' }}</text><text class="c-muted">本月确认新增</text></view><view class="wc-metric" @click="showPending"><text class="c-money">{{ summary?.pending ?? '—' }}</text><text class="c-muted">待关联门店 ›</text></view></view>
+      <text class="c-muted">新增只统计官方确认的新关系，存量、继承及重复添加不计入。</text>
+      <view class="c-tabs c-section"><view class="c-tab" @click="showAll"><text :class="!pending ? 'c-tab-text c-tab-active' : 'c-tab-text'">我的有效关系</text></view><view class="c-tab" @click="showPending"><text :class="pending ? 'c-tab-text c-tab-active' : 'c-tab-text'">待关联门店</text></view></view>
+      <view v-for="person in rows" :key="person.id" class="c-person"><view class="sw-row"><image class="wc-logo" src="/static/wecom/wecom.png" /><text class="c-name sw-grow">{{ person.name }}</text><button v-if="!person.linked && canBind" class="sw-text-button" @click="choose(person)">关联门店</button></view><text class="c-text wc-store-name">{{ person.storeNames }}</text><text class="c-muted">{{ person.relationText }}</text></view>
+      <text v-if="!loading && error.length == 0 && rows.length == 0" class="c-muted c-section">暂无企微联系人</text><button v-if="cursor.length > 0" class="sw-text-button" :disabled="loading" @click="more">加载更多</button>
+    </view>
+    <view v-else>
+      <view class="sw-between"><text class="c-heading">关联门店联系人</text><button class="sw-text-button" :disabled="busy" @click="cancel">取消</button></view><text class="c-text c-section">{{ selected?.name }}</text>
+      <template v-if="target == null"><view class="sw-row c-section"><input class="wc-input sw-grow" v-model="keyword" placeholder="搜索我的门店" /><button class="sw-text-button" :disabled="busy" @click="search">搜索</button></view><view v-for="store in stores" :key="store.id" class="c-list-row" @click="selectStore(store)"><text class="c-name">{{ store.name }}</text><text class="c-muted">{{ store.displayAddress }}</text></view><button v-if="storeCursor.length > 0" class="sw-text-button" :disabled="busy" @click="moreStores">更多门店</button></template>
+      <view v-else><view class="sw-between c-section"><text class="c-name sw-grow">{{ target?.name }}</text><button class="sw-text-button" :disabled="busy" @click="changeStore">更换</button></view>
+        <template v-if="selected?.contactId.length == 0"><view class="c-tabs c-section"><view class="c-tab" @click="createMode"><text :class="create ? 'c-tab-text c-tab-active' : 'c-tab-text'">新增联系人</text></view><view class="c-tab" @click="existingMode"><text :class="!create ? 'c-tab-text c-tab-active' : 'c-tab-text'">绑定已有联系人</text></view></view><input v-if="create" class="wc-input c-section" v-model="name" placeholder="姓名或称呼" maxlength="100" /><view v-else><view v-for="person in contacts" :key="person.id" class="c-list-row" @click="pickContact(person)"><text class="c-text">{{ person.id == contactId ? '✓ ' : '' }}{{ person.name }} · {{ person.role }}</text></view><text v-if="contacts.length == 0" class="c-muted c-section">这家门店暂无有效联系人</text></view></template>
+        <input class="wc-input c-section" v-model="role" placeholder="本店角色，例如店长、采购" maxlength="50" /><textarea class="wc-input wc-reason c-section" v-model="reason" placeholder="关联依据，例如已向本人确认门店和身份" maxlength="500" />
+        <view class="sw-row c-section"><switch :checked="confirmed" @change="confirmChange" /><text class="c-muted sw-grow">已确认门店关系；绑定已有联系人时，已确认是同一人。</text></view><button class="wc-save c-section" :disabled="busy || !confirmed" :loading="busy" @click="save">确认关联</button>
+      </view>
+    </view>
+    <view v-if="error.length > 0" class="c-error"><text class="c-error-text">{{ error }}</text></view><button v-if="selected == null" class="sw-text-button c-section" :disabled="loading" @click="refresh">{{ loading ? '加载中…' : '刷新' }}</button>
+  </view></scroll-view></view>
+</template>
+<script setup lang="uts">
+import { crmOwner, crmMessage, crmList, crmContacts, CrmStore, CrmContact } from '../../services/crm.uts'
+import { hasPermission } from '../../services/session.uts'
+import { wecomSummary, wecomPeople, wecomBind, WecomSummary, WecomPerson } from '../../services/wecom.uts'
+const summary = ref<WecomSummary | null>(null); const rows = ref<WecomPerson[]>([]); const cursor = ref(''); const pending = ref(false)
+const loading = ref(false); const busy = ref(false); const error = ref(''); const selected = ref<WecomPerson | null>(null)
+const keyword = ref(''); const stores = ref<CrmStore[]>([]); const storeCursor = ref(''); const target = ref<CrmStore | null>(null); const contacts = ref<CrmContact[]>([])
+const create = ref(true); const contactId = ref(''); const name = ref(''); const role = ref(''); const reason = ref(''); const confirmed = ref(false)
+const canBind = computed((): boolean => hasPermission('crm:store:visit-write'))
+let generation = 0; let owner = ''; let visible = false
+async function load(append: boolean): Promise<void> {
+  const request = ++generation; loading.value = true; error.value = ''
+  if (!append) { rows.value = []; cursor.value = ''; summary.value = null }
+  try { const stats = await wecomSummary(); const page = await wecomPeople(pending.value, append ? cursor.value : ''); if (request != generation) return; summary.value = stats; rows.value = append ? rows.value.concat(page.items) : page.items; cursor.value = page.cursor }
+  catch (e) { if (request == generation) error.value = crmMessage(e) } finally { if (request == generation) loading.value = false }
+}
+function refresh(): void { load(false) }
+function more(): void { if (!loading.value) load(true) }
+function showAll(): void { if (loading.value) return; pending.value = false; refresh() }
+function showPending(): void { if (loading.value) return; pending.value = true; refresh() }
+async function loadStores(append: boolean): Promise<void> { const request = ++generation; busy.value = true; error.value = ''; try { const result = await crmList('MINE', keyword.value, append ? storeCursor.value : ''); if (request != generation) return; stores.value = append ? stores.value.concat(result.items) : result.items; storeCursor.value = result.cursor } catch (e) { if (request == generation) error.value = crmMessage(e) } finally { if (request == generation) busy.value = false } }
+function search(): void { if (!busy.value) loadStores(false) }
+function moreStores(): void { if (!busy.value) loadStores(true) }
+function choose(person: WecomPerson): void { generation++; selected.value = person; target.value = null; keyword.value = ''; stores.value = []; storeCursor.value = ''; create.value = true; contactId.value = person.contactId; name.value = person.name; role.value = ''; reason.value = ''; confirmed.value = false; error.value = ''; loadStores(false) }
+async function selectStore(store: CrmStore): Promise<void> { if (busy.value) return; const request = ++generation; busy.value = true; error.value = ''; try { const result = await crmContacts(store.id); if (request != generation) return; contacts.value = result.filter((p: CrmContact): boolean => p.status == 'ACTIVE'); target.value = store; confirmed.value = false } catch (e) { if (request == generation) error.value = crmMessage(e) } finally { if (request == generation) busy.value = false } }
+function changeStore(): void { target.value = null; contactId.value = selected.value?.contactId ?? ''; confirmed.value = false }
+function createMode(): void { create.value = true; contactId.value = ''; confirmed.value = false }
+function existingMode(): void { create.value = false; contactId.value = ''; confirmed.value = false }
+function pickContact(person: CrmContact): void { contactId.value = person.id; role.value = person.role; confirmed.value = false }
+function confirmChange(event: UniSwitchChangeEvent): void { confirmed.value = event.detail.value }
+function cancel(): void { if (busy.value) return; generation++; selected.value = null; error.value = ''; refresh() }
+async function save(): Promise<void> {
+  if (busy.value || !confirmed.value) return
+  const person = selected.value; const store = target.value
+  if (person == null || store == null) return
+  if (role.value.trim().length == 0 || reason.value.trim().length == 0 || (create.value && name.value.trim().length == 0) || (!create.value && contactId.value.length == 0)) { error.value = '请补全联系人、角色和关联依据'; return }
+  const request = ++generation; busy.value = true; error.value = ''
+  try { await wecomBind(person.id, store.id, contactId.value, name.value.trim(), role.value.trim(), reason.value.trim()); if (request != generation) return; selected.value = null; busy.value = false; uni.showToast({ title: '已关联门店联系人', icon: 'success' }); refresh() }
+  catch (e) { if (request == generation) error.value = crmMessage(e) } finally { if (request == generation) busy.value = false }
+}
+onShow(() => { visible = true; const next = crmOwner(); if (owner != next) { owner = next; selected.value = null; summary.value = null; rows.value = []; busy.value = false }; if (selected.value == null) refresh() })
+onHide(() => { visible = false; generation++; loading.value = false; busy.value = false })
+onUnload(() => { visible = false; generation++ })
+watch((): string => crmOwner(), (_value: string) => { generation++; selected.value = null; summary.value = null; rows.value = []; cursor.value = ''; error.value = ''; if (visible) refresh() })
+</script>
+<style>
+@import '../../styles/customers.css';
+.wc-logo { width: 20px; height: 20px; margin-right: 7px; }
+.wc-hero { background-color: #fff2e9; border-radius: 16px; padding: 20px; }
+.wc-hero-label { color: #735541; font-size: 13px; line-height: 21px; }
+.wc-number { font-size: 42px; color: #ea5d22; font-weight: bold; margin-top: 12px; margin-bottom: 10px; }
+.wc-metrics { flex-direction: row; padding-top: 20px; padding-bottom: 20px; }
+.wc-metric { flex: 1; }
+.wc-store-name { margin-top: 10px; margin-bottom: 6px; }
+.wc-input { border-radius: 8px; padding: 12px; background-color: #f5f6f8; font-size: 15px; color: #212835; }
+.wc-reason { height: 100px; }
+.wc-save { color: #ffffff; background-color: #ed6b27; font-size: 16px; border-radius: 12px; }
+</style>

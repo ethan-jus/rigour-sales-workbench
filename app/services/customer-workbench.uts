@@ -1,6 +1,6 @@
-import { crmCall, crmObject, crmDisplayRead, crmValidateCount, crmValidatePage, crmTime, CrmStore } from './crm.uts'
+import { crmCall, crmObject, crmDisplayRead, crmValidateCount, crmValidatePage, crmTime, crmVisitStatus, crmStorePhase, CrmStore } from './crm.uts'
 import { readCustomerSnapshot } from './customer-cache.uts'
-import { workbenchMoney } from './workbench.uts'
+import { workbenchMoney, requestWorkbench } from './workbench.uts'
 
 export type CustomerRow = { distanceText: string, nearLongitude: number | null, nearLatitude: number | null, nearCoordinateSystem: string, id: string, name: string, address: string, relation: string, tag: string, meta: string, deadline: string, blocked: string, claimLabel: string, revision: number, source: string }
 export type CustomerPage = { total: number, items: CustomerRow[], cursor: string }
@@ -21,13 +21,41 @@ export function customerPeriodQuery(from: string, to: string): string { return '
 export function customerDate(value: string): string { const time = crmTime(value); return time == '暂无' ? '待核实' : time.substring(0, 5).replace('-', '/') }
 export function customerStoreRow(s: CrmStore): CustomerRow {
   const privateStore = s.pool == 'PRIVATE'
-  const phase = s.phase == 'FIRST_VISIT' ? '待首访' : s.phase == 'FOLLOW_UP' ? '跟进中' : '维护中'
-  return { distanceText: '距离未知', nearLongitude: s.longitude, nearLatitude: s.latitude, nearCoordinateSystem: s.coordinateSystem, id: s.id, name: s.name, address: s.displayAddress, relation: privateStore ? 'MINE' : 'PUBLIC', tag: privateStore ? phase : '', meta: privateStore ? (s.lastVisit.length > 0 ? '有效拜访' + customerDate(s.lastVisit) : '暂无有效拜访') : (s.businessStatus == 'OPEN' ? '正常营业' : '经营待核实'), deadline: privateStore ? (s.holdReason.length > 0 ? '保护保留' : '保护至' + customerDate(s.deadline)) : '', blocked: privateStore ? '' : s.claimBlocked == '本人冷却中' && s.cooldown.length > 0 ? crmTime(s.cooldown) + '可认领' : s.claimBlocked, claimLabel: s.claimBlocked == '本人冷却中' ? '冷却中' : s.claimBlocked.length > 0 ? '不可认领' : '认领', revision: s.revision, source: privateStore ? 'MINE' : 'PUBLIC' } as CustomerRow
+  const phase = crmStorePhase(s)
+  const submitted = s.lastSubmittedVisit.length > 0
+  const status = crmVisitStatus(s.lastSubmittedVisitStatus)
+  const visitText = submitted ? '最近拜访 ' + customerDate(s.lastSubmittedVisit) + ' · ' + status : s.lastVisit.length > 0 ? '有效拜访 ' + customerDate(s.lastVisit) : '尚未拜访'
+  return { distanceText: '距离未知', nearLongitude: s.longitude, nearLatitude: s.latitude, nearCoordinateSystem: s.coordinateSystem, id: s.id, name: s.name, address: s.displayAddress, relation: privateStore ? 'MINE' : 'PUBLIC', tag: privateStore ? phase : '', meta: privateStore ? visitText : (s.businessStatus == 'OPEN' ? '正常营业' : '经营待核实'), deadline: privateStore ? (s.holdReason.length > 0 ? '保护保留' : '保护至' + customerDate(s.deadline)) : '', blocked: privateStore ? '' : s.claimBlocked == '本人冷却中' && s.cooldown.length > 0 ? crmTime(s.cooldown) + '可认领' : s.claimBlocked, claimLabel: s.claimBlocked == '本人冷却中' ? '冷却中' : s.claimBlocked.length > 0 ? '不可认领' : '认领', revision: s.revision, source: privateStore ? 'MINE' : 'PUBLIC' } as CustomerRow
 }
 export function customerHistoryRow(row: UTSJSONObject): CustomerRow {
   const relation = row.getString('relation') ?? ''
   const last = row.getString('lastOrderAt') ?? ''
   return { distanceText: '距离未知', nearLongitude: null, nearLatitude: null, nearCoordinateSystem: '', id: row.getString('id') ?? '', name: row.getString('name') ?? '', address: row.getString('address') ?? '', relation: relation, tag: relation == 'MINE' ? '我的私海' : relation == 'PUBLIC' ? '公海' : '已转交', meta: last.length == 0 ? '' : '上次下单' + customerDate(last) + ' · 向我下单' + customerCount(row, 'orderCount') + '笔', deadline: '', blocked: '', claimLabel: '', revision: 0, source: 'HISTORY' } as CustomerRow
+}
+function tradeRequest(endpoint: string, from: string, to: string, suffix: string): Promise<UTSJSONObject> {
+  return new Promise<UTSJSONObject>((resolve, reject) => {
+    requestWorkbench(endpoint, from, to, suffix, (data: UTSJSONObject) => { resolve(data) }, (message: string) => { reject(new Error(message)) })
+  })
+}
+export async function customerTradeSummary(from: string, to: string): Promise<UTSJSONObject> {
+  const data = await tradeRequest('customer-summary', from, to, '')
+  for (const key of ['purchasing', 'newCooperation', 'returning', 'cooperated']) crmValidateCount(data, key)
+  return data
+}
+async function tradeCustomers(kind: string, from: string, to: string, keyword: string, cursor: string): Promise<CustomerPage> {
+  const begin = cursor.length == 0 ? 0 : parseInt(cursor)
+  const data = await tradeRequest('customers', from, to, '&kind=' + encodeURIComponent(kind) + '&keyword=' + encodeURIComponent(keyword) + '&begin=' + begin.toString() + '&step=20')
+  crmValidateCount(data, 'total')
+  const total = data.getNumber('total')!; const rows = data.getArray<UTSJSONObject>('items')
+  if (rows == null) throw new Error('客户统计数据不完整')
+  const items = rows!.map((row: UTSJSONObject): CustomerRow => {
+    const key = row.getString('key') ?? ''; const name = row.getString('name') ?? ''
+    if (!/^[CS][1-9][0-9]{0,18}$/.test(key) || name.length == 0) throw new Error('客户统计数据不完整')
+    crmValidateCount(row, 'orderCount')
+    return { distanceText: '', nearLongitude: null, nearLatitude: null, nearCoordinateSystem: '', id: key, name: name, address: '', relation: '', tag: '', meta: '最近下单 ' + customerDate(row.getString('lastOrderAt') ?? '') + ' · 累计 ' + customerCount(row, 'orderCount') + '笔', deadline: '', blocked: '', claimLabel: '', revision: 0, source: 'ORDER' } as CustomerRow
+  })
+  const next = begin + items.length
+  return { total: total, items: items, cursor: next < total ? next.toString() : '' } as CustomerPage
 }
 function summaryPath(from: string, to: string): string { return '/crm/customer-workbench/overview?' + customerPeriodQuery(from, to) }
 export function customerSummarySnapshot(from: string, to: string): UTSJSONObject | null { return readCustomerSnapshot(summaryPath(from, to)) }
@@ -55,10 +83,12 @@ function listPage(data: UTSJSONObject, kind: string): CustomerPage {
   }), cursor: data.getString('nextCursor') ?? '' } as CustomerPage
 }
 export function customerListSnapshot(kind: string, from: string, to: string, keyword: string, relation: string): CustomerPage | null {
+  if (['PURCHASING', 'NEW', 'RETURNING', 'COOPERATED'].includes(kind)) return null
   const data = readCustomerSnapshot(listPath(kind, from, to, keyword, relation, ''))
   return data == null ? null : listPage(data, kind)
 }
 export async function customerList(kind: string, from: string, to: string, keyword: string, relation: string, cursor: string): Promise<CustomerPage> {
+  if (['PURCHASING', 'NEW', 'RETURNING', 'COOPERATED'].includes(kind)) return await tradeCustomers(kind, from, to, keyword, cursor)
   return listPage(await crmDisplayRead(listPath(kind, from, to, keyword, relation, cursor), (data: UTSJSONObject) => { crmValidatePage(data) }), kind)
 }
 export async function customerPeople(newly: boolean, from: string, to: string, keyword: string, cursor: string): Promise<CustomerPeople> {
@@ -77,5 +107,6 @@ export async function customerOrders(store: string, cursor: string = ''): Promis
   return { total: data.getNumber('total') ?? 0, amount: workbenchMoney(data.getNumber('amount')), items: rows.map((row: UTSJSONObject): CustomerOrder => ({ id: row.getString('id') ?? '', time: crmTime(row.getString('effectiveAt') ?? ''), amount: workbenchMoney(row.getNumber('amount')) } as CustomerOrder)), cursor: data.getString('nextCursor') ?? '' } as CustomerOrders
 }
 export function customerOpen(row: CustomerRow): void {
+  if (row.source == 'ORDER') { uni.navigateTo({ url: '/pages/workbench-details/workbench-details?customerKey=' + encodeURIComponent(row.id) + '&name=' + encodeURIComponent(row.name) }); return }
   uni.navigateTo({ url: '/pages/customer-detail/customer-detail?id=' + encodeURIComponent(row.id) + '&source=' + row.source + '&relation=' + row.relation + '&name=' + encodeURIComponent(row.name) + '&address=' + encodeURIComponent(row.address) })
 }

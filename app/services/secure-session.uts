@@ -1,5 +1,10 @@
 import { appEnvironment } from './config.uts'
+// #ifdef APP-IOS
+import { readSecurePayload, writeSecurePayload, clearSecurePayload } from '../uni_modules/rigour-session-keychain'
+// #endif
+// #ifndef APP-IOS
 import { secureStorageSupported, readSecurePayload, writeSecurePayload, clearSecurePayload } from './secure-storage.uts'
+// #endif
 
 export type StoredSession = {
   refreshToken: string, issuer: string, clientId: string, userId: string, tenantId: string
@@ -13,7 +18,14 @@ function validSession(value: StoredSession, issuer: string, clientId: string): b
   return value.refreshToken.length > 0 && value.issuer == issuer && value.clientId == clientId
     && value.userId.length > 0 && value.tenantId.length > 0
 }
-export function secureSessionSupported(): boolean { return secureStorageSupported() }
+export function secureSessionSupported(): boolean {
+  // #ifdef APP-IOS
+  return true
+  // #endif
+  // #ifndef APP-IOS
+  return secureStorageSupported()
+  // #endif
+}
 export function readSecureSession(success: (value: StoredSession | null) => void, fail: (message: string) => void): void {
   const issuer = appEnvironment.issuer; const clientId = appEnvironment.clientId
   readSecurePayload(namespace(), (raw: string | null) => {

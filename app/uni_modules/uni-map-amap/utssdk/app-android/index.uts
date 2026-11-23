@@ -5,6 +5,8 @@ import INodeData from "io.dcloud.uniapp.interfaces.INodeData"
 // #endif
 import View from 'android.view.View';
 import WeakReference from 'java.lang.ref.WeakReference';
+import CoordinateConverter from 'com.amap.api.maps.CoordinateConverter';
+import LatLng from 'com.amap.api.maps.model.LatLng';
 import type { AmapMarker, AmapAnchor, AmapMapMarkerCallout, AmapMapMarkerLabel, AmapLocationObject, Polyline, Polygon, Circle, Control, AmapContext, CreateAmapContext, MapContextFail, MapContextGetCenterLocationOptions, MapContextMoveToLocationOptions, MapContextTranslateMarkerOptions, MapContextIncludePointsOptions, MapContextGetRegionOptions, MapContextGetRegionResult, MapContextGetScaleOptions, MapContextGetScaleResult as AmapGetScaleResult, MapContextAddGroundOverlayOptions, MapContextAddMarkersOptions, MapContextMoveAlongOptions, MapContextRemoveGroundOverlayOptions, MapContextRemoveMarkersOptions, MapContextUpdateGroundOverlayOptions } from "../interface";
 import { MapContextFailImpl, getErrcode } from "../unierror";
 import { MarkerModel, CalloutModel, LabelModel } from "uts.sdk.modules.uniMapAmap.marker";
@@ -15,6 +17,14 @@ import { ControlModel, ControlPosition } from "uts.sdk.modules.uniMapAmap.contro
 import { IncludePointModel } from "uts.sdk.modules.uniMapAmap.includepoint";
 import { LatLngModel } from "uts.sdk.modules.uniMapAmap.latlng"
 import { GroundModel } from "uts.sdk.modules.uniMapAmap.ground";
+
+export function convertGpsMapPoint(latitude: number, longitude: number): AmapLocationObject | null {
+	const context = UTSAndroid.getAppContext()
+	if (context == null) return null
+	const point = new CoordinateConverter(context).from(CoordinateConverter.CoordType.GPS)
+		.coord(new LatLng(latitude.toDouble(), longitude.toDouble())).convert()
+	return point == null ? null : { latitude: point.latitude, longitude: point.longitude } as AmapLocationObject
+}
 
 // 重新导出类型，供外部使用
 export {

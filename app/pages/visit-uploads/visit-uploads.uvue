@@ -1,0 +1,27 @@
+<template>
+  <scroll-view class="sw-page" direction="vertical"><view class="me-content">
+    <view class="sync-heading"><image class="sync-icon" src="/static/profile/sync.svg" /><text class="me-title">{{ crmUploadState.busy ? '正在同步材料' : crmUploadState.pending > 0 ? '有材料待同步' : '材料已同步' }}</text><text class="me-note">{{ crmUploadState.pending > 0 ? crmUploadState.pending.toString() + ' 次拜访的材料等待完成' : '当前账号在本机没有待同步材料' }}</text></view>
+    <view class="me-panel"><text class="me-label">{{ crmUploadState.pending > 0 ? '材料保留在本机' : '同步完成后，继续查看拜访结果' }}</text><text class="me-note me-spacer">{{ crmUploadState.pending > 0 ? '保持网络连接和应用打开，完成同步前请勿卸载应用或清除数据。' : '材料同步不代表拜访已提交或核验通过，请以对应拜访的最终状态为准。' }}</text></view>
+    <text v-if="message.length > 0" class="me-note me-spacer">{{ message }}</text>
+    <button v-if="crmUploadState.pending > 0" class="me-primary" :disabled="busy || crmUploadState.busy" :loading="busy || crmUploadState.busy" @click="retry">{{ busy || crmUploadState.busy ? '正在同步…' : '重新同步' }}</button>
+    <button v-else class="me-secondary" @click="openHistory">查看拜访记录</button>
+    <button class="sw-text-button me-spacer" @click="help">同步遇到问题</button>
+  </view></scroll-view>
+</template>
+<script setup lang="uts">
+import { crmUploadState, crmRunUploadQueue, resumeCrmUploadQueue } from '../../services/crm-media.uts'
+import { crmMessage } from '../../services/crm.uts'
+import { visitToday } from '../../services/visits.uts'
+import { showVisitRecords } from '../../services/visit-workbench.uts'
+import { requireSession } from '../../services/session.uts'
+const busy = ref(false); const message = ref('')
+async function retry(): Promise<void> { if (busy.value) return; busy.value = true; message.value = ''; try { await crmRunUploadQueue(); message.value = crmUploadState.message } catch (e) { message.value = crmMessage(e) } finally { busy.value = false } }
+function help(): void { uni.navigateTo({ url: '/pages/profile-help/profile-help?view=sync' }) }
+function openHistory(): void { const today = visitToday(); showVisitRecords(today.substring(0,4) + '-01-01', today, 'all') }
+onShow(() => { if (requireSession()) { resumeCrmUploadQueue(); message.value = crmUploadState.message } })
+</script>
+<style>
+@import '../../styles/profile-ui.css';
+.sync-heading { align-items: center; padding: 36px 0 16px; }
+.sync-icon { width: 36px; height: 36px; }
+</style>

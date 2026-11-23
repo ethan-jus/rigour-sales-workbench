@@ -1,0 +1,152 @@
+{
+  "_notice": "仅设计原型数据，不是线上字典种子。已有编码沿用；DEMO_ 编码仅用于交互演示，实施前解析租户有效字典及 canonical 别名，禁止直接写入业务库。",
+  "CRM_STORE_BUSINESS_STATUS": [
+    {
+      "code": "OPEN",
+      "name": "营业中"
+    },
+    {
+      "code": "TEMP_CLOSED",
+      "name": "暂时停业"
+    },
+    {
+      "code": "CLOSED",
+      "name": "已停业"
+    },
+    {
+      "code": "UNKNOWN",
+      "name": "待核实"
+    }
+  ],
+  "STORE_BUSINESS_TYPE": [
+    {
+      "code": "DEMO_ENTERTAINMENT",
+      "name": "商业娱乐",
+      "description": "以日常付费娱乐、休闲消费为主"
+    },
+    {
+      "code": "DEMO_COMPETITION",
+      "name": "竞技赛事",
+      "description": "以训练、比赛及赛事组织为主"
+    },
+    {
+      "code": "DEMO_EDUCATION",
+      "name": "培训教育",
+      "description": "以课程教学、教练培训为主"
+    },
+    {
+      "code": "DEMO_MIXED",
+      "name": "综合经营",
+      "description": "两种及以上业务并重，无明显主业"
+    },
+    {
+      "code": "DEMO_OTHER",
+      "name": "其他"
+    },
+    {
+      "code": "DEMO_UNVERIFIED",
+      "name": "暂未核实",
+      "description": "先保留原资料，不猜测经营类型"
+    }
+  ],
+  "BUSINESS_LINE": [
+    {
+      "code": "DEMO_AMAP",
+      "name": "高德"
+    },
+    {
+      "code": "DEMO_RETAIL",
+      "name": "零售"
+    },
+    {
+      "code": "DEMO_ACCESSORIES",
+      "name": "周边"
+    },
+    {
+      "code": "DEMO_HAWKEYE",
+      "name": "鹰眼"
+    }
+  ],
+  "CUSTOMER_INTENTION_LEVEL": [
+    {
+      "code": "HIGH",
+      "name": "高意向"
+    },
+    {
+      "code": "MEDIUM",
+      "name": "中意向"
+    },
+    {
+      "code": "LOW",
+      "name": "低意向"
+    },
+    {
+      "code": "NONE",
+      "name": "暂无意向"
+    }
+  ],
+  "CUSTOMER_COOP_STATUS": [
+    {
+      "code": "DEMO_COOPERATED",
+      "name": "已合作"
+    }
+  ],
+  "VISIT_CONTACT_OUTCOME": [
+    {
+      "code": "CONTACTED",
+      "name": "已沟通"
+    },
+    {
+      "code": "OTHER_NO_CONTACT",
+      "name": "未接触"
+    }
+  ],
+  "VISIT_NO_CONTACT_REASON": [
+    {
+      "code": "DEMO_NOT_PRESENT",
+      "name": "负责人不在"
+    },
+    {
+      "code": "DEMO_NOT_OPEN_YET",
+      "name": "未到营业时间"
+    },
+    {
+      "code": "DEMO_TEMP_CLOSED",
+      "name": "门店暂时停业"
+    },
+    {
+      "code": "DEMO_DECLINED",
+      "name": "对方暂不接待"
+    },
+    {
+      "code": "DEMO_OTHER",
+      "name": "其他原因"
+    }
+  ],
+  "VISIT_NEXT_ACTION": [
+    {
+      "code": "DEMO_PROPOSAL",
+      "name": "发送方案"
+    },
+    {
+      "code": "DEMO_QUOTE",
+      "name": "提供报价"
+    },
+    {
+      "code": "DEMO_TRIAL",
+      "name": "安排体验"
+    },
+    {
+      "code": "DEMO_REVISIT",
+      "name": "再次到店"
+    },
+    {
+      "code": "DEMO_SERVICE",
+      "name": "合作回访"
+    },
+    {
+      "code": "DEMO_OTHER",
+      "name": "其他安排"
+    }
+  ]
+}

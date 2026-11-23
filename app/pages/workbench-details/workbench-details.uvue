@@ -7,7 +7,7 @@
       <view v-for="row in rows" :key="row.id" class="detail-row" @click="open(row)">
         <view class="sw-grow"><text class="sw-body detail-name">{{ row.name }}</text><text v-if="row.time.length > 0" class="sw-caption detail-meta">{{ row.time }}</text><text v-if="row.number.length > 0" class="sw-caption">{{ row.number }}</text></view>
         <view class="detail-right"><text v-if="row.amount.length > 0" class="detail-money">¥{{ row.amount }}</text><text class="sw-caption">{{ row.status }}</text></view>
-        <image v-if="kind != 'plans' || row.target.length > 0" class="detail-chevron" src="/static/home/chevron-right.svg" />
+        <image class="detail-chevron" src="/static/home/chevron-right.svg" />
       </view>
       <view v-if="error.length > 0" class="sw-error-panel detail-feedback"><text class="sw-error">{{ error }}</text><button class="sw-text-button" @click="load(false)">重试</button></view>
       <text v-else-if="loading" class="sw-secondary detail-feedback">加载中…</text>
@@ -18,11 +18,11 @@
 </template>
 <script setup lang="uts">
 import { requireSession, hasPermission } from '../../services/session.uts'
-import { requestSalesApi } from '../../services/sales-profile.uts'
-import { visitToday, visitReadKey, parseVisitItem, visitReview } from '../../services/visits.uts'
+import { visitToday, visitReadKey } from '../../services/visits.uts'
 import { requestWorkbench, parseWorkbenchRow, workbenchMoney } from '../../services/workbench.uts'
 import { commerce } from '../../services/commerce.uts'
 type DetailRow = { id: string, target: string, name: string, time: string, number: string, amount: string, status: string }
+const customerKey = ref('')
 const kind = ref('orders')
 const from = ref(visitToday())
 const to = ref(visitToday())
@@ -35,9 +35,8 @@ const loaded = ref(false)
 const error = ref('')
 let version = 0
 let visible = false
-const isVisit = computed((): boolean => kind.value == 'all' || kind.value == 'effective' || kind.value == 'first')
-const periodLabel = computed((): string => kind.value == 'unpaid' || kind.value == 'outbound' ? '全部待处理' : from.value == to.value ? from.value : from.value + ' — ' + to.value)
-const totalLabel = computed((): string => loaded.value ? total.value.toString() + (kind.value == 'plans' ? '项' : isVisit.value ? '条记录' : '笔') : '—')
+const periodLabel = computed((): string => customerKey.value.length > 0 ? '累计有效成交' : kind.value == 'unpaid' || kind.value == 'outbound' ? '全部待处理' : from.value == to.value ? from.value : from.value + ' — ' + to.value)
+const totalLabel = computed((): string => loaded.value ? total.value.toString() + '笔' : '—')
 function load(append: boolean): void {
   if (!requireSession() || (append && loading.value)) return
   const request = ++version; const owner = visitReadKey()
@@ -51,49 +50,24 @@ function load(append: boolean): void {
     if (items == null || count == null) { error.value = '明细数据格式异常'; return }
     const next: DetailRow[] = []
     items!.forEach((item: UTSJSONObject) => {
-      if (isVisit.value) { const visit = parseVisitItem(item); next.push({ id: visit.id, target: visit.id, name: visit.storeName, time: visit.time, number: visit.address, amount: '', status: visitReview(visit.review) } as DetailRow) }
-      else { const order = parseWorkbenchRow(item); next.push({ id: order.id, target: order.orderId, name: order.customerName, time: order.time, number: order.number, amount: order.amount, status: order.status } as DetailRow) }
+      const order = parseWorkbenchRow(item); next.push({ id: order.id, target: order.orderId, name: order.customerName, time: order.time, number: order.number, amount: order.amount, status: order.status } as DetailRow)
     })
     rows.value = append ? rows.value.concat(next) : next; total.value = count!; loaded.value = true
-    if (!isVisit.value) amount.value = workbenchMoney(data.getNumber('amount'))
+    amount.value = workbenchMoney(data.getNumber('amount'))
   }
-  if (kind.value == 'plans') {
-    if (!hasPermission('sales:visit-plan:own:read')) { fail('当前账号没有拜访计划读取权限'); return }
-    requestSalesApi('/sales/me/visit-plans?date=' + from.value, (response) => {
-      if (request != version || owner != visitReadKey()) return
-      const data = response.getJSON('data'); const items = data?.getArray<UTSJSONObject>('items')
-      if (items == null) { fail('待拜访数据格式异常'); return }
-      const next: DetailRow[] = []
-      items!.forEach((item: UTSJSONObject) => {
-        const status = item.getString('status') ?? ''
-        if (status != 'PLANNED' && status != 'IN_PROGRESS') return
-        next.push({ id: item.getString('planId') ?? '', target: hasPermission('sales:visit:own:read') ? (item.getString('visitId') ?? '') : '',
-          name: item.getString('storeName') ?? '门店名称未提供', time: item.getString('storeAddress') ?? '',
-          number: item.getString('objective') ?? '', amount: '', status: status == 'IN_PROGRESS' ? '进行中' : '待拜访' } as DetailRow)
-      })
-      rows.value = next; total.value = next.length; loaded.value = true; loading.value = false
-    }, fail)
-  } else if (isVisit.value) {
-    if (!hasPermission('sales:visit:own:read')) { fail('当前账号没有拜访读取权限'); return }
-    requestSalesApi('/sales/me/activity-visits?from=' + from.value + '&to=' + to.value + '&kind=' + kind.value + '&page=' + (Math.floor(rows.value.length / 20) + 1).toString() + '&pageSize=20', (response) => { const data = response.getJSON('data'); if (data == null) fail('明细数据格式异常'); else success(data!) }, fail)
-  } else {
     if (!hasPermission((kind.value == 'receipts' || kind.value == 'performance') ? 'order:payment:read' : 'order:read')) { fail('当前账号没有此明细读取权限'); return }
+    if (customerKey.value.length > 0) { requestWorkbench('customer-orders', from.value, to.value, '&customerKey=' + encodeURIComponent(customerKey.value) + '&begin=' + rows.value.length.toString() + '&step=20', success, fail); return }
     requestWorkbench('details', from.value, to.value, '&kind=' + kind.value + '&begin=' + rows.value.length.toString() + '&step=20', success, fail)
-  }
 }
 function more(): void { if (loaded.value && rows.value.length < total.value) load(true) }
 function open(row: DetailRow): void {
-  if (kind.value == 'plans') {
-    if (row.target.length > 0 && hasPermission('sales:visit:own:read')) uni.navigateTo({ url: '/pages/visit/visit?view=detail&id=' + encodeURIComponent(row.target) })
-    return
-  }
-  if (isVisit.value) uni.navigateTo({ url: '/pages/visit/visit?view=detail&id=' + encodeURIComponent(row.target) })
-  else if (hasPermission('order:read')) { commerce.selectedOrderId = row.target; uni.navigateTo({ url: '/pages/commerce/commerce?view=order-detail&id=' + encodeURIComponent(row.target) }) }
+  if (hasPermission('order:read')) { commerce.selectedOrderId = row.target; uni.navigateTo({ url: '/pages/commerce/commerce?view=order-detail&id=' + encodeURIComponent(row.target) }) }
 }
 onLoad((options) => {
+  customerKey.value = options['customerKey'] ?? ''
   kind.value = options['kind'] ?? 'orders'; from.value = options['from'] ?? visitToday(); to.value = options['to'] ?? visitToday()
-  const titles = { orders: '交易订单', unpaid: '待回款', outbound: '待出库', receipts: '回款记录', performance: '结清回款贡献明细', all: '拜访记录', effective: '有效拜访', first: '新增拜访', plans: '今日待拜访' } as UTSJSONObject
-  title.value = titles.getString(kind.value) ?? '我的业绩'
+  const titles = { orders: '交易订单', unpaid: '待回款', outbound: '待出库', receipts: '回款记录', performance: '结清回款贡献明细' } as UTSJSONObject
+  title.value = customerKey.value.length > 0 ? (options['name'] ?? '客户交易') : titles.getString(kind.value) ?? '我的业绩'
   uni.setNavigationBarTitle({ title: title.value })
 })
 onShow(() => { visible = true; load(false) })

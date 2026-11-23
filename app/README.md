@@ -70,3 +70,7 @@ macOS 默认 CLI 路径为 `/Applications/HBuilderX.app/Contents/MacOS/cli`。�
 每台手机记录系统、型号、包版本、录音前后实际回放时长和缺口；依次做前台、锁屏、切应用、来电中断、低电量、断网和重启实验。只有回放文件与事件日志一致才算该项通过，不以屏幕计时继续跳动作为证据。
 
 官方资料：[uni-app x 工程](https://doc.dcloud.net.cn/uni-app-x/project.html)、[原生环境](https://doc.dcloud.net.cn/uni-app-x/tutorial/app-env.html)、[HBuilderX CLI](https://hx.dcloud.net.cn/cli/README)。
+
+## Android 正式安装包
+
+使用 `pnpm app:build:android` 本地打包；连接 Redmi 后使用 `pnpm app:install:android` 校验签名并覆盖安装。保留既有签名和应用数据，详见 [本地正式打包说明](../docs/app-android-local-release.md)。

@@ -1,0 +1,16 @@
+@import './workbench-ui.css';
+.me-content { width: 100%; max-width: 560px; align-self: center; padding: 12px 20px 32px; }
+.me-row { flex-direction: row; align-items: center; min-height: 58px; border-bottom-style: solid; border-bottom-width: 1px; border-bottom-color: #eceef0; }
+.me-label { font-size: 15px; line-height: 24px; color: #252a31; }
+.me-note { font-size: 13px; line-height: 21px; color: #626970; }
+.me-section { font-size: 12px; color: #787f85; margin-top: 26px; margin-bottom: 6px; }
+.me-chevron { width: 16px; height: 16px; margin-left: 10px; }
+.me-icon { width: 22px; height: 22px; margin-right: 13px; }
+.me-title { font-size: 23px; line-height: 32px; color: #252a31; font-weight: 600; margin-top: 16px; margin-bottom: 12px; }
+.me-panel { padding: 16px; border-radius: 10px; background-color: #f5f6f7; margin-top: 20px; margin-bottom: 20px; }
+.me-primary { margin: 20px 0 0; border-width: 0; border-radius: 8px; min-height: 48px; line-height: 24px; padding: 12px 16px; background-color: #c64c1c; color: #ffffff; font-size: 16px; }
+.me-secondary { margin: 12px 0 0; border-width: 0; border-radius: 8px; min-height: 48px; line-height: 24px; padding: 12px 16px; background-color: #f5f6f7; color: #252a31; font-size: 15px; }
+.me-error { font-size: 13px; line-height: 21px; color: #b42318; margin-top: 14px; }
+.me-good { font-size: 13px; color: #287553; }
+.me-accent { font-size: 13px; color: #c64c1c; }
+.me-spacer { margin-top: 20px; }

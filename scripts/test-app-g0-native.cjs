@@ -59,7 +59,7 @@ function harness() {
       else options.fail({ errMsg: 'File missing' })
     }),
     mkdir: (options) => queueMicrotask(() => options.success({})),
-    unlink: options => { unlinks.push(options.filePath); files.delete(options.filePath); queueMicrotask(() => options.success({})) },
+    unlink: options => { unlinks.push(options.filePath); files.delete(options.filePath); queueMicrotask(() => options.success?.({})) },
     copyFile: (options) => copies.push(options),
     writeFile: (options) => writes.push(options),
     readdir: (options) => queueMicrotask(() => options.success({ files: [...files.keys()].map((name) => path.basename(name)) })),
@@ -295,4 +295,17 @@ test('CRM thirty-second recording reaches durable storage and is not discarded',
   capture.start(); h.event('Start'); h.setTime(40000); capture.stop()
   h.event('Stop', { tempFilePath: '/tmp/thirty.aac' }); await flushCallbacks()
   assert.equal(h.copies.length, 1); assert.deepEqual(h.unlinks, [])
+})
+
+test('voice enrollment keeps no visit index and deletes its temporary sample on disposal', async () => {
+  const h=harness(),states=[]
+  const sample=h.service.createCaptureSession(s=>states.push(s),{owner:'tenant:user',captureId:'voice-profile'},30000,0,false)
+  sample.start();h.event('Start');h.setTime(31000);sample.stop();h.event('Stop',{tempFilePath:'/tmp/voice.aac'})
+  assert.equal(sample.snapshot().savedPath,'/tmp/voice.aac');assert.equal(h.copies.length,0);assert.equal(h.writes.length,0)
+  sample.dispose();await flushCallbacks();assert.deepEqual(h.unlinks,['/tmp/voice.aac'])
+})
+test('a late enrollment Stop after leaving deletes audio without creating visit evidence', async () => {
+  const h=harness(),sample=h.service.createCaptureSession(()=>{},null,30000,0,false)
+  sample.start();h.event('Start');sample.dispose();h.event('Stop',{tempFilePath:'/tmp/late-voice.aac'})
+  await flushCallbacks();assert.deepEqual(h.unlinks,['/tmp/late-voice.aac']);assert.equal(h.copies.length,0);assert.equal(h.writes.length,0)
 })

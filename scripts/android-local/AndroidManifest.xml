@@ -1,0 +1,8 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+    <application android:name="io.dcloud.uniapp.UniApplication" android:label="销售工作台" android:icon="@mipmap/icon" android:allowBackup="false" android:usesCleartextTraffic="false" tools:replace="android:usesCleartextTraffic,android:allowBackup">
+        <activity android:name="io.dcloud.uniapp.UniAppActivity" android:exported="true" android:screenOrientation="portrait" android:theme="@style/UniAppX.Activity.DefaultTheme" android:windowSoftInputMode="adjustResize" android:configChanges="orientation|keyboard|keyboardHidden|smallestScreenSize|screenLayout|screenSize|mcc|mnc|fontScale|navigation|uiMode">
+            <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+        </activity>
+        <meta-data android:name="DCLOUD_UNI_APPID" android:value="__UNI__EE5460C"/>
+    </application>
+</manifest>

@@ -17,17 +17,19 @@ function fixture(options = {}, cacheOptions = {}) {
   const key = () => session.authenticated ? session.tenantId + ':' + session.userId + ':' + session.revision + ':' + session.permissions.join(',') : ''
   const deferred = queue => new Promise((resolve, reject) => queue.push({ resolve, reject }))
   const source = fs.readFileSync(path.join(__dirname, '../app/pages/home/home.uvue'), 'utf8').split('<script setup lang="uts">')[1].split('</script>')[0]
-  const code = ts.transpileModule(source + '\nexports.view = { snapshotHint, completedAmount, targetAmount, performanceRange, progressLabel, progressStyle, errorText, visitsTotal, effectiveTotal, summaryError, firstTotal, range, period, tradeAmount, pendingAmount, planCount, financeError, workDayStatus, workDayError, workDayLoading, attendanceLabel, attendanceImage, attendanceLabelClass, canStartVisit, canReadPlan, canReadProducts, canReadWorkDay, draftCount, draftName }; exports.actions = { retry, loadHome, loadSummary, loadWorkDay, startVisit, openPlan, products, openDraft, selectPeriod, loadFinance, openMetric, openPendingPlans, loadPlanCount, chooseMonth };', { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText
+  const code = ts.transpileModule(source + '\nexports.view = { snapshotHint, completedAmount, salesTargetAmount, targetAmount, performanceRange, progressLabel, progressStyle, errorText, visitsTotal, effectiveTotal, summaryError, firstTotal, range, period, tradeAmount, pendingAmount, planCount, financeError, workDayStatus, workDayError, workDayLoading, attendanceLabel, attendanceImage, attendanceLabelClass, canStartVisit, canReadPlan, canReadProducts, canReadWorkDay, draftCount, draftName }; exports.actions = { retry, loadHome, loadSummary, loadWorkDay, startVisit, openPlan, products, openDraft, selectPeriod, loadFinance, openMetric, openPendingPlans, loadPlanCount, chooseMonth };', { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText
   const modules = {
-    '../../services/visit-workbench.uts': { showVisitPlans: date => navigations.push('/pages/visits/visits?tab=plans&date='+date), showVisitRecords: (from,to,kind)=>navigations.push('/pages/visits/visits?kind='+kind), loadVisitBoard: () => Promise.reject(new Error('not mocked')) },
+    '../../services/wecom.uts': { wecomSummary: async () => ({active: '—'}) },
+    '../../services/visit-workbench.uts': { visitRefresh:reactive({revision:0}), showVisitPlans: date => navigations.push('/pages/visits/visits?tab=plans&date='+date), showVisitRecords: (from,to,kind)=>navigations.push('/pages/visits/visits?kind='+kind), loadVisitBoard: () => Promise.reject(new Error('not mocked')) },
     '../../services/home-cache.uts': cache,
     '../../services/config.uts': {appEnvironment: {environment: 'test'}},
     '../../services/session.uts': { session, hasPermission: value => session.authenticated && session.permissions.includes(value), requireSession: () => { if (session.authenticated) return true; navigations.push('/pages/login/login'); return false } },
     '../../services/sales-profile.uts': { requestSalesApi: (url, success, fail) => (url.includes('visit-plans') ? planRequests : requests).push({ url, success, fail }) },
     '../../services/crm.uts': { crmMessage: error => error.message },
+    '../../services/crm-media.uts': {crmRecording:()=>local.recording,crmUploadState:reactive({pending:0})},
     '../../services/attendance.uts': { attendance: reactive({phase: '', pending:false, day:null}), attendanceStatus: () => deferred(days), checkInAttendance: () => deferred(checkins), resetAttendance: () => {}, attendanceClock: () => '09:00' },
     '../../services/commerce.uts': { commerce, loadDrafts: () => {}, preloadCommerceLists: () => {} },
-    '../../services/visits.uts': { visitToday: () => '2026-11-11', visitReadKey: key, loadLocalVisits: () => {}, visitDraftCount: () => session.authenticated ? local.count : 0, hasActiveVisitRecording: () => local.recording, resumeVisitPath: () => '/pages/visit/visit?view=active&id=local-one' },
+    '../../services/visits.uts': { visitToday: () => '2026-11-11', visitReadKey: key,  },
   }
   const wb = { exports: {}, require: name => name === './visits.uts' ? {apiVisitTime: value => value} : {} }; vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname, '../app/services/workbench.uts'), 'utf8'), {compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText, wb);
   modules['../../services/workbench.uts'] = {...wb.exports, requestWorkbench: (endpoint, from, to, suffix, success, fail) => finances.push({endpoint, from, to, suffix, success, fail})};
@@ -65,11 +67,11 @@ test('permissions hide unavailable actions and prevent their requests and naviga
   assert.deepEqual(f.navigations, [])
 })
 
-test('visit action preserves an active local recording, then uses the allowed CRM or local route', async () => {
+test('visit action resumes the shared visit board and only enters authorized CRM stores', async () => {
   const f = fixture(); f.local.recording = true; f.actions.startVisit()
   f.local.recording = false; f.actions.startVisit()
   f.session.permissions = ['sales:visit-target:read', 'sales:visit:own:write']; await nextTick(); f.actions.startVisit()
-  assert.deepEqual(f.navigations, ['/pages/visit/visit?view=active&id=local-one', '/pages/customer-list/customer-list?kind=MINE', '/pages/visit/visit?view=select'])
+  assert.deepEqual(f.navigations, ['/pages/visits/visits', '/pages/customer-list/customer-list?kind=MINE'])
 })
 
 test('newer refresh, account changes and revoked permissions discard obsolete responses', async () => {
@@ -145,11 +147,11 @@ test('late finance results cannot replace selected period or another account', a
   f.session.userId = 'other'; await nextTick(); f.finances[1].success(data);
   assert.equal(f.view.pendingAmount.value, '—');
 });
-test('metric drills carry the selected range and unavailable WeCom does not pretend to be zero', () => {
+test('metric drills carry the selected range and WeCom opens the authorized customer page', () => {
   const f = fixture({permissions: [...permissions, 'order:read']}); f.actions.selectPeriod('month');
   f.actions.openMetric('effective'); f.actions.openMetric('unpaid'); f.actions.openMetric('wecom');
   assert.match(f.navigations[0], /kind=effective&from=2026-11-01&to=2026-11-11/);
-  assert.match(f.navigations[1], /kind=unpaid/); assert.equal(f.toasts[0], '企微建联尚未接入同步');
+  assert.match(f.navigations[1], /kind=unpaid/); assert.equal(f.navigations[2], '/pages/wecom/wecom');
 });
 
 
@@ -252,32 +254,6 @@ test('todo entries open their own lists and todays plans remain today while view
   assert.match(f.navigations[1],/workbench-details\?kind=outbound/);
   assert.match(f.navigations[2],/visits\?tab=plans&date=2026-11-11$/);
 });
-const planResponse = items => ({getJSON:()=>({getArray:()=>items.map(value=>({getString:key=>value[key]??null}))})});
-test('pending visit list shows only unfinished plans and opens only a linked visit record', () => {
-  const f=detailFixture(); f.hooks.load({kind:'plans',from:'2026-11-11',to:'2026-11-11'}); f.hooks.show();
-  assert.equal(f.requests[0].url,'/sales/me/visit-plans?date=2026-11-11');
-  f.requests[0].success(planResponse([
-    {planId:'p1',status:'PLANNED',storeName:'门店甲',storeAddress:'地址甲',objective:'新品回访'},
-    {planId:'p2',status:'IN_PROGRESS',storeName:'门店乙',visitId:'visit-two'},
-    {planId:'p3',status:'COMPLETED'}, {planId:'p4',status:'CANCELLED'}
-  ]));
-  assert.equal(f.view.total.value,2); assert.equal(f.view.amount.value,'');
-  assert.equal(f.view.rows.value[0].number,'新品回访'); assert.equal(f.view.rows.value[1].status,'进行中');
-  f.actions.open(f.view.rows.value[0]); assert.equal(f.navigations.length,0);
-  f.actions.open(f.view.rows.value[1]); assert.deepEqual(f.navigations,['/pages/visit/visit?view=detail&id=visit-two']);
-  f.actions.more(); assert.equal(f.requests.length,1);
-});
-test('plan details enforce read permission and reject an old accounts response', async () => {
-  const blocked=detailFixture({permissions:[]}); blocked.hooks.load({kind:'plans'}); blocked.hooks.show();
-  assert.equal(blocked.requests.length,0); assert.match(blocked.view.error.value,/读取权限/);
-  const f=detailFixture(); f.hooks.load({kind:'plans'}); f.hooks.show();
-  f.session.owner='two'; await nextTick();
-  f.requests[0].success(planResponse([{planId:'old',status:'PLANNED',storeName:'旧账号门店'}]));
-  assert.equal(f.view.rows.value.length,0);
-  f.requests[1].success(planResponse([])); assert.equal(f.view.total.value,0); assert.equal(f.view.error.value,'');
-});
-
-
 test('returning home displays the prior summary synchronously while refreshing it', () => {
   const f = fixture(); f.hooks.show(); f.respond(0, 4, 3)
   f.hooks.hide(); f.hooks.show()
@@ -309,7 +285,7 @@ test('failed fresh reads clear cached figures and show the actual failure', () =
 test('order/performance/plan aggregates restore together without persisting raw rows', () => {
   const options = {permissions: [...permissions, 'order:read', 'order:payment:read']}
   const previous = fixture(options); previous.hooks.show()
-  previous.finances[0].success(previous.cache.data({tradeAmount: 120, orderCount: 2, pendingAmount: 30, pendingCount: 1, outboundCount: 3, privateCustomerName: 'must-not-store'}))
+  previous.finances[0].success(previous.cache.data({tradeAmount: 120, salesTargetAmount: 40000, orderCount: 2, pendingAmount: 30, pendingCount: 1, outboundCount: 3, privateCustomerName: 'must-not-store'}))
   previous.finances[1].success(previous.cache.data({completedAmount: null, targetAmount: 500, orderCount: 0}))
   previous.planRequests[0].success(previous.cache.data({data: {items: [{status: 'PLANNED', customerName: 'must-not-store'}]}}))
   const f = fixture(options, {storage: previous.cache.storage}); f.hooks.show()
@@ -340,4 +316,37 @@ test('a successful write while home is visible replaces obsolete reads without l
   const f = fixture(); f.hooks.show(); f.cache.invalidateHomeCache(); await nextTick()
   assert.equal(f.requests.length,2); f.respond(0,99,99); f.respond(1,6,5)
   assert.equal(f.view.visitsTotal.value,'6')
+})
+
+
+test('sales and receipts targets remain independent and old salary snapshots are not restored', async () => {
+  const options = {permissions: ['order:read', 'order:payment:read']}
+  const f = fixture(options)
+  f.cache.writeHomeSnapshot('performance:2026-11-01:2026-11-11', f.cache.data({completedAmount: 1000, targetAmount: 7000, orderCount: 2}))
+  f.cache.writeHomeSnapshot('orders:2026-11-11:2026-11-11', f.cache.data({tradeAmount: 120, orderCount: 2, pendingAmount: 30, pendingCount: 1, outboundCount: 3}))
+  f.hooks.show()
+  assert.equal(f.view.targetAmount.value, null); assert.equal(f.view.salesTargetAmount.value, null)
+  f.finances[0].success(f.cache.data({tradeAmount: 120, salesTargetAmount: 40000, orderCount: 2, pendingAmount: 30, pendingCount: 1, outboundCount: 3}))
+  f.finances[1].success(performanceData(1000, 20000))
+  assert.equal(f.view.salesTargetAmount.value, 40000); assert.equal(f.view.targetAmount.value, 20000)
+  assert.equal(f.view.progressLabel.value, '5%')
+  const cold = fixture(options, {storage: f.cache.storage}); cold.hooks.show()
+  assert.equal(cold.view.salesTargetAmount.value, 40000); assert.equal(cold.view.targetAmount.value, 20000)
+  f.actions.selectPeriod('lastMonth')
+  assert.equal(f.view.salesTargetAmount.value, null); assert.equal(f.view.targetAmount.value, null)
+  f.finances[0].success(f.cache.data({tradeAmount: 999, salesTargetAmount: 99999, orderCount: 0, pendingAmount: 0, pendingCount: 0, outboundCount: 0}))
+  assert.equal(f.view.salesTargetAmount.value, null)
+  f.finances[2].success(f.cache.data({tradeAmount: 0, salesTargetAmount: 0, orderCount: 0, pendingAmount: 0, pendingCount: 0, outboundCount: 0}))
+  assert.equal(f.view.salesTargetAmount.value, 0)
+  f.session.permissions = []; await nextTick()
+  assert.equal(f.view.salesTargetAmount.value, null); assert.equal(f.view.targetAmount.value, null)
+})
+test('missing or invalid sales targets are explicit failures instead of fabricated defaults', () => {
+  const f = fixture({permissions: ['order:read']})
+  for (const target of [null, -1, NaN]) {
+    f.actions.loadFinance()
+    f.finances.at(-1).success(f.cache.data({tradeAmount: 120, salesTargetAmount: target, orderCount: 2, pendingAmount: 30, pendingCount: 1, outboundCount: 3}))
+    assert.equal(f.view.salesTargetAmount.value, null); assert.equal(f.view.tradeAmount.value, '—')
+    assert.match(f.view.financeError.value, /经营数据暂不可用/)
+  }
 })

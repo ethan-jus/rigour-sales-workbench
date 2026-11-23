@@ -24,6 +24,7 @@
           <view class="home-finance-cell" @click="openMetric('orders')">
             <view class="sw-row"><text class="home-finance-label sw-grow">{{ range.label }}交易额</text><image class="home-metric-chevron" src="/static/home/chevron-right.svg" /></view>
             <view class="home-money-row"><text v-if="tradeAmount != '—'" class="home-currency">¥</text><text class="home-money" :style="tradeStyle">{{ compactMoney(tradeAmount) }}</text><text class="home-order-count">{{ orderCount }}笔</text></view>
+            <text class="home-sales-target">{{ performanceRange.label }}销售指标 {{ performanceMoney(salesTargetAmount) }}</text>
           </view>
           <view class="home-finance-cell home-finance-second" @click="openMetric('unpaid')">
             <view class="sw-row"><text class="home-finance-label sw-grow">累计待回款</text><image class="home-metric-chevron" src="/static/home/chevron-right.svg" /></view>
@@ -47,7 +48,7 @@
         </view>
         <view class="home-visit-row">
           <view class="home-visit-cell" hover-class="home-control-pressed" @click="openMetric('first')"><text class="home-visit-label">新增</text><text class="home-visit-value sw-grow">{{ firstTotal }}</text><image class="home-metric-chevron" src="/static/home/chevron-right.svg" /></view>
-          <view class="home-visit-cell home-visit-second" hover-class="home-control-pressed" @click="openMetric('wecom')"><text class="home-visit-label">企微</text><text class="home-visit-value sw-grow">—</text><image class="home-metric-chevron" src="/static/home/chevron-right.svg" /></view>
+          <view class="home-visit-cell home-visit-second" hover-class="home-control-pressed" @click="openMetric('wecom')"><text class="home-visit-label">企微联系人</text><text class="home-visit-value sw-grow">{{ wecomCount }}</text><image class="home-metric-chevron" src="/static/home/chevron-right.svg" /></view>
         </view>
       </view>
       <view class="home-actions">
@@ -62,7 +63,7 @@
         <view v-if="canReadOrders" class="home-task home-task-border" hover-class="home-control-pressed" @click="openMetric('unpaid')"><image class="home-task-icon" mode="aspectFit" src="/static/home/wallet.svg" /><text class="home-task-label sw-grow">待回款</text><text class="home-task-count home-orange">{{ pendingCount }}</text><image class="home-chevron" src="/static/home/chevron-right.svg" /></view>
         <view v-if="canReadOrders" class="home-task home-task-border" hover-class="home-control-pressed" @click="openMetric('outbound')"><image class="home-task-icon" mode="aspectFit" src="/static/home/product.svg" /><text class="home-task-label sw-grow">待出库</text><text class="home-task-count">{{ outboundCount }}</text><image class="home-chevron" src="/static/home/chevron-right.svg" /></view>
         <view v-if="canReadPlan" class="home-task home-task-border" hover-class="home-control-pressed" @click="openPendingPlans"><image class="home-task-icon" mode="aspectFit" src="/static/home/calendar-outline.svg" /><text class="home-task-label sw-grow">今日待拜访</text><text class="home-task-count">{{ planCount }}</text><image class="home-chevron" src="/static/home/chevron-right.svg" /></view>
-        <view v-if="visitCount > 0" class="home-task home-task-border" hover-class="home-control-pressed" @click="uploads"><text class="sw-body sw-grow">本机拜访草稿</text><text class="home-task-count">{{ visitCount }}</text><image class="home-chevron" src="/static/home/chevron-right.svg" /></view>
+        <view v-if="visitCount > 0" class="home-task home-task-border" hover-class="home-control-pressed" @click="uploads"><text class="sw-body sw-grow">拜访材料待同步</text><text class="home-task-count">{{ visitCount }}</text><image class="home-chevron" src="/static/home/chevron-right.svg" /></view>
         <view v-if="draftCount > 0" class="home-task home-task-border" hover-class="home-control-pressed" @click="openDraft"><text class="sw-body sw-grow">购物草稿</text><text class="home-task-count">{{ draftCount }}</text><image class="home-chevron" src="/static/home/chevron-right.svg" /></view>
       </view>
       <view v-if="errorText.length > 0" class="sw-error-panel home-error"><text class="sw-error">{{ errorText }}</text><button class="sw-text-button" :disabled="workDayLoading || summaryLoading || financeLoading || receiptLoading || planLoading" @click="retry">重试</button></view>
@@ -71,13 +72,15 @@
   </view>
 </template>
 <script setup lang="uts">
-import { loadVisitBoard, showVisitPlans, showVisitRecords } from '../../services/visit-workbench.uts'
+import { wecomSummary } from '../../services/wecom.uts'
+import { visitRefresh, loadVisitBoard, showVisitPlans, showVisitRecords } from '../../services/visit-workbench.uts'
 import { session, hasPermission, requireSession } from '../../services/session.uts'
 import { requestSalesApi } from '../../services/sales-profile.uts'
 import { crmMessage } from '../../services/crm.uts'
 import { attendance, attendanceStatus, resetAttendance } from '../../services/attendance.uts'
 import { commerce, loadDrafts, CartDraft } from '../../services/commerce.uts'
-import { loadLocalVisits, visitDraftCount, hasActiveVisitRecording, resumeVisitPath, visitToday, visitReadKey } from '../../services/visits.uts'
+import { crmRecording, crmUploadState } from '../../services/crm-media.uts'
+import { visitToday, visitReadKey } from '../../services/visits.uts'
 import { workbenchPeriod, workbenchMoney, requestWorkbench } from '../../services/workbench.uts'
 import { homeReadRevision, readHomeSnapshot, writeHomeSnapshot, forgetHomeSnapshot } from '../../services/home-cache.uts'
 import { appEnvironment } from '../../services/config.uts'
@@ -95,6 +98,7 @@ const pendingCount = ref('—')
 const outboundCount = ref('—')
 const completedAmount = ref<number | null>(null)
 const targetAmount = ref<number | null>(null)
+const salesTargetAmount = ref<number | null>(null)
 const performanceLoaded = ref(false)
 const planCount = ref('—')
 const financeError = ref('')
@@ -159,12 +163,12 @@ const canReadWorkDay = computed((): boolean => hasPermission('sales:context:read
 const canReadPlan = computed((): boolean => hasPermission('sales:visit-plan:own:read'))
 const canReadProducts = computed((): boolean => hasPermission('erp:product:read'))
 const canVisitCrm = computed((): boolean => hasPermission('crm:pool:private-read') && hasPermission('crm:store:visit-write'))
-const canStartVisit = computed((): boolean => canVisitCrm.value || (hasPermission('sales:visit-target:read') && hasPermission('sales:visit:own:write')))
-const recording = computed((): boolean => hasActiveVisitRecording())
+const canStartVisit = computed((): boolean => canVisitCrm.value && hasPermission('sales:visit:own:write'))
+const recording = computed((): boolean => crmRecording())
 const drafts = computed((): CartDraft[] => session.authenticated && commerce.draftOwner == session.tenantId + ':' + session.userId ? commerce.drafts.filter((draft: CartDraft): boolean => draft.lines.length > 0) : [] as CartDraft[])
 const draftCount = computed((): number => drafts.value.length)
 const draftName = computed((): string => drafts.value.length == 1 ? drafts.value[0].customerName : '')
-const visitCount = computed((): number => visitDraftCount())
+const visitCount = computed((): number => crmUploadState.pending)
 const attendanceLabel = computed((): string => {
   if (workDayLoading.value && workDayStatus.value.length == 0) return '正在更新'
   if (workDayError.value.length > 0) return '状态待确认'
@@ -182,7 +186,7 @@ const attendanceImage = computed((): string => {
 })
 const attendanceLabelClass = computed((): string => attendanceLabel.value == '工作中' ? 'home-attendance-label home-attendance-working' : attendanceLabel.value == '已下班' ? 'home-attendance-label home-attendance-finished' : 'home-attendance-label')
 function products(): void { if (canReadProducts.value) uni.navigateTo({ url: '/pages/commerce/commerce?view=products' }) }
-function uploads(): void { if (requireSession()) uni.navigateTo({ url: '/pages/visit/visit?view=uploads' }) }
+function uploads(): void { if (requireSession()) uni.navigateTo({ url: '/pages/visit-uploads/visit-uploads' }) }
 function openPlan(): void { if (canReadPlan.value) showVisitPlans(today.value) }
 function openPendingPlans(): void { if (canReadPlan.value) showVisitPlans(today.value) }
 function openDraft(): void {
@@ -193,9 +197,8 @@ function openDraft(): void {
 }
 function startVisit(): void {
   if (!requireSession()) return
-  if (recording.value) uni.navigateTo({ url: resumeVisitPath() })
-  else if (canVisitCrm.value) uni.navigateTo({ url: '/pages/customer-list/customer-list?kind=MINE' })
-  else if (canStartVisit.value) uni.navigateTo({ url: '/pages/visit/visit?view=select' })
+  if (recording.value) uni.switchTab({ url: '/pages/visits/visits' })
+  else if (canStartVisit.value) uni.navigateTo({ url: '/pages/customer-list/customer-list?kind=MINE' })
 }
 function applySummary(data: UTSJSONObject | null): boolean {
   const total = data?.getNumber('totalVisitCount'); const effective = data?.getNumber('effectiveVisitCount'); const first = data?.getNumber('firstVisitCount')
@@ -245,7 +248,7 @@ async function loadWorkDay(): Promise<void> {
 function customers(): void { if (canReadCustomers.value) uni.switchTab({ url: '/pages/customers/customers' }) }
 function openMetric(kind: string): void {
   if (!requireSession()) return
-  if (kind == 'wecom') { uni.showToast({ title: '企微建联尚未接入同步', icon: 'none' }); return }
+  if (kind == 'wecom') { if (hasPermission('crm:pool:private-read')) uni.navigateTo({ url: '/pages/wecom/wecom' }); else uni.showToast({ title: '暂无客户查看权限', icon: 'none' }); return }
   const visit = kind == 'all' || kind == 'effective' || kind == 'first'
   if (visit && !canReadSummary.value) return
   if (!visit && ((kind == 'receipts' || kind == 'performance') ? !canReadReceipts.value : !canReadOrders.value)) return
@@ -254,10 +257,10 @@ function openMetric(kind: string): void {
   uni.navigateTo({ url: '/pages/workbench-details/workbench-details?kind=' + kind + '&from=' + selected.from + '&to=' + selected.to })
 }
 function applyFinance(data: UTSJSONObject): boolean {
-  const trade = data.getNumber('tradeAmount'); const count = data.getNumber('orderCount'); const pending = data.getNumber('pendingAmount'); const pendingN = data.getNumber('pendingCount'); const outbound = data.getNumber('outboundCount')
-  if (trade == null || count == null || pending == null || pendingN == null || outbound == null) return false
-  if (![trade!, count!, pending!, pendingN!, outbound!].every((value: number): boolean => Number.isFinite(value))) return false
-  tradeAmount.value = workbenchMoney(trade); orderCount.value = count!.toString(); pendingAmount.value = workbenchMoney(pending); pendingCount.value = pendingN!.toString(); outboundCount.value = outbound!.toString(); return true
+  const trade = data.getNumber('tradeAmount'); const count = data.getNumber('orderCount'); const pending = data.getNumber('pendingAmount'); const pendingN = data.getNumber('pendingCount'); const outbound = data.getNumber('outboundCount'); const target = data.getNumber('salesTargetAmount')
+  if (trade == null || count == null || pending == null || pendingN == null || outbound == null || target == null || target! < 0) return false
+  if (![trade!, count!, pending!, pendingN!, outbound!, target!].every((value: number): boolean => Number.isFinite(value))) return false
+  salesTargetAmount.value = target; tradeAmount.value = workbenchMoney(trade); orderCount.value = count!.toString(); pendingAmount.value = workbenchMoney(pending); pendingCount.value = pendingN!.toString(); outboundCount.value = outbound!.toString(); return true
 }
 function applyPerformance(data: UTSJSONObject): boolean {
   const amount = data.getNumber('completedAmount'); const target = data.getNumber('targetAmount'); const count = data.getNumber('orderCount')
@@ -265,13 +268,13 @@ function applyPerformance(data: UTSJSONObject): boolean {
   completedAmount.value = amount; targetAmount.value = target; performanceLoaded.value = true; return true
 }
 function clearFinance(clearCurrent: boolean): void {
-  tradeAmount.value = '—'; orderCount.value = '—'; financeCachedAt.value = 0
+  tradeAmount.value = '—'; salesTargetAmount.value = null; orderCount.value = '—'; financeCachedAt.value = 0
   if (clearCurrent) { pendingAmount.value = '—'; pendingCount.value = '—'; outboundCount.value = '—' }
 }
 function clearPerformance(): void { completedAmount.value = null; targetAmount.value = null; performanceLoaded.value = false; receiptCachedAt.value = 0 }
 function loadFinance(clearCurrent: boolean = true): void {
-  const owner = homeReadKey(); const key = 'orders:' + range.value.from + ':' + range.value.to
-  const performanceKey = 'performance:' + performanceRange.value.from + ':' + performanceRange.value.to
+  const owner = homeReadKey(); const key = 'orders:business-targets:' + range.value.from + ':' + range.value.to
+  const performanceKey = 'performance:business-targets:' + performanceRange.value.from + ':' + performanceRange.value.to
   const query = owner + key + performanceKey
   if ((financeLoading.value || receiptLoading.value) && financeQuery == query) return
   const version = ++financeRequest; financeQuery = query
@@ -285,7 +288,7 @@ function loadFinance(clearCurrent: boolean = true): void {
       if (version != financeRequest || owner != homeReadKey()) return
       financeLoading.value = false; financeCachedAt.value = 0
       if (!applyFinance(data)) { clearFinance(true); forgetHomeSnapshot(key); financeError.value = '经营数据暂不可用'; return }
-      writeHomeSnapshot(key, { tradeAmount: data.getNumber('tradeAmount'), orderCount: data.getNumber('orderCount'), pendingAmount: data.getNumber('pendingAmount'), pendingCount: data.getNumber('pendingCount'), outboundCount: data.getNumber('outboundCount') } as UTSJSONObject)
+      writeHomeSnapshot(key, { tradeAmount: data.getNumber('tradeAmount'), orderCount: data.getNumber('orderCount'), pendingAmount: data.getNumber('pendingAmount'), pendingCount: data.getNumber('pendingCount'), outboundCount: data.getNumber('outboundCount'), salesTargetAmount: data.getNumber('salesTargetAmount') } as UTSJSONObject)
     }, (message) => { if (version == financeRequest && owner == homeReadKey()) { clearFinance(true); forgetHomeSnapshot(key); financeLoading.value = false; financeError.value = message } })
   }
   if (canReadReceipts.value) {
@@ -337,10 +340,19 @@ function retry(): void {
   if (financeError.value.length > 0 || receiptError.value.length > 0) loadFinance()
   if (planError.value.length > 0) loadPlanCount()
 }
+const wecomCount = ref('—')
+let wecomRequest = 0
+async function loadWecom(): Promise<void> {
+  const request = ++wecomRequest; wecomCount.value = '—'
+  if (!hasPermission('crm:pool:private-read')) return
+  const owner = homeReadKey()
+  try { const data = await wecomSummary(); if (request == wecomRequest && owner == homeReadKey()) wecomCount.value = data.active } catch (e) { if (request == wecomRequest) wecomCount.value = '—' }
+}
 function resetRemoteState(): void {
+  wecomRequest++; wecomCount.value = '—'
   summaryRequest++; workDayRequest++; financeRequest++; planRequest++
   summaryCachedAt.value = 0; financeCachedAt.value = 0; receiptCachedAt.value = 0; planCachedAt.value = 0; receiptLoading.value = false; planLoading.value = false
-  tradeAmount.value = '—'; orderCount.value = '—'; pendingAmount.value = '—'; pendingCount.value = '—'; outboundCount.value = '—'; completedAmount.value = null; targetAmount.value = null; performanceLoaded.value = false; planCount.value = '—'
+  tradeAmount.value = '—'; salesTargetAmount.value = null; orderCount.value = '—'; pendingAmount.value = '—'; pendingCount.value = '—'; outboundCount.value = '—'; completedAmount.value = null; targetAmount.value = null; performanceLoaded.value = false; planCount.value = '—'
   financeError.value = ''; receiptError.value = ''; planError.value = ''; financeLoading.value = false
   visitsTotal.value = '—'; effectiveTotal.value = '—'; firstTotal.value = '—'; summaryError.value = ''; summaryLoading.value = false
   workDayStatus.value = ''; workDayError.value = ''; workDayLoading.value = false; resetAttendance()
@@ -349,7 +361,7 @@ function loadHome(): void {
   if (!requireSession()) { resetRemoteState(); return }
   const startedAt = Date.now()
   today.value = visitToday()
-  loadDrafts(); loadLocalVisits(); loadSummary(); loadWorkDay(); loadFinance(); loadPlanCount()
+  loadDrafts(); loadSummary(); loadWorkDay(); loadFinance(); loadPlanCount(); loadWecom()
   if (appEnvironment.environment == 'development') console.log('[DEV HOME] snapshotSections=' + [summaryCachedAt.value, financeCachedAt.value, receiptCachedAt.value, planCachedAt.value].filter((value: number): boolean => value > 0).length.toString() + ' hydrateMs=' + (Date.now() - startedAt).toString())
 }
 watch((): number => homeReadRevision(), (_revision: number) => { if (visible) { loadSummary(); loadFinance(); loadPlanCount(); loadWorkDay() } })
@@ -358,6 +370,7 @@ onShow(() => { visible = true; loadHome() })
 onHide(() => { visible = false })
 onUnload(() => { visible = false; resetRemoteState() })
 watch((): string => visitReadKey(), (_key: string) => { resetRemoteState(); if (visible) loadHome() })
+watch((): number => visitRefresh.revision, (_revision: number) => { if (visible) loadSummary() })
 </script>
 <style>
 @import "../../styles/workbench-ui.css";
@@ -394,6 +407,7 @@ watch((): string => visitReadKey(), (_key: string) => { resetRemoteState(); if (
 .home-money-row { flex-direction: row; align-items: center; margin-top: 4px; min-height: 32px; }
 .home-currency { color: var(--sw-ink); font-size: 14px; line-height: 32px; font-weight: bold; margin-right: 1px; }
 .home-money { color: var(--sw-ink); font-size: 24px; line-height: 32px; font-weight: bold; flex-shrink: 1; }
+.home-sales-target { margin-top: 8px; font-size: 12px; color: #6b7280; }
 .home-order-count { color: var(--sw-muted); font-size: 12px; line-height: 24px; margin-left: 6px; flex-shrink: 0; }
 .home-metric-chevron { width: 12px; height: 16px; flex-shrink: 0; opacity: 0.65; }
 .home-orange { color: var(--sw-accent); }

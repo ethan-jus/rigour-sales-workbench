@@ -48,8 +48,8 @@ test('CRM pending review stays distinct from effective and explains server reaso
   const [record] = await f.crm.crmVisitRecords('100')
   assert.equal(f.requests[0].url, '/crm/stores/100/visits?view=MINE')
   assert.equal(record.captureId, 'capture')
-  assert.equal(f.crm.crmVisitStatus(record.status), '已提交，待核验')
-  assert.equal(f.crm.crmVisitReason(record.reviewReason), '录音时长不足；AI 核验待完成')
+  assert.equal(f.crm.crmVisitStatus(record.status), '自动核验中')
+  assert.equal(f.crm.crmVisitReason(record.reviewReason), '录音时长不足；内容核验中')
   assert.equal(f.crm.crmVisitStatus('EFFECTIVE'), '有效拜访')
   assert.equal(f.crm.crmVisitStatus('future-status'), '核验状态待刷新')
 })
@@ -153,24 +153,29 @@ test('lost ownership or denied history never creates a new capture', async () =>
 
 
 function mediaFixture(storage = new Map()) {
-  const uploads = [], commands = [], session = { authenticated: true, tenantId: 'tenant', userId: 'one', revision: 1, permissions: [] }
-  let onChange, loadClips, uploadFails = false, locationFails = false, cameras = 0
-  const intervals = new Map(), delayed = [], starts = []; let nextTimer = 0
+  const uploads = [], commands = [], copies = [], session = { authenticated: true, tenantId: 'tenant', userId: 'one', revision: 1, permissions: [] }
+  let onChange, loadClips, uploadFails = false, locationFails = false, cameras = 0, cameraRequest = null, ruleCalls = 0, locationCalls = 0
+  const intervals = new Map(), delayed = [], starts = [], protection = []; let nextTimer = 0
+  let recentPoint = null
+  const validator = fixture(); validator.session.userId = 'one'
   const clip = { id: 'clip-one', fileName: 'clip-one.aac', createdAt: 1000, savedAt: 62000, activeDurationEstimateMs: 61000, interrupted: false }
   let state = { phase: 'idle', message: '', activeDurationEstimateMs: 0, temporaryPath: '', savedPath: '' }
   const crm = {
     crmOwner: () => session.tenantId + ':' + session.userId + ':' + session.revision,
     crmId: () => 'photo-one',
+    crmRecentVisitLocation: validator.crm.crmRecentVisitLocation,
     crmCall: async (url, method, body) => { commands.push({ url, method, body }); return object({ code: 'OK' }) },
-    crmLocation: async () => { if (locationFails) throw new Error('坐标转换失败'); return object({ longitude: 120, latitude: 30, accuracyMeters: 10 }) },
+    crmLocation: async () => { locationCalls++; if (locationFails) throw new Error('坐标转换失败'); return object({ longitude: 120, latitude: 30, accuracyMeters: 10 }) },
   }
   const modules = {
     vue: { reactive: v => v, watch: () => {} }, './customer-cache.uts': { refreshCustomerSnapshot: (_path, load) => load(), invalidateCustomerCache: () => {}, readCustomerSnapshot: () => null },
     './session.uts': { session }, './crm.uts': crm,
+    './customer-nearby.uts': { customerNearbyVisitLocation: () => recentPoint },
+    './recording-background.uts': { retainVisitRecording: () => protection.push('retain'), releaseVisitRecording: () => protection.push('release') },
     './auth.uts': { ensureAccessToken: (_retry, success) => success('test-token') },
     './config.uts': { appEnvironment: { gatewayOrigin: 'https://dev.invalid' } },
     './json.uts': { parseApiJson: s => object(JSON.parse(s)) },
-    './visit-policy.uts': { visitCaptureRules: async () => ({ maximumLocationAccuracyMeters: 100, allowPhotoImport: false, allowRecordingImport: false }) },
+    './visit-policy.uts': { visitCaptureRules: async () => { ruleCalls++; return { maximumLocationAccuracyMeters: 100, allowPhotoImport: false, allowRecordingImport: false } } },
     './capture.uts': {
       savedClipPath: c => '/files/' + c.fileName,
       loadSavedClips: success => { loadClips = success },
@@ -185,12 +190,15 @@ function mediaFixture(storage = new Map()) {
   const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText
   const ctx = { exports: {}, require: name => modules[name], Error, setInterval: (fn, delay) => { const id = ++nextTimer; intervals.set(id, { fn, delay }); return id }, clearInterval: id => intervals.delete(id), setTimeout: fn => delayed.push(fn), uni: {
     env: { USER_DATA_PATH: '/files' }, getStorageSync: key => storage.get(key) ?? '', getStorageInfoSync: () => ({ keys: [...storage.keys()] }), setStorageSync: (key, value) => storage.set(key, value), removeStorageSync: key => storage.delete(key),
-    chooseImage: request => { cameras++; assert.deepEqual(plain(request.sourceType), ['camera']); request.fail({}) },
+    chooseImage: request => { cameras++; cameraRequest = request; assert.deepEqual(plain(request.sourceType), ['camera']) },
+    getImageInfo: request => request.success({ type: 'jpeg' }),
+    getFileSystemManager: () => ({ access: request => request.success(), copyFile: request => { copies.push(request); request.success() } }),
     uploadFile: request => { uploads.push(request); if (uploadFails) request.fail({}); else request.success({ statusCode: 200, data: '{"code":"OK"}' }) },
   } }
   vm.runInNewContext(compiled, ctx)
-  return { media: ctx.exports, storage, uploads, commands, session, clip, starts, delayed, tick: () => { for (const { fn, delay } of [...intervals.values()]) if (delay === 100) fn() },
-    failedUpload: value => { uploadFails = value }, failedLocation: () => { locationFails = true }, cameras: () => cameras,
+  return { media: ctx.exports, storage, uploads, commands, copies, session, clip, starts, delayed, protection, tick: () => { for (const { fn, delay } of [...intervals.values()]) if (delay === 100) fn() },
+    recentLocation: value => { recentPoint = value == null ? null : object(value) },
+    failedUpload: value => { uploadFails = value }, failedLocation: () => { locationFails = true }, cameras: () => cameras, ruleCalls: () => ruleCalls, locationCalls: () => locationCalls, camera: () => cameraRequest,
     saveRecording: () => { state = { ...state, phase: 'saved', savedPath: '/files/clip-one.aac' }; onChange(state) },
     finishIndex: clips => loadClips(clips),
   }
@@ -218,10 +226,15 @@ test('audio upload retry keeps the clip id and local original; short audio sends
   assert.equal(short.uploads.length, 0); assert.equal(short.commands[0].body.reason, 'TOO_SHORT')
   assert.equal(short.media.crmMedia('capture').recordings.length, 1)
 })
-test('failed coordinate normalization stops before camera acquisition', async () => {
+test('camera opens immediately without waiting for rules or GPS; failed location never becomes evidence', async () => {
   const f = mediaFixture(); f.failedLocation()
-  await assert.rejects(f.media.crmTakePhoto('capture'), /坐标转换失败/)
-  assert.equal(f.cameras(), 0); assert.equal(f.storage.size, 0)
+  const pending = f.media.crmTakePhoto('capture')
+  assert.equal(f.cameras(), 1)
+  assert.equal(f.ruleCalls(), 0); assert.equal(f.locationCalls(), 0)
+  f.camera().success({ tempFilePaths: ['/temporary/photo.jpg'] })
+  await assert.rejects(pending, /坐标转换失败/)
+  assert.equal(f.ruleCalls(), 1); assert.equal(f.locationCalls(), 1)
+  assert.equal(f.storage.size, 0); assert.equal(f.uploads.length, 0)
 })
 
 test('definite outside-radius rejection takes fresh GPS on retry while unknown failures retain the command', async () => {
@@ -254,17 +267,20 @@ function accountPageFixture() {
   vm.runInNewContext(code, ctx)
   return { page: ctx.exports, toasts, logoutCount: () => logoutCount, recording: (old, crm) => { oldRecording = old; crmRecording = crm } }
 }
-test('account logout preserves unsaved recordings in both visit flows', () => {
+test('account logout preserves the current CRM visit recording', () => {
   const f = accountPageFixture()
-  for (const recording of [[true, false], [false, true]]) {
+  for (const recording of [[false, true]]) {
     f.recording(...recording); f.page.logout(); assert.equal(f.logoutCount(), 0)
   }
-  assert.equal(f.toasts.length, 2)
+  assert.equal(f.toasts.length, 1)
   f.recording(false, false); f.page.logout(); assert.equal(f.logoutCount(), 1)
 })
 test('photo capture opens only the camera and cancellation leaves no evidence', async () => {
   const f = mediaFixture()
-  await assert.rejects(f.media.crmTakePhoto('capture'), /拍照未完成/)
+  const pending = f.media.crmTakePhoto('capture')
+  assert.equal(f.cameras(), 1); f.camera().fail({})
+  await assert.rejects(pending, /拍照未完成/)
+  assert.equal(f.ruleCalls(), 0); assert.equal(f.locationCalls(), 0)
   assert.equal(f.cameras(), 1); assert.equal(f.uploads.length, 0)
   assert.equal(f.media.crmMedia('capture').photos.length, 0)
 })
@@ -343,6 +359,16 @@ test('recent same-account normalized location avoids a second GPS request but se
  assert.deepEqual(f.requests.find(r=>r.url==='/sales/work/store-visits').body.location,plain(point.location))
  assert.ok(stages.includes('核对拜访…'));assert.ok(stages.includes('正在进入…'))
 })
+test('a work-day receipt avoids duplicate day reads while creation still reaches the authoritative endpoint',async()=>{
+ const f=fixture();f.respond(visitHandler)
+ const point={owner:f.crm.crmOwner(),requestedAt:Date.now()-5000,receivedAt:Date.now()-2000,location:object({longitude:120.004,latitude:30.002,accuracyMeters:12,source:'APP_NATIVE'})}
+ await f.crm.crmStartVisit('100',100,point,null,null,'read-day')
+ assert.equal(f.requests.some(r=>r.url.includes('/work-days/')),false)
+ const command=f.requests.find(r=>r.url==='/sales/work/store-visits')
+ assert.equal(command.body.workDayId,'read-day');assert.equal(f.locations.length,0)
+ f.respond(url=>{if(url==='/sales/work/store-visits')throw new Error('工作日已结束');return visitHandler(url)})
+ await assert.rejects(f.crm.crmStartVisit('100',100,point,null,null,'read-day'),/工作日已结束/)
+})
 test('stale, clock-invalid, inaccurate or foreign-account prepared locations cannot be reused',async()=>{
  const f=fixture();const now=Date.now(),base={owner:f.crm.crmOwner(),requestedAt:now-5000,receivedAt:now-2000,location:object({longitude:120.004,latitude:30.002,accuracyMeters:12,source:'APP_NATIVE'})}
  for(const bad of [{...base,owner:'other'},{...base,requestedAt:now-31000},{...base,receivedAt:now+60000},{...base,requestedAt:NaN},{...base,location:object({longitude:120,latitude:30,accuracyMeters:200,source:'APP_NATIVE'})}]) assert.equal(f.crm.crmRecentVisitLocation(bad,100),null)
@@ -354,4 +380,60 @@ test('visit preparation fetches independent context in parallel and stops before
  const pending=f.crm.crmStartVisit('100',100,null,null,()=>current);await new Promise(setImmediate)
  assert.equal(finish.length,3);current=false;finish.forEach(resolve=>resolve())
  await assert.rejects(pending,/作业已取消/);assert.equal(f.locations.length,0);assert.equal(f.requests.some(r=>r.method==='POST'),false)
+})
+
+test('successful photo keeps camera source and validated coordinates, saves locally before upload', async () => {
+  const f = mediaFixture()
+  const pending = f.media.crmTakePhoto('capture')
+  f.camera().success({ tempFilePaths: ['/temporary/photo.jpg'] })
+  await pending
+  const photo = f.media.crmMedia('capture').photos[0]
+  assert.equal(photo.captureSource, 'APP_CAMERA')
+  assert.equal(photo.longitude, 120); assert.equal(photo.latitude, 30); assert.equal(photo.accuracyMeters, 10)
+  assert.equal(f.copies[0].srcPath, '/temporary/photo.jpg')
+  assert.ok(photo.capturedAt.length > 0)
+  await f.media.crmUploadPhotos('capture')
+  assert.equal(f.uploads[0].formData.captureSource, 'APP_CAMERA')
+  assert.equal(f.media.crmMedia('capture').photos[0].uploaded, true)
+})
+test('switching account while the camera is open cannot save or locate for the new owner', async () => {
+  const f = mediaFixture(); const pending = f.media.crmTakePhoto('capture')
+  f.session.userId = 'two'; f.session.revision++
+  f.camera().success({ tempFilePaths: ['/temporary/photo.jpg'] })
+  await assert.rejects(pending, /账号已变更/)
+  assert.equal(f.locationCalls(), 0); assert.equal(f.copies.length, 0); assert.equal(f.storage.size, 0)
+})
+
+
+test('photo returns with a fresh same-account location without another GPS or normalization request', async () => {
+  const f = mediaFixture()
+  const pending = f.media.crmTakePhoto('capture')
+  assert.equal(f.ruleCalls(), 0)
+  f.recentLocation({ owner: 'tenant:one:1:', requestedAt: Date.now() - 1000, receivedAt: Date.now(), location: { longitude: 121, latitude: 31, accuracyMeters: 15, source: 'APP_NATIVE' } })
+  f.camera().success({ tempFilePaths: ['/temporary/photo.jpg'] })
+  await pending
+  assert.equal(f.locationCalls(), 0)
+  assert.equal(f.media.crmMedia('capture').photos[0].longitude, 121)
+})
+test('photo rechecks cached location after camera return and rejects stale, imprecise or foreign fixes', async () => {
+  for (const change of [ { requestedAt: Date.now() - 31000 }, { owner: 'tenant:other:1' }, { accuracyMeters: 101 } ]) {
+    const f = mediaFixture()
+    const pending = f.media.crmTakePhoto('capture')
+    f.recentLocation({ owner: change.owner ?? 'tenant:one:1:', requestedAt: change.requestedAt ?? Date.now() - 1000, receivedAt: Date.now(), location: { longitude: 121, latitude: 31, accuracyMeters: change.accuracyMeters ?? 15, source: 'APP_NATIVE' } })
+    f.camera().success({ tempFilePaths: ['/temporary/photo.jpg'] })
+    await pending
+    assert.equal(f.locationCalls(), 1)
+    assert.equal(f.media.crmMedia('capture').photos[0].longitude, 120)
+  }
+})
+
+test('microphone foreground service stays active between automatic segments and stops after explicit finish', async () => {
+  const f = mediaFixture(); f.media.crmStartRecording('capture', true)
+  assert.ok(f.protection.includes('retain'))
+  f.saveRecording(); f.finishIndex([f.clip])
+  assert.equal(f.protection.includes('release'), false)
+  assert.equal(f.delayed.length, 1)
+  await f.media.crmFinishRecording('capture')
+  assert.equal(f.protection.at(-1), 'release')
+  f.delayed.shift()(); assert.equal(f.starts.length, 1)
 })

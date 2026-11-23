@@ -1,0 +1,3 @@
+import VisitRecordingService from 'com.rigour.workbench.capture.VisitRecordingService'
+export function startVisitRecordingService(): void { VisitRecordingService.start(UTSAndroid.getAppContext()!) }
+export function stopVisitRecordingService(): void { VisitRecordingService.stop(UTSAndroid.getAppContext()!) }

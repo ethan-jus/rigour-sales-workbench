@@ -1,47 +1,223 @@
 import { crmCall, crmObject } from './crm.uts'
 import { attendanceClock } from './attendance.uts'
-export type FieldEvent = { key: string, time: string, sortTime: string, title: string, subtitle: string, kind: string, captureId: string, longitude: number | null, latitude: number | null }
-export type FieldPoint = { latitude: number, longitude: number }
-export type FieldLine = { points: FieldPoint[], color: string, width: number }
-export type FieldMarker = { id: number, latitude: number, longitude: number, title: string, iconPath: string, width: number, height: number }
-export type FieldTrack = { distance: string, available: boolean, gaps: number, events: FieldEvent[], lines: FieldLine[], points: FieldPoint[], markers: FieldMarker[] }
+import { LocalTrackPoint } from './field-tracking.uts'
+import { routeDistance, routeGapMillis } from './track-motion.uts'
+export type FieldEvent = { key: string, time: string, sortTime: string, endedAt: string, title: string, kind: string, sequence: number, badge: string, reason: string, address: string, timeRange: string, dwell: string, dwellMinutes: number, captureId: string, longitude: number | null, latitude: number | null }
+export type FieldPoint = { latitude: number, longitude: number, time: number }
+export type FieldLine = { points: FieldPoint[], color: string, width: number, arrow: boolean }
+export type FieldMarker = { id: number, latitude: number, longitude: number, kind: string, eventIds: number[], sequences: number[] }
+export type FieldSegment = { key: string, toKey: string, title: string, timeRange: string, distance: string, lines: FieldLine[], points: FieldPoint[] }
+export type FieldTrack = { distance: string, distanceMeters: number, confirmedTrack: boolean, available: boolean, gaps: number, pointCount: number, lastPointAt: number, rejected: number, events: FieldEvent[], lines: FieldLine[], points: FieldPoint[], markers: FieldMarker[], segments: FieldSegment[], dwellMinutes: number, dwellIncomplete: boolean }
+export type FieldPreview = { lines: FieldLine[], tail: FieldPoint | null, distanceMeters: number }
 function rows(data: UTSJSONObject, key: string): UTSJSONObject[] { return (data[key] as UTSJSONObject[] | null) ?? [] as UTSJSONObject[] }
 function point(row: UTSJSONObject): FieldPoint | null {
   const latitude = row.getNumber('latitude'); const longitude = row.getNumber('longitude')
-  if (latitude == null || longitude == null || !Number.isFinite(latitude!) || !Number.isFinite(longitude!)) return null
-  return { latitude: latitude!, longitude: longitude! } as FieldPoint
+  if (latitude == null || longitude == null || !Number.isFinite(latitude!) || !Number.isFinite(longitude!) || Math.abs(latitude!) > 90 || Math.abs(longitude!) > 180) return null
+  const occurredAt = row.getString('clientOccurredAt') ?? ''
+  return { latitude: latitude!, longitude: longitude!, time: occurredAt.length == 0 ? 0 : Date.parse(occurredAt) } as FieldPoint
+}
+function line(points: FieldPoint[], confirmed: boolean = false): FieldLine { return { points, color: '#c64c1c', width: 4, arrow: !confirmed } as FieldLine }
+function localDistance(a: LocalTrackPoint, b: LocalTrackPoint): number {
+  return routeDistance(a.latitude, a.longitude, b.latitude, b.longitude)
+}
+function drawableLocalPoint(p: LocalTrackPoint, limit: number): boolean {
+  return p.source != 'APP_NETWORK' && Number.isFinite(p.time) && p.time > 0 && p.accuracy > 0 && p.accuracy <= limit
+      && Math.abs(p.latitude) <= 90 && Math.abs(p.longitude) <= 180
+}
+function localMapPoint(p: LocalTrackPoint): FieldPoint {
+  return { latitude: p.latitude, longitude: p.longitude, time: p.time } as FieldPoint
+}
+function overlappingFixes(a: LocalTrackPoint, b: LocalTrackPoint): boolean {
+  return localDistance(a, b) <= a.accuracy + b.accuracy
+}
+export function fieldTrackPreview(input: LocalTrackPoint[], confirmedAt: number, interval: number, maximumAccuracy: number | null): FieldPreview {
+  const legacy = legacyPreview(input.filter((p: LocalTrackPoint): boolean => p.confirmedTrack != true), confirmedAt, interval, maximumAccuracy)
+  const rows = input.filter((p: LocalTrackPoint): boolean => p.confirmedTrack).sort((a: LocalTrackPoint, b: LocalTrackPoint): number => a.time - b.time)
+  const fixes = new Map<string, LocalTrackPoint>()
+  const limit = Math.min(maximumAccuracy ?? 25, 25)
+  const maxGap = routeGapMillis(interval)
+  let path = [] as FieldPoint[]
+  let previousId = ''
+  let meters = 0
+  let tail = legacy.tail
+  for (const row of rows) {
+    if (row.source == 'APP_GPS' && drawableLocalPoint(row, limit)) fixes.set(row.id, row)
+    // The witness can arrive after all of the vertices it confirms.
+    if (row.time <= confirmedAt || row.routePath.length < 2) continue
+    const batch = [] as LocalTrackPoint[]
+    for (const id of row.routePath) {
+      const fix = fixes.get(id) ?? null
+      if (fix == null || fix!.session != row.session) break
+      batch.push(fix!)
+    }
+    if (batch.length != row.routePath.length) continue
+    if (batch[0].id != previousId) {
+      if (path.length > 1) legacy.lines.push(line(path, true))
+      path = [localMapPoint(batch[0])] as FieldPoint[]
+    }
+    for (let i = 1; i < batch.length; i++) {
+      const start = batch[i - 1]
+      const end = batch[i]
+      const elapsed = end.time - start.time
+      if (elapsed <= 0 || elapsed > maxGap) break
+      meters += localDistance(start, end)
+      tail = localMapPoint(end)
+      path.push(tail!)
+      previousId = end.id
+    }
+  }
+  if (path.length > 1) legacy.lines.push(line(path, true))
+  return { lines: legacy.lines, tail, distanceMeters: meters } as FieldPreview
+}
+function legacyPreview(input: LocalTrackPoint[], confirmedAt: number, interval: number, maximumAccuracy: number | null): FieldPreview {
+  const limit = maximumAccuracy ?? Number.POSITIVE_INFINITY
+  const maxGap = Math.max(180, Math.min(300, interval * 2))
+  const movingGap = Math.max(20, Math.min(maxGap, interval * 3))
+  const rows = input.slice().sort((a: LocalTrackPoint, b: LocalTrackPoint): number => a.time - b.time)
+  const lines = [] as FieldLine[]
+  let path = [] as FieldPoint[]
+  let previous: LocalTrackPoint | null = null
+  let anchor: LocalTrackPoint | null = null
+  let tail: FieldPoint | null = null
+  for (let i = 0; i < rows.length; i++) {
+    const current = rows[i]
+    if (!drawableLocalPoint(current, limit)) {
+      if (path.length > 1) lines.push(line(path))
+      path = [] as FieldPoint[]; previous = null; anchor = null
+      continue
+    }
+    if (previous != null) {
+      const elapsed = Math.floor((current.time - previous!.time) / 1000)
+      const hop = localDistance(previous!, current)
+      const gap = previous!.source == 'APP_GPS' && current.source == 'APP_GPS' ? movingGap : maxGap
+      const next = i + 1 < rows.length ? rows[i + 1] : null
+      const closeNext = next != null && drawableLocalPoint(next!, limit) && current.session == next!.session
+        && next!.time > current.time && next!.time - current.time <= maxGap * 1000
+      if (current.session == previous!.session && elapsed > 0 && elapsed <= maxGap
+        && current.accuracy >= previous!.accuracy * 2 && hop > previous!.accuracy + current.accuracy
+        && (next == null || (closeNext && current.accuracy >= next!.accuracy * 2 && overlappingFixes(previous!, next!)))) continue
+      if (current.session != previous!.session || elapsed <= 0 || elapsed > gap || hop / elapsed > 55) {
+        if (path.length > 1) lines.push(line(path))
+        path = [] as FieldPoint[]; anchor = null
+      } else if (anchor != null) {
+        const from = anchor!
+        if (!overlappingFixes(from, current)) {
+          if (closeNext && overlappingFixes(previous!, current) && overlappingFixes(current, next!) && overlappingFixes(from, next!)) continue
+          if (current.time > confirmedAt) {
+            if (path.length == 0) path.push(localMapPoint(from))
+            path.push(localMapPoint(current))
+          }
+          anchor = current
+        }
+      }
+    }
+    if (anchor == null) anchor = current
+    previous = current
+    if (anchor!.time > confirmedAt) tail = localMapPoint(anchor!)
+  }
+  if (path.length > 1) lines.push(line(path))
+  return { lines, tail, distanceMeters: 0 } as FieldPreview
+}
+// Rendering only: draw a repeated edge once, without reducing genuine return-trip mileage.
+export function visibleFieldLines(routes: FieldLine[]): FieldLine[] {
+  const seen = new Set<string>(); const result: FieldLine[] = []
+  for (const route of routes) {
+    let path: FieldPoint[] = []
+    for (let index = 1; index < route.points.length; index++) {
+      const from = route.points[index - 1]; const to = route.points[index]
+      const a = from.latitude.toFixed(5) + ',' + from.longitude.toFixed(5)
+      const b = to.latitude.toFixed(5) + ',' + to.longitude.toFixed(5)
+      const edge = a < b ? a + '|' + b : b + '|' + a
+      if (a == b || seen.has(edge)) {
+        if (path.length > 1) result.push({ points: path, color: route.color, width: route.width, arrow: route.arrow } as FieldLine)
+        path = []; continue
+      }
+      seen.add(edge)
+      if (path.length == 0) path.push(from)
+      path.push(to)
+    }
+    if (path.length > 1) result.push({ points: path, color: route.color, width: route.width, arrow: route.arrow } as FieldLine)
+  }
+  return result
 }
 export function parseFieldTrack(data: UTSJSONObject): FieldTrack {
   const events: FieldEvent[] = []; const lines: FieldLine[] = []; const points: FieldPoint[] = []; const markers: FieldMarker[] = []
+  const confirmedTrack = data.getBoolean('confirmedTrack') == true
   for (const leg of rows(data, 'legs')) {
-    const path: FieldPoint[] = []
-    for (const row of rows(leg, 'points')) { const p = point(row); if (p != null) { path.push(p!); points.push(p!) } }
-    if (path.length > 1) lines.push({ points: path, color: '#377eee', width: 5 } as FieldLine)
+    const confirmed = leg.getBoolean('confirmed') == true
+    let path: FieldPoint[] = []
+    for (const row of rows(leg, 'points')) {
+      const p = point(row)
+      if (p == null) { if (path.length > 1) lines.push(line(path, confirmed)); path = []; continue }
+      path.push(p!); points.push(p!)
+    }
+    if (path.length > 1) lines.push(line(path, confirmed))
   }
-  for (const row of rows(data, 'punches')) {
-    const time = row.getString('clientOccurredAt') ?? row.getString('serverReceivedAt') ?? ''
-    const position = point(row); const incoming = row.getString('eventType') == 'CHECK_IN'
-    events.push({ key: 'punch-' + events.length.toString(), time: attendanceClock(time), sortTime: time, title: incoming ? '上班签到' : '下班签退', subtitle: '', kind: incoming ? 'start' : 'end', captureId: '', longitude: position?.longitude ?? null, latitude: position?.latitude ?? null } as FieldEvent)
+  const punches = rows(data, 'punches')
+  for (let index = 0; index < punches.length; index++) {
+    const row = punches[index]; const type = row.getString('eventType') ?? ''
+    if (type != 'CHECK_IN' && type != 'CHECK_OUT') continue
+    const time = row.getString('serverReceivedAt') ?? row.getString('clientOccurredAt') ?? ''; const p = point(row); const incoming = type == 'CHECK_IN'
+    events.push({ key: 'punch-' + index.toString(), time: attendanceClock(time), sortTime: time, endedAt: time, title: incoming ? ((row.getString('resumeReason') ?? '').length > 0 ? '恢复作业' : '签到') : '签退', kind: incoming ? 'start' : 'end', sequence: 0, badge: '', reason: row.getString('resumeReason') ?? '', address: p == null ? '未记录打卡位置' : '地址加载中…', timeRange: attendanceClock(time), dwell: '', dwellMinutes: 0, captureId: '', longitude: p?.longitude ?? null, latitude: p?.latitude ?? null } as FieldEvent)
   }
+  let dwellMinutes = 0; let dwellIncomplete = false
   for (const row of rows(data, 'visits')) {
-    const time = row.getString('checkedInAt') ?? ''; const position = point(row)
-    events.push({ key: row.getString('visitId') ?? '', time: attendanceClock(time), sortTime: time, title: row.getString('storeName') ?? '门店拜访', subtitle: (row.getNumber('dwellMinutes') ?? 0).toString() + '分钟', kind: 'visit', captureId: row.getString('visitId') ?? '', longitude: position?.longitude ?? null, latitude: position?.latitude ?? null } as FieldEvent)
+    if (row.getString('status') == 'CANCELLED') continue
+    const time = row.getString('checkedInAt') ?? ''; const ended = row.getString('checkedOutAt') ?? ''; const p = point(row)
+    const minutes = row.getNumber('dwellMinutes') ?? -1
+    if (minutes >= 0) dwellMinutes += minutes; else dwellIncomplete = true
+    const duration = minutes < 0 ? '停留待确认' : minutes == 0 ? '停留不足1分钟' : minutes < 60 ? '停留 ' + minutes.toString() + '分钟' : '停留 ' + Math.floor(minutes / 60).toString() + '小时' + (minutes % 60).toString() + '分钟'
+    events.push({ key: row.getString('visitId') ?? '', time: attendanceClock(time), sortTime: time, endedAt: ended, title: row.getString('storeName') ?? '门店拜访', kind: 'visit', sequence: 0, badge: '', reason: '', address: row.getString('storeAddress') ?? '未记录门店地址', timeRange: attendanceClock(time) + '–' + (ended.length > 0 ? attendanceClock(ended) : '进行中'), dwell: duration, dwellMinutes: minutes, captureId: row.getString('visitId') ?? '', longitude: p?.longitude ?? null, latitude: p?.latitude ?? null } as FieldEvent)
   }
-  for (const gap of rows(data, 'gaps')) {
-    const time = gap.getString('from') ?? ''
-    events.push({ key: 'gap-' + events.length.toString(), time: attendanceClock(time), sortTime: time, title: gap.getString('reason') == 'IMPLAUSIBLE_SPEED' ? '定位跳跃待核查' : '轨迹缺失', subtitle: '至 ' + attendanceClock(gap.getString('to') ?? ''), kind: 'gap', captureId: '', longitude: null, latitude: null } as FieldEvent)
-  }
-  events.sort((a: FieldEvent, b: FieldEvent): number => a.sortTime < b.sortTime ? -1 : a.sortTime > b.sortTime ? 1 : 0)
+  events.sort((a: FieldEvent, b: FieldEvent): number => {
+    const first = a.sortTime.length > 0 ? Date.parse(a.sortTime) : Number.NaN; const second = b.sortTime.length > 0 ? Date.parse(b.sortTime) : Number.NaN
+    if (!Number.isFinite(first)) return Number.isFinite(second) ? 1 : 0
+    if (!Number.isFinite(second)) return -1
+    return first - second
+  })
+  let sequence = 0
   for (let i = 0; i < events.length; i++) {
     const event = events[i]
+    if (event.kind == 'visit') { sequence++; event.sequence = sequence; event.badge = sequence.toString() }
     if (event.longitude == null || event.latitude == null) continue
-    const location = { longitude: event.longitude!, latitude: event.latitude! } as FieldPoint
-    points.push(location)
-    const icon = event.kind == 'start' ? 'start' : event.kind == 'end' ? 'end' : 'visit'
-    markers.push({ id: i + 1, longitude: location.longitude, latitude: location.latitude, title: event.time + ' ' + event.title, iconPath: '/static/fieldwork/' + icon + '.png', width: 28, height: 34 } as FieldMarker)
+    points.push({ longitude: event.longitude!, latitude: event.latitude!, time: event.sortTime.length == 0 ? 0 : Date.parse(event.sortTime) } as FieldPoint)
+    if (event.kind == 'start' && events.slice(0, i).some((item: FieldEvent): boolean => item.kind == 'start')) continue
+    if (event.kind == 'end' && events.slice(i + 1).some((item: FieldEvent): boolean => item.kind == 'end' || item.kind == 'start')) continue
+    const same = markers.find((m: FieldMarker): boolean => m.kind == event.kind && m.latitude == event.latitude && m.longitude == event.longitude)
+    if (same != null) { same!.eventIds.push(i + 1); if (event.kind == 'visit') same!.sequences.push(event.sequence); continue }
+    markers.push({ id: i + 1, longitude: event.longitude!, latitude: event.latitude!, kind: event.kind, eventIds: [i + 1], sequences: event.kind == 'visit' ? [event.sequence] : [] } as FieldMarker)
+  }
+  const segments: FieldSegment[] = []
+  for (let i = 1; i < events.length; i++) {
+    const from = events[i - 1]; const to = events[i]
+    if (from.kind == 'end' || to.kind == 'start') continue
+    if (from.endedAt.length == 0 || to.sortTime.length == 0) continue
+    const start = Date.parse(from.endedAt); const end = Date.parse(to.sortTime)
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue
+    const selectedLines: FieldLine[] = []; const selectedPoints: FieldPoint[] = []
+    for (const route of lines) {
+      const path = route.points.filter((p: FieldPoint): boolean => p.time >= start && p.time <= end)
+      if (path.length > 1) { selectedLines.push(line(path, !route.arrow)); for (const p of path) selectedPoints.push(p) }
+    }
+    if (selectedLines.length == 0) continue
+    const measured = rows(data, 'segments').find((row: UTSJSONObject): boolean => row.getString('fromVisitId') == from.captureId && row.getString('toVisitId') == to.captureId && row.getString('distanceSource') == 'OBSERVED_ESTIMATE')
+    const distance = measured == null ? '' : ((measured!.getNumber('distanceMeters') ?? 0) / 1000).toFixed(1) + ' km'
+    segments.push({ key: from.key + ':' + to.key, toKey: to.key, title: from.title + ' → ' + to.title, timeRange: attendanceClock(from.endedAt) + '–' + attendanceClock(to.sortTime), distance, lines: selectedLines, points: selectedPoints } as FieldSegment)
   }
   const available = data.getBoolean('distanceAvailable') == true
-  const meters = data.getNumber('totalDistanceMeters') ?? 0
-  return { distance: available ? (meters / 1000).toFixed(1) + ' km' : '无法计算', available, gaps: rows(data, 'gaps').length, events, lines, points, markers } as FieldTrack
+  const samples = rows(data, 'points')
+  let lastPointAt = 0
+  for (const sample of samples) {
+    const stamp = sample.getString('clientOccurredAt') ?? ''
+    if (stamp.length > 0) { const time = Date.parse(stamp); if (Number.isFinite(time)) lastPointAt = Math.max(lastPointAt, time) }
+  }
+  const distanceMeters = data.getNumber('totalDistanceMeters') ?? 0
+  return { distance: available ? (distanceMeters / 1000).toFixed(1) : '', distanceMeters, confirmedTrack, available, gaps: rows(data, 'gaps').length, pointCount: samples.length, lastPointAt, rejected: data.getNumber('rejectedPointCount') ?? 0, events, lines, points, markers, segments, dwellMinutes, dwellIncomplete } as FieldTrack
 }
 export async function readFieldTrack(date: string): Promise<FieldTrack> { return parseFieldTrack(crmObject(await crmCall('/sales/me/work-days/' + date + '/track'))) }
+export type FieldPunchAddress = { key: string, address: string }
+export async function readPunchAddresses(date: string): Promise<FieldPunchAddress[]> {
+  const response = await crmCall('/sales/me/work-days/' + date + '/punch-addresses')
+  const items = (response['data'] as UTSJSONObject[] | null) ?? [] as UTSJSONObject[]
+  return items.map((item: UTSJSONObject): FieldPunchAddress => ({ key: item.getString('key') ?? '', address: item.getString('status') == 'RESOLVED' ? item.getString('address') ?? '地址暂未解析' : item.getString('status') == 'NO_LOCATION' ? '未记录打卡位置' : '地址暂未解析' } as FieldPunchAddress))
+}

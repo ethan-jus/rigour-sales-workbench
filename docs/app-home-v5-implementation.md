@@ -131,3 +131,19 @@ Sales 原 `/sales/me/activity-summary` 支持期间汇总；新增 `/api/v1/sale
 按用户截图缩减“待回款／待出库／今日待拜访”的行高。原生视图将64px最小高度与上下各16px内边距叠加，含分隔线后真机约97px；改为52px最小高度、无额外内边距，含分隔线后约53px。标题样式、图标、金额与数量、整行跳转保持原实现，三行总高度减少约132px，约45%。
 
 official静态审计及三端编译通过，鸿蒙未签名HAP制作成功。新代码已从原项目同步到现有Android手机，实际三行分别为146／146／145物理像素（设备密度2.75），图标、名称和数量垂直居中，整行仍可点击。证据位于 `outputs/app-ui-20261112/`：`todos-compact-final-device.png`、`todos-compact-ui.xml`、`home-todos-compact-ios.log`、`home-todos-compact-harmony.log`、`home-todos-compact-android-device.log`。本轮仅修改待办行样式，不新增或重复执行业务单测。
+
+
+## 2026-11-19 月度经营目标来源修正
+
+用户确认：只改目标来源，保留整单结清月份、按回款人贡献计入完成值的规则。本节覆盖 11 月 11 日关于首页使用薪酬 `FULLY_PAID_RECEIPT_BASIS` 目标的旧约定；薪酬模块自身的阶段规则不变。
+
+- 首页销售指标来自 HR 月度经营指标的 `SALES_OWNER / SALES_AMOUNT`，回款指标来自 `SALES_OWNER / RECEIPT_AMOUNT`。两者按本人员工编码和所选月份读取；显式设置的 0 也有效，缺省时沿用月度经营指标页自身的默认规则。APP 和 Order 不设置固定的 40,000、20,000 或 7,000。
+- HR 新增签名 SERVICE 接口 `GET /api/v1/hr/target-settings/business-values?employeeCode=&from=&to=`，返回 `salesTargetAmount`、`receiptTargetAmount`。复用后台月度指标的有效值解析；最多累计 12 个月，保留租户、员工和服务权限限制。旧 `/performance-value` 为已运行的旧 Order 保留兼容，返回同源的回款经营目标。
+- Order `summary` 新增 `salesTargetAmount`，读取 HR 前核对本人身份；`performance.targetAmount` 改读回款经营目标。`completedAmount` 和明细的整单结清/回款人贡献 SQL 不变。HR 目标在订单聚合缓存之外读取，后台更改后下一次成功请求即可更新。
+- 首页交易额下新增对应期间的销售指标；业绩区将“指标”标为“回款指标”。今日仍展示本月目标，上月/历史月取对应月份，本年累计 1 月至当月。两个目标沿用现有首页并行请求，不新增 APP 请求。
+- 首页订单和业绩展示缓存采用新的 `business-targets` 键，避免显示旧薪酬目标快照；继续按环境、租户、用户、权限和日期隔离，实时刷新失败清除。无数据库迁移、生产操作、安装或临时打卡数据删除。
+
+验证状态：后端 28 项定向检查、APP 409 项测试通过；包含目标默认/覆盖/零值/跨月、服务鉴权、本人约束、错误响应、旧缓存隔离和期间/账号切换。完整编译及 DEV 运行验收结果见后续验收记录；本节不表示生产已生效。
+
+
+2026-11-19 DEV 补验：合并后的 IAM V158/159/160 已成功且健康，正常原生登录/PKCE 后，当前 dev 员工的 summary/performance 本月目标为 40000/20000，上月一致，本年累计 440000/220000；六个请求 HTTP200，跨员工请求403。完成值按原整单结清口径返回。账号当前绑定向韬，张松的 DEV 个人经营目标无覆盖、由同一 HR 默认逻辑提供40000/20000；未伪装为张松登录验收。临时验证会话已注销。手机生产配置及安装包没有变更，生产展示未发布/验收。

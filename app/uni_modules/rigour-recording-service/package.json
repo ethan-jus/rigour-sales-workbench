@@ -1,0 +1,1 @@
+{"id":"rigour-recording-service","displayName":"拜访后台录音服务","version":"1.0.0","description":"Android 拜访录音期间的麦克风前台服务","uni_modules":{"type":"uts","dependencies":[],"encrypt":[],"platforms":{"client":{"App":{"app-android":"y","app-ios":"n"}}}}}

@@ -1,0 +1,65 @@
+// #ifdef APP-ANDROID
+import Bitmap from 'android.graphics.Bitmap'
+import Canvas from 'android.graphics.Canvas'
+import Paint from 'android.graphics.Paint'
+import Path from 'android.graphics.Path'
+import Color from 'android.graphics.Color'
+import Typeface from 'android.graphics.Typeface'
+import File from 'java.io.File'
+import FileOutputStream from 'java.io.FileOutputStream'
+import { FieldMarker } from '../../services/fieldwork.uts'
+export type FieldMarkerIcon = { path: string, width: number, height: number, anchorX: number, anchorY: number }
+export function fieldMarkerIcon(marker: FieldMarker, mirror: boolean): FieldMarkerIcon {
+  const visit = marker.kind == 'visit'
+  const labels = marker.sequences.slice(0, 3).map((value: number): string => value.toString())
+  if (marker.sequences.length > 3) labels.push('+' + (marker.sequences.length - 3).toString())
+  const width = visit ? Math.max(1, labels.length) * 28 : 36
+  const height = visit ? 28 : 38
+  const directory = new File(UTSAndroid.getAppContext()!.getCacheDir(), 'field-markers-v4')
+  directory.mkdirs()
+  const file = new File(directory, marker.kind + (mirror ? '-left-' : '-') + labels.join('-') + '.png')
+  if (!file.exists()) {
+    const bitmap = Bitmap.createBitmap((width * 3).toInt(), (height * 3).toInt(), Bitmap.Config.ARGB_8888)
+    const canvas = new Canvas(bitmap); const paint = new Paint(Paint.ANTI_ALIAS_FLAG)
+    canvas.scale((3).toFloat(), (3).toFloat())
+    if (visit) {
+      paint.setTypeface(Typeface.create('sans-serif-medium', Typeface.NORMAL)); paint.setTextAlign(Paint.Align.CENTER)
+      for (let i = 0; i < labels.length; i++) {
+        const center = i * 28 + 14
+        paint.setColor(Color.WHITE); canvas.drawCircle(center.toFloat(), (14).toFloat(), (13).toFloat(), paint)
+        paint.setColor(Color.parseColor('#E96326')); canvas.drawCircle(center.toFloat(), (14).toFloat(), (11).toFloat(), paint)
+        paint.setColor(Color.WHITE); paint.setTextSize((labels[i].length > 2 ? 10 : 12).toFloat())
+        const metrics = paint.getFontMetrics()
+        canvas.drawText(labels[i], center.toFloat(), (14 - (metrics.ascent + metrics.descent) / 2).toFloat(), paint)
+      }
+    } else {
+      if (mirror) { canvas.translate(width.toFloat(), (0).toFloat()); canvas.scale((-1).toFloat(), (1).toFloat()) }
+      const flag = new Path()
+      flag.moveTo((7).toFloat(), (33).toFloat()); flag.lineTo((7).toFloat(), (4).toFloat())
+      if (marker.kind == 'start') {
+        flag.lineTo((30).toFloat(), (12).toFloat()); flag.lineTo((7).toFloat(), (20).toFloat())
+      } else {
+        flag.lineTo((27).toFloat(), (4).toFloat()); flag.lineTo((27).toFloat(), (20).toFloat()); flag.lineTo((7).toFloat(), (20).toFloat())
+      }
+      paint.setStyle(Paint.Style.STROKE); paint.setStrokeJoin(Paint.Join.ROUND); paint.setStrokeCap(Paint.Cap.ROUND)
+      paint.setColor(Color.WHITE); paint.setStrokeWidth((5).toFloat()); canvas.drawPath(flag, paint)
+      paint.setColor(Color.parseColor(marker.kind == 'start' ? '#246BEB' : '#273442'))
+      paint.setStrokeWidth((2.5).toFloat()); canvas.drawPath(flag, paint)
+      paint.setStyle(Paint.Style.FILL)
+      if (marker.kind == 'start') canvas.drawPath(flag, paint)
+      else {
+        paint.setColor(Color.WHITE); canvas.drawRect((7).toFloat(), (4).toFloat(), (27).toFloat(), (20).toFloat(), paint)
+        paint.setColor(Color.parseColor('#273442'))
+        for (let row = 0; row < 4; row++) {
+          for (let col = 0; col < 4; col++) {
+            if ((row + col) % 2 == 0) canvas.drawRect((7 + col * 5).toFloat(), (4 + row * 4).toFloat(), (12 + col * 5).toFloat(), (8 + row * 4).toFloat(), paint)
+          }
+        }
+      }
+    }
+    const stream = new FileOutputStream(file)
+    try { bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream) } finally { stream.close(); bitmap.recycle() }
+  }
+  return { path: file.getAbsolutePath(), width, height, anchorX: visit ? 0.5 : mirror ? 29.0 / 36 : 7.0 / 36, anchorY: visit ? 0.5 : 33.0 / 38 } as FieldMarkerIcon
+}
+// #endif

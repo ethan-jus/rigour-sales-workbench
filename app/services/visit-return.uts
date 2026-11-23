@@ -1,0 +1,15 @@
+import { reactive } from 'vue'
+import { crmOwner } from './crm.uts'
+export type VisitReturn = { owner: string, store: string, name: string, plan: string }
+export const visitReturn = reactive({ owner: '', store: '', name: '', plan: '' } as VisitReturn)
+export function clearVisitReturn(): void { visitReturn.owner = ''; visitReturn.store = ''; visitReturn.name = ''; visitReturn.plan = '' }
+export function visitReturnReady(): boolean { return visitReturn.owner == crmOwner() && visitReturn.store.length > 0 }
+export function signInForStore(store: string, name: string, plan: string): void {
+  visitReturn.owner = crmOwner(); visitReturn.store = store; visitReturn.name = name; visitReturn.plan = plan
+  uni.switchTab({ url: '/pages/visits/visits' })
+}
+export function returnToVisitStore(): void {
+  if (!visitReturnReady()) { clearVisitReturn(); return }
+  const url = '/pages/customer-detail/customer-detail?id=' + encodeURIComponent(visitReturn.store) + '&source=MINE&plan=' + encodeURIComponent(visitReturn.plan)
+  uni.navigateTo({ url: url, success: (_) => clearVisitReturn() })
+}

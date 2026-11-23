@@ -1,0 +1,52 @@
+<template>
+  <scroll-view class="sw-page" direction="vertical"><view class="me-content">
+    <template v-if="view == 'help'">
+      <text class="me-note me-spacer">常见问题与操作说明</text>
+      <view v-for="article in articles" :key="article.id" class="me-row" @click="open(article.id)"><text class="me-label sw-grow">{{ article.title }}</text><image class="me-chevron" src="/static/home/chevron-right.svg" /></view>
+    </template>
+    <template v-else-if="view == 'permissions'">
+      <text class="me-note me-spacer">按使用场景申请权限，可随时在手机系统设置中管理。</text>
+      <view class="permission-item"><text class="me-label">定位</text><text class="me-note">用于签到、签退、到店核验与外勤轨迹。请开启系统定位，并允许应用使用精确位置。</text></view>
+      <view class="permission-item"><text class="me-label">麦克风</text><text class="me-note">用于拜访录音和声音登记。拒绝后将无法开始录音。</text></view>
+      <view class="permission-item"><text class="me-label">相机</text><text class="me-note">用于现场拍照与拜访材料采集。拒绝后将无法打开相机。</text></view>
+      <text class="me-note me-spacer">实际授权状态以手机系统设置为准。修改权限后返回应用重试原操作。</text>
+      <button class="me-primary" @click="authorize">打开系统设置</button>
+      <text v-if="error.length > 0" class="me-error">{{ error }}</text>
+    </template>
+    <template v-else>
+      <text class="me-title">{{ selectedArticle?.title ?? '使用帮助' }}</text>
+      <text v-for="paragraph in paragraphs" :key="paragraph" class="help-paragraph">{{ paragraph }}</text>
+      <button v-if="view == 'sync'" class="me-secondary" @click="uploads">查看材料同步</button>
+      <button v-if="view == 'voice'" class="me-secondary" @click="open('permissions')">查看权限说明</button>
+    </template>
+  </view></scroll-view>
+</template>
+<script setup lang="uts">
+type HelpArticle = { id: string, title: string, paragraphs: string[] }
+const articles: HelpArticle[] = [
+  { id: 'visit', title: '怎样完成一次有效拜访？', paragraphs: ['到店后从客户页面开始拜访，按页面提示完成现场照片、录音和拜访内容。', '到店范围、照片数量、停留及录音时长，以本次拜访显示的适用规则为准。录音需要保存并同步，未上传材料不会直接计为已完成。', '提交后，可在拜访详情查看核验结果和未通过原因。材料已同步、已提交与有效拜访是不同状态。'] } as HelpArticle,
+  { id: 'sync', title: '材料没有同步成功怎么办？', paragraphs: ['保持网络连接，在“材料同步”中点击重新同步。同步期间请保持应用打开。', '未同步材料会保留在本机。不要卸载应用或清除应用数据；退出后需重新登录原账号才能继续处理。', '材料同步成功后，回到对应拜访查看提交与核验状态。若仍失败，请记录页面错误信息并联系公司管理员。'] } as HelpArticle,
+  { id: 'voice', title: '声音登记有什么用？', paragraphs: ['登记后，公司拜访录音识别到你的声音时，可以显示你的姓名。声音登记不替代拜访录音，也不是有效拜访判定条件。', '在安静环境中由本人自然朗读，建议20–30秒，至少15秒。登记前需主动同意声音用途。', '可重新登记或删除。删除后，之后不再通过这份声音特征识别你的姓名。'] } as HelpArticle,
+  { id: 'info', title: '个人资料不正确怎么办？', paragraphs: ['姓名、公司、账号和工号由公司员工档案及账号系统提供。应用内不能直接修改。', '工号未确认时，可在个人资料中重新识别身份。资料仍不正确时，请联系公司管理员核对员工档案与账号绑定。'] } as HelpArticle
+]
+const view = ref('help'); const error = ref('')
+const selectedArticle = computed((): HelpArticle | null => articles.find((item: HelpArticle): boolean => item.id == view.value) ?? null)
+const paragraphs = computed((): string[] => selectedArticle.value?.paragraphs ?? [] as string[])
+function open(kind: string): void { uni.navigateTo({ url: '/pages/profile-help/profile-help?view=' + kind }) }
+function uploads(): void { uni.navigateTo({ url: '/pages/visit-uploads/visit-uploads' }) }
+function authorize(): void {
+  error.value = ''
+  // #ifdef APP
+  uni.openAppAuthorizeSetting({ fail: (_) => { error.value = '未能打开，请到手机设置 → 应用 → 销售工作台 → 权限中管理。' } })
+  // #endif
+  // #ifndef APP
+  error.value = '请到手机设置 → 应用 → 销售工作台 → 权限中管理。'
+  // #endif
+}
+onLoad((options) => { const kind = options?.getString('view') ?? 'help'; view.value = kind == 'permissions' || articles.some((item: HelpArticle): boolean => item.id == kind) ? kind : 'help'; uni.setNavigationBarTitle({ title: view.value == 'permissions' ? '应用权限' : '使用帮助' }) })
+</script>
+<style>
+@import '../../styles/profile-ui.css';
+.help-paragraph { font-size: 15px; line-height: 26px; color: #454d55; margin-bottom: 20px; }
+.permission-item { padding: 22px 0; border-bottom-style: solid; border-bottom-width: 1px; border-bottom-color: #eceef0; }
+</style>

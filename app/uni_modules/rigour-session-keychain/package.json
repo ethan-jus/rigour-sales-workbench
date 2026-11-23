@@ -1,0 +1,1 @@
+{"id":"rigour-session-keychain","displayName":"销售工作台 iOS 登录凭据存储","version":"1.0.0","description":"使用 iOS Keychain 保存销售工作台登录凭据","uni_modules":{"type":"uts","dependencies":[],"encrypt":[],"platforms":{"client":{"App":{"app-android":"n","app-ios":"y"}}}}}

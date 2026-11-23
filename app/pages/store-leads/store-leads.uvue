@@ -1,0 +1,28 @@
+<template>
+  <view class="sw-page i-page">
+    <view class="c-filters i-content"><button v-for="f in filters" :key="f.code" :class="status == f.code ? 'i-link c-orange' : 'i-link'" :disabled="loading" @click="filter(f.code)">{{ f.name }}</button></view>
+    <scroll-view class="sw-grow" direction="vertical"><view class="i-content">
+      <view v-for="row in rows" :key="row.id" class="i-row" @click="open(row.id)"><view class="sw-between"><text class="i-name sw-grow">{{ row.name }}</text><text :class="row.status == 'REJECTED' ? 'i-tag' : 'i-tag i-tag-blue'">{{ row.statusLabel }}</text></view><text class="i-address">{{ row.address }}</text><text v-if="row.reason.length > 0" class="i-caption">{{ row.reason }}</text><text class="i-caption">{{ row.submittedAt }}</text></view>
+      <text v-if="loading" class="i-caption">正在加载…</text><view v-if="!loading && rows.length == 0 && error.length == 0" class="i-empty"><text class="i-name">暂无提报</text><text class="i-address">手动填写的门店会在这里显示进度。</text></view>
+      <view v-if="error.length > 0" class="c-error"><text class="c-error-text">{{ error }}</text><button class="i-link" :disabled="loading" @click="reload">重试</button></view><button v-if="rows.length < total" class="i-link" :disabled="loading" @click="more">加载更多</button>
+    </view></scroll-view>
+  </view>
+</template>
+<script setup lang="uts">
+import { crmOwner, crmMessage, crmTime } from '../../services/crm.uts'
+import { StoreLead, intakeLeads } from '../../services/store-intake.uts'
+type LeadFilter = { code: string, name: string }
+const filters = [{ code: '', name: '全部' } as LeadFilter, { code: 'PENDING_REVIEW', name: '待审核' } as LeadFilter, { code: 'REJECTED', name: '已退回' } as LeadFilter, { code: 'APPROVED', name: '已入库' } as LeadFilter]
+const rows = ref<StoreLead[]>([]); const status = ref(''); const loading = ref(false); const error = ref(''); const total = ref(0)
+let page = 1; let generation = 0; let account = ''
+async function load(append: boolean): Promise<void> { if (loading.value || account != crmOwner()) return; const request = ++generation; loading.value = true; error.value = ''; const next = append ? page + 1 : 1; try { const result = await intakeLeads(next, status.value); if (request != generation || account != crmOwner()) return; for (const row of result.items) row.submittedAt = crmTime(row.submittedAt); rows.value = append ? rows.value.concat(result.items) : result.items; total.value = result.total; page = next } catch (e) { if (request == generation) error.value = crmMessage(e) } finally { if (request == generation) loading.value = false } }
+function reload(): void { load(false) }
+function more(): void { load(true) }
+function filter(value: string): void { status.value = value; rows.value = []; total.value = 0; reload() }
+function open(id: string): void { uni.navigateTo({ url: '/pages/store-lead/store-lead?id=' + id }) }
+onShow(() => { account = crmOwner(); reload() }); onUnload(() => { generation++ })
+watch((): string => crmOwner(), (_owner: string) => { generation++; rows.value = []; total.value = 0; error.value = '账号已变更，请重新进入'; loading.value = false })
+</script>
+<style>
+@import '../../styles/store-intake.css';
+</style>

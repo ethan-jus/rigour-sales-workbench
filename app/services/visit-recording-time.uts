@@ -1,0 +1,11 @@
+// The same clip can exist locally and on the server. Uploading it must not add time twice.
+export type VisitRecordingTime = { id: string, durationMs: number }
+export function visitRecordingTotal(local: VisitRecordingTime[], remote: VisitRecordingTime[], activeMs: number): number {
+  const durations = new Map<string, number>()
+  local.concat(remote).forEach((clip: VisitRecordingTime) => {
+    if (clip.id.length > 0) durations.set(clip.id, Math.max(durations.get(clip.id) ?? 0, clip.durationMs))
+  })
+  let total = Math.max(0, activeMs)
+  durations.forEach((duration: number, _id: string) => { total += Math.max(0, duration) })
+  return total
+}

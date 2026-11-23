@@ -2,6 +2,7 @@ import { requestDeviceLocation, DeviceLocation } from './location.uts'
 import { crmCall, crmObject, crmStore, crmValidateCount, crmOwner, crmRecentVisitLocation, CrmVisitLocation } from './crm.uts'
 import { readCustomerSnapshot, refreshCustomerSnapshot } from './customer-cache.uts'
 import { CustomerRow, customerStoreRow, customerHistoryRow, customerPeriodQuery } from './customer-workbench.uts'
+import { appEnvironment } from './config.uts'
 
 export type NearbyOrigin = { gpsLongitude: number, gpsLatitude: number, gcjLongitude: number, gcjLatitude: number }
 export type NearbyPage = { items: CustomerRow[], total: number, cursor: string, origin: NearbyOrigin }
@@ -36,7 +37,7 @@ export function customerNearbyOriginSnapshot(): NearbyOrigin | null {
   return data == null ? null : parseOrigin(data)
 }
 export function customerNearbyVisitLocation(): CrmVisitLocation | null {
-  const data = readCustomerSnapshot(originSnapshotKey, 30000)
+  const data = readCustomerSnapshot(originSnapshotKey)
   if (data == null) return null
   const origin = parseOrigin(data)
   const point = { owner: crmOwner(), requestedAt: data.getNumber('requestedAt') ?? 0, receivedAt: data.getNumber('receivedAt') ?? 0,
@@ -44,14 +45,20 @@ export function customerNearbyVisitLocation(): CrmVisitLocation | null {
   return crmRecentVisitLocation(point) == null ? null : point
 }
 export async function customerNearbyLocation(kind: string, force: boolean = false): Promise<NearbyOrigin> {
-  const cached = force ? null : readCustomerSnapshot(originSnapshotKey, 30000)
-  if (cached != null) return parseOrigin(cached)
+  const cached = force ? null : customerNearbyVisitLocation()
+  // Use collection age, not cache-write age; renew with headroom before the 30s visit limit.
+  if (cached != null && Date.now() - cached.requestedAt < 15000) {
+    const origin = customerNearbyOriginSnapshot()
+    if (origin != null) return origin
+  }
   const data = await refreshCustomerSnapshot(originSnapshotKey, async (): Promise<UTSJSONObject> => {
     const point = await new Promise<DeviceLocation>((resolve, reject) => { requestDeviceLocation((p: DeviceLocation) => resolve(p), (message: string) => reject(new Error(message)), 3000) })
     if (point.accuracy != null && point.accuracy! > 200) throw new Error('当前定位精度不足，请到开阔位置重试')
+    const normalizeStartedAt = Date.now()
     const result = crmObject(await crmCall('/crm/stores/nearby/origin?view=' + (kind == 'PUBLIC' ? 'PUBLIC' : 'MINE') + pointQuery(point.longitude, point.latitude)))
     parseOrigin(result)
     result['accuracyMeters'] = point.accuracy; result['requestedAt'] = point.requestedAt; result['receivedAt'] = point.receivedAt
+    if (appEnvironment.environment == 'development') console.log('[DEV CUSTOMER LOCATION] deviceMs=' + (point.receivedAt - point.requestedAt).toString() + ' normalizeMs=' + (Date.now() - normalizeStartedAt).toString() + ' ageMs=' + (Date.now() - point.requestedAt).toString())
     return result
   })
   return parseOrigin(data)

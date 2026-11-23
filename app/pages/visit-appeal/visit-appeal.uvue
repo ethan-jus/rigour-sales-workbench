@@ -1,0 +1,43 @@
+<template>
+  <view class="sw-page">
+    <scroll-view class="vr-scroll" direction="vertical"><view class="vr-content">
+      <text class="vr-title">{{ storeName }}</text><text v-if="timeText.length > 0" class="vr-time">{{ timeText }}</text>
+      <text v-if="loading" class="vr-loading">正在读取申诉状态…</text>
+      <view v-if="error.length > 0" class="vr-error"><text class="vr-error-text">{{ error }}</text><button class="vr-action" :disabled="loading || busy" @click="load">刷新状态</button></view>
+      <view v-if="result != null" class="vr-state"><view class="sw-grow"><text class="vr-heading">{{ result!.label }}</text><text class="vr-muted vr-reason">{{ result!.reason }}</text></view></view>
+      <view v-if="result?.canAppeal == true" class="vr-form"><text class="vr-heading">申诉原因 <text class="vr-required">*</text></text><textarea class="vr-input" v-model="reason" :disabled="busy" maxlength="2000" placeholder="说明实际到店及沟通情况，便于重新核实" /><text v-if="reasonError.length > 0" class="vr-error-text vr-reason">{{ reasonError }}</text><text class="vr-counter">{{ reason.length }}/2000</text></view>
+      <text v-else-if="result != null" class="vr-muted vr-reason">当前状态不可再次申诉，请返回查看核验结果。</text>
+      <view v-if="capture.length > 0" class="vr-row" hover-class="sw-pressed" @click="evidence"><text class="vr-body">录音与原文</text><text class="vr-value">查看</text><image class="vr-arrow" src="/static/home/chevron-right.svg" /></view>
+    </view></scroll-view>
+    <view v-if="result?.canAppeal == true" class="vr-footer"><view class="vr-footer-inner"><button class="vr-primary" hover-class="sw-pressed" :loading="busy" :disabled="busy || loading || error.length > 0" @click="submit">{{ busy ? '提交中…' : '提交申诉' }}</button></view></view>
+  </view>
+</template>
+<script setup lang="uts">
+import { crmOwner, crmMessage } from '../../services/crm.uts'
+import { readVisitVerification, appealVisit, VisitVerification } from '../../services/visit-verification.uts'
+const result = ref<VisitVerification | null>(null); const reason = ref(''); const reasonError = ref(''); const error = ref(''); const loading = ref(false); const busy = ref(false); const capture = ref('')
+const storeName = ref('本次拜访'); const timeText = ref('')
+let store = ''; let visit = ''; let owner = ''; let disposed = false
+async function load(): Promise<void> {
+  if (loading.value || busy.value || disposed || store.length == 0 || visit.length == 0) return
+  loading.value = true; error.value = ''; const current = owner
+  try { const value = await readVisitVerification(store, visit); if (!disposed && current == crmOwner()) result.value = value }
+  catch (e) { if (!disposed && current == crmOwner()) error.value = crmMessage(e) } finally { loading.value = false }
+}
+async function submit(): Promise<void> {
+  if (busy.value || loading.value || disposed || owner != crmOwner() || error.value.length > 0 || result.value?.canAppeal != true) return
+  if (reason.value.trim().length == 0) { reasonError.value = '请填写申诉原因'; return }
+  busy.value = true; reasonError.value = ''; error.value = ''; const current = owner
+  try {
+    const value = await appealVisit(store, visit, result.value!.revision, reason.value)
+    if (!disposed && current == crmOwner()) { result.value = value; reason.value = ''; uni.showToast({ title: '申诉已提交', icon: 'success' }); uni.navigateBack() }
+  } catch (e) { if (!disposed && current == crmOwner()) error.value = crmMessage(e) } finally { busy.value = false }
+}
+function evidence(): void { if (busy.value) return; uni.navigateTo({ url: '/pages/visit-evidence/visit-evidence?visit=' + encodeURIComponent(capture.value) + '&store=' + encodeURIComponent(storeName.value) + '&time=' + encodeURIComponent(timeText.value) }) }
+onLoad((query) => { store = query['store'] ?? ''; visit = query['visit'] ?? ''; capture.value = query['capture'] ?? ''; storeName.value = query['name'] ?? '本次拜访'; timeText.value = query['time'] ?? ''; owner = crmOwner() })
+onShow(() => { if (owner.length > 0 && owner != crmOwner()) { result.value = null; reason.value = ''; disposed = true; uni.navigateBack(); return }; load() })
+onUnload(() => { disposed = true })
+</script>
+<style>
+@import '../../styles/visit-review.css';
+</style>

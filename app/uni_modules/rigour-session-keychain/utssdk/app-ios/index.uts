@@ -1,0 +1,20 @@
+export function readSecurePayload(scope: string, success: (value: string | null) => void, fail: (message: string) => void): void {
+  RigourSessionKeychain.read(scope, (ok: boolean, value: string | null): void => {
+    if (ok) success(value)
+    else fail('无法读取安全数据。')
+  })
+}
+
+export function writeSecurePayload(scope: string, value: string, success: () => void, fail: (message: string) => void): void {
+  RigourSessionKeychain.write(scope, value, (ok: boolean): void => {
+    if (ok) success()
+    else fail('无法安全保存数据，请重试。')
+  })
+}
+
+export function clearSecurePayload(scope: string, success: () => void, fail: (message: string) => void): void {
+  RigourSessionKeychain.clear(scope, (ok: boolean): void => {
+    if (ok) success()
+    else fail('无法完全清除安全数据，请重试。')
+  })
+}

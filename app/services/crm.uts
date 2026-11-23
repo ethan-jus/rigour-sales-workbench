@@ -4,9 +4,10 @@ import { requestSalesApi } from './sales-profile.uts'
 import { requestDeviceLocation, DeviceLocation } from './location.uts'
 import { readCustomerSnapshot, refreshCustomerSnapshot, invalidateCustomerCache } from './customer-cache.uts'
 
-export type CrmStore = { id: string, name: string, address: string, displayAddress: string, cooldown: string, publicPhone: string, revision: number, ownerEmployeeId: string, ownershipId: string, pool: string, phase: string, deadline: string, businessStatus: string, claimBlocked: string, lastVisit: string, lastOrder: string, holdReason: string, longitude: number | null, latitude: number | null, coordinateSystem: string, storeType: string | null }
+export type CrmStore = { id: string, name: string, address: string, displayAddress: string, cooldown: string, publicPhone: string, revision: number, ownerEmployeeId: string, ownershipId: string, pool: string, phase: string, deadline: string, businessStatus: string, claimBlocked: string, lastVisit: string, lastSubmittedVisit: string, lastSubmittedVisitStatus: string, lastOrder: string, holdReason: string, longitude: number | null, latitude: number | null, coordinateSystem: string, storeType: string | null }
 export type CrmMethod = { id: string, type: string, value: string, status: string, revision: number }
-export type CrmContact = { id: string, name: string, role: string, primary: boolean, status: string, revision: number, personRevision: number, methods: CrmMethod[] }
+export type CrmWecomRelation = { employeeId: string, employeeName: string, status: string, addedAt: string }
+export type CrmContact = { id: string, name: string, role: string, primary: boolean, status: string, revision: number, personRevision: number, methods: CrmMethod[], wecomRelations: CrmWecomRelation[], wecom: boolean, hasPhone: boolean, relationText: string }
 export type CrmPage = { items: CrmStore[], total: number, cursor: string }
 export type CrmVisit = { visitId: string, captureId: string, storeId: string, ownershipId: string }
 export type CrmVisitLocation = { owner: string, requestedAt: number, receivedAt: number, location: UTSJSONObject }
@@ -85,11 +86,14 @@ export async function crmPublicAreas(): Promise<CrmArea[]> {
   return areas.map((a: UTSJSONObject): CrmArea => ({ code: a.getString('code') ?? '', name: a.getString('name') ?? '', level: a.getString('level') ?? '', parent: a.getString('parentCode') ?? '' } as CrmArea))
 }
 export function crmStore(row: UTSJSONObject): CrmStore {
-  return { id: row.getString('id') ?? '', name: row.getString('name') ?? '', address: row.getString('address') ?? '', displayAddress: crmDisplayAddress(row), cooldown: row.getString('cooldownUntil') ?? '', publicPhone: row.getString('publicPhone') ?? '', revision: row.getNumber('revision') ?? 0, ownerEmployeeId: row.getString('ownerEmployeeId') ?? '', ownershipId: row.getString('currentOwnershipId') ?? '', pool: row.getString('poolType') ?? '', phase: row.getString('phase') ?? '', deadline: row.getString('deadlineAt') ?? '', businessStatus: row.getString('businessStatus') ?? '', claimBlocked: row.getString('claimBlockedReason') ?? '', lastVisit: row.getString('lastVisitAt') ?? '', lastOrder: row.getString('lastOrderAt') ?? '', holdReason: row.getString('holdReason') ?? '', longitude: row.getNumber('longitude'), latitude: row.getNumber('latitude'), coordinateSystem: row.getString('coordinateSystem') ?? '', storeType: row.getString('storeTypeCode') } as CrmStore
+  return { id: row.getString('id') ?? '', name: row.getString('name') ?? '', address: row.getString('address') ?? '', displayAddress: crmDisplayAddress(row), cooldown: row.getString('cooldownUntil') ?? '', publicPhone: row.getString('publicPhone') ?? '', revision: row.getNumber('revision') ?? 0, ownerEmployeeId: row.getString('ownerEmployeeId') ?? '', ownershipId: row.getString('currentOwnershipId') ?? '', pool: row.getString('poolType') ?? '', phase: row.getString('phase') ?? '', deadline: row.getString('deadlineAt') ?? '', businessStatus: row.getString('businessStatus') ?? '', claimBlocked: row.getString('claimBlockedReason') ?? '', lastVisit: row.getString('lastVisitAt') ?? '', lastSubmittedVisit: row.getString('lastSubmittedVisitAt') ?? '', lastSubmittedVisitStatus: row.getString('lastSubmittedVisitStatus') ?? '', lastOrder: row.getString('lastOrderAt') ?? '', holdReason: row.getString('holdReason') ?? '', longitude: row.getNumber('longitude'), latitude: row.getNumber('latitude'), coordinateSystem: row.getString('coordinateSystem') ?? '', storeType: row.getString('storeTypeCode') } as CrmStore
 }
 export function crmContact(row: UTSJSONObject): CrmContact {
   const methods = (row['methods'] as UTSJSONObject[] | null) ?? [] as UTSJSONObject[]
-  return { id: row.getString('id') ?? '', name: row.getString('name') ?? '', role: row.getString('role') ?? '', primary: row.getBoolean('primary') ?? false, status: row.getString('status') ?? '', revision: row.getNumber('revision') ?? 0, personRevision: row.getNumber('personRevision') ?? 0, methods: methods.map((m: UTSJSONObject): CrmMethod => ({ id: m.getString('id') ?? '', type: m.getString('type') ?? '', value: m.getString('value') ?? '', status: m.getString('status') ?? '', revision: m.getNumber('revision') ?? 0 } as CrmMethod)) } as CrmContact
+  const rawRelations = (row['wecomRelations'] as UTSJSONObject[] | null) ?? [] as UTSJSONObject[]
+  const relations = rawRelations.map((r: UTSJSONObject): CrmWecomRelation => ({ employeeId: r.getString('employeeId') ?? '', employeeName: r.getString('employeeName') ?? '', status: r.getString('status') ?? '', addedAt: r.getString('addedAt') ?? '' } as CrmWecomRelation)).filter((r: CrmWecomRelation): boolean => r.status == 'ACTIVE')
+  const hasPhone = methods.some((m: UTSJSONObject): boolean => m.getString('type') == 'PHONE' && m.getString('status') != 'INVALID' && (m.getString('value') ?? '').length > 0)
+  return { wecomRelations: relations, wecom: relations.length > 0, hasPhone: hasPhone, relationText: relations.map((r: CrmWecomRelation): string => r.employeeName + ' · ' + r.addedAt.substring(0, 10)).join('；'), id: row.getString('id') ?? '', name: row.getString('name') ?? '', role: row.getString('role') ?? '', primary: row.getBoolean('primary') ?? false, status: row.getString('status') ?? '', revision: row.getNumber('revision') ?? 0, personRevision: row.getNumber('personRevision') ?? 0, methods: methods.map((m: UTSJSONObject): CrmMethod => ({ id: m.getString('id') ?? '', type: m.getString('type') ?? '', value: m.getString('value') ?? '', status: m.getString('status') ?? '', revision: m.getNumber('revision') ?? 0 } as CrmMethod)) } as CrmContact
 }
 function crmListPath(view: string, keyword: string, cursor: string, filters: string): string {
   return '/crm/stores?view=' + view + '&size=20&keyword=' + encodeURIComponent(keyword) + (cursor.length > 0 ? '&cursor=' + cursor : '') + filters
@@ -121,7 +125,10 @@ export async function crmVisitRecords(store: string): Promise<CrmVisitRecord[]> 
 }
 export function crmVisitStatus(value: string): string {
   if (value == 'IN_PROGRESS') return '拜访进行中'
-  if (value == 'SUBMITTED') return '已提交，待核验'
+  if (value == 'SUBMITTED' || value == 'PROCESSING') return '自动核验中'
+  if (value == 'INSUFFICIENT') return '证据不足'
+  if (value == 'ERROR') return '处理异常'
+  if (value == 'APPEALED') return '申诉处理中'
   if (value == 'EFFECTIVE') return '有效拜访'
   if (value == 'INVALID') return '未通过核验'
   if (value == 'VOID') return '已撤销有效认定'
@@ -130,16 +137,31 @@ export function crmVisitStatus(value: string): string {
 export function crmVisitReason(value: string): string {
   return value.split(',').map((code: string): string => {
     if (code == 'RECORDING_TOO_SHORT') return '录音时长不足'
-    if (code == 'RECORDING_UNVERIFIED') return '录音尚未核验'
-    if (code == 'AI_PENDING') return 'AI 核验待完成'
-    if (code == 'AI_REVIEW_REQUIRED' || code == 'AI_LOW_CONFIDENCE') return '需要人工复核'
+    if (code == 'AUTO_EVIDENCE_COMPLETE') return '客观条件已满足'
+    if (code == 'RECORDING_PENDING') return '录音上传核验中'
+    if (code == 'RECORDING_UNVERIFIED') return '录音未通过技术校验'
+    if (code == 'AI_PENDING') return '内容核验中'
+    if (code == 'AI_REVIEW_REQUIRED' || code == 'AI_LOW_CONFIDENCE') return '内容核验证据不足'
     if (code == 'DWELL_TOO_SHORT') return '停留时间不足'
     if (code == 'STOREFRONT_PHOTO_MISSING') return '现场照片不足'
+    if (code == 'WORK_DAY_CUTOFF') return '作业日已截止，拜访未结束'
     if (code == 'VISIT_TIME_INVALID') return '到店或离店时间待核实'
     if (code == 'RESULT_MISSING') return '拜访结果未提交'
+    if (code == 'TRANSCRIPTION_PENDING') return '录音正在转写'
+    if (code == 'TRANSCRIPTION_ERROR') return '录音转写处理异常'
+    if (code == 'TRANSCRIPTION_MISSING') return '缺少可转写的录音'
+    if (code == 'CONTENT_UNAVAILABLE') return '暂未取得可靠的内容核验结果'
     if (code == 'CONTACT_NOT_CONFIRMED') return '尚未确认与客户沟通'
     return code
   }).join('；')
+}
+export function crmStorePhase(store: CrmStore): string {
+  if (store.phase == 'FIRST_VISIT' && ['SUBMITTED','PROCESSING'].includes(store.lastSubmittedVisitStatus)) return '核验中'
+  if (store.phase == 'FIRST_VISIT' && store.lastSubmittedVisitStatus == 'INSUFFICIENT') return '证据不足'
+  if (store.phase == 'FIRST_VISIT' && store.lastSubmittedVisitStatus == 'ERROR') return '处理异常'
+  if (store.phase == 'FIRST_VISIT' && store.lastSubmittedVisitStatus == 'APPEALED') return '申诉中'
+  if (store.phase == 'FIRST_VISIT' && ['INVALID', 'VOID'].includes(store.lastSubmittedVisitStatus)) return '待重新拜访'
+  return store.phase == 'FIRST_VISIT' ? '待首访' : store.phase == 'FOLLOW_UP' ? '跟进中' : store.phase == 'COOPERATING' ? '维护中' : ''
 }
 export function crmPhase(value: string): string { if (value == 'FIRST_VISIT') return '待首访'; if (value == 'FOLLOW_UP') return '持续跟进'; if (value == 'COOPERATING') return '合作维护'; return '公海' }
 export function crmTime(value: string): string {
@@ -176,7 +198,7 @@ export function crmRecentVisitLocation(point: CrmVisitLocation | null, maximumAc
   if (longitude == null || latitude == null || !Number.isFinite(longitude!) || !Number.isFinite(latitude!) || Math.abs(longitude!) > 180 || Math.abs(latitude!) > 90 || location.getString('source') != 'APP_NATIVE') return null
   return location
 }
-export async function crmStartVisit(storeId: string, maximumAccuracy: number | null = null, prepared: CrmVisitLocation | null = null, progress: ((stage: string) => void) | null = null, current: (() => boolean) | null = null): Promise<CrmVisit> {
+export async function crmStartVisit(storeId: string, maximumAccuracy: number | null = null, prepared: CrmVisitLocation | null = null, progress: ((stage: string) => void) | null = null, current: (() => boolean) | null = null, workDayId: string = '', visitPlanId: string = ''): Promise<CrmVisit> {
   const owner = crmOwner()
   const check = (): void => { if (owner.length == 0 || owner != crmOwner() || (current != null && !current!())) throw new Error('作业已取消，请重新进入门店') }
   check(); if (progress != null) progress!('核对拜访…')
@@ -204,12 +226,15 @@ export async function crmStartVisit(storeId: string, maximumAccuracy: number | n
       }
     }
   }
-  await crmSalesReady()
-  check()
-  const day = crmObject(await crmCall('/sales/me/work-days/' + crmToday()))
-  check()
-  if (day.getString('status') != 'ACTIVE') throw new Error('请先完成上班签到，再开始拜访')
-  const requestKey = 'rigour.crm.start.v1.' + encodeURIComponent(session.tenantId + ':' + session.userId + ':' + store.ownershipId + ':' + (day.getString('id') ?? ''))
+  // The entry can reuse its attendance receipt; creation still validates the current work day on the server.
+  let dayId = workDayId
+  if (dayId.length == 0) {
+    await crmSalesReady(); check()
+    const day = crmObject(await crmCall('/sales/me/work-days/' + crmToday())); check()
+    if (day.getString('status') != 'ACTIVE') throw new Error('请先完成上班签到，再开始拜访')
+    dayId = day.getString('id') ?? ''
+  }
+  const requestKey = 'rigour.crm.start.v1.' + encodeURIComponent(session.tenantId + ':' + session.userId + ':' + store.ownershipId + ':' + dayId)
   const savedRequest = uni.getStorageSync(requestKey)
   let command = savedRequest != null && (savedRequest as string).length > 0 ? JSON.parse<UTSJSONObject>(savedRequest as string) : null
   if (command == null && partialCapture) throw new Error('原签到尚未完成采集创建，请从原设备重试或联系管理员核实')
@@ -217,7 +242,7 @@ export async function crmStartVisit(storeId: string, maximumAccuracy: number | n
     let location = crmRecentVisitLocation(prepared, maximumAccuracy)
     if (location == null) { if (progress != null) progress!('获取位置…'); location = await crmLocation(maximumAccuracy, 3000) }
     check()
-    command = { requestId: crmId(), storeId: storeId, ownershipId: store.ownershipId, workDayId: day.getString('id'), location: location } as UTSJSONObject
+    command = { requestId: crmId(), storeId: storeId, ownershipId: store.ownershipId, workDayId: dayId, location: location, visitPlanId: visitPlanId.length > 0 ? visitPlanId : null } as UTSJSONObject
     uni.setStorageSync(requestKey, JSON.stringify(command))
   }
   check(); if (progress != null) progress!('正在进入…')

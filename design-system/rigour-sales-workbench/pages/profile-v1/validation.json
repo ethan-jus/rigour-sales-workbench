@@ -1,0 +1,261 @@
+[
+  {
+    "screen": "home",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "我的"
+  },
+  {
+    "screen": "home-alert",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "我的"
+  },
+  {
+    "screen": "identity",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "个人资料"
+  },
+  {
+    "screen": "identity-error",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "个人资料"
+  },
+  {
+    "screen": "work",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "外勤记录"
+  },
+  {
+    "screen": "date",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "外勤记录"
+  },
+  {
+    "screen": "route",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "当日轨迹"
+  },
+  {
+    "screen": "case",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "核查事项"
+  },
+  {
+    "screen": "statement",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "补充说明"
+  },
+  {
+    "screen": "reason",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "补充说明"
+  },
+  {
+    "screen": "case-sent",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "核查事项"
+  },
+  {
+    "screen": "work-empty",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "外勤记录"
+  },
+  {
+    "screen": "voice",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "声音登记"
+  },
+  {
+    "screen": "voice-new",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "声音登记"
+  },
+  {
+    "screen": "voice-record",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "录制声音"
+  },
+  {
+    "screen": "voice-review",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "确认声音登记"
+  },
+  {
+    "screen": "voice-error",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "确认声音登记"
+  },
+  {
+    "screen": "voice-delete",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "声音登记"
+  },
+  {
+    "screen": "sync",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "材料同步"
+  },
+  {
+    "screen": "sync-pending",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "材料同步"
+  },
+  {
+    "screen": "syncing",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "材料同步"
+  },
+  {
+    "screen": "settings",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "设置"
+  },
+  {
+    "screen": "permissions",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "应用权限"
+  },
+  {
+    "screen": "permission-location",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "定位权限"
+  },
+  {
+    "screen": "permission-mic",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "麦克风权限"
+  },
+  {
+    "screen": "permission-camera",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "相机权限"
+  },
+  {
+    "screen": "about",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "关于销售工作台"
+  },
+  {
+    "screen": "logout",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "设置"
+  },
+  {
+    "screen": "logout-blocked",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "设置"
+  },
+  {
+    "screen": "logout-error",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "设置"
+  },
+  {
+    "screen": "help",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "使用帮助"
+  },
+  {
+    "screen": "faq-visit",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "使用帮助"
+  },
+  {
+    "screen": "faq-sync",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "使用帮助"
+  },
+  {
+    "screen": "faq-voice",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "使用帮助"
+  },
+  {
+    "screen": "faq-account",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "使用帮助"
+  },
+  {
+    "screen": "load-error",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "个人资料"
+  },
+  {
+    "screen": "no-access",
+    "badImages": 0,
+    "body": true,
+    "overflow": false,
+    "title": "外勤记录"
+  }
+]

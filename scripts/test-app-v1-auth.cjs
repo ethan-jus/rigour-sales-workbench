@@ -44,7 +44,7 @@ class Obj {
   getJSON(key) { const value = this.data[key]; return value && typeof value === 'object' && !Array.isArray(value) ? new Obj(value) : null }
 }
 function fixture({ android = true, supported = android, metadata = new Map(), vault = { value: null } } = {}) {
-  const requests = [], errors = [], toasts = [], secure = [], secureHistory = [], logs = [], metadataHistory = []
+  const requests = [], errors = [], toasts = [], secure = [], secureHistory = [], logs = [], metadataHistory = [], networkChecks = []
   const faults = {}
   let completed = 0, now = 100000, randomFails = false
   const config = configFixture({
@@ -81,6 +81,7 @@ function fixture({ android = true, supported = android, metadata = new Map(), va
     Buffer, Date: { now: () => now },
     console: { log: (...values) => logs.push(values), warn: (...values) => logs.push(values), error: (...values) => logs.push(values) },
     uni: {
+      getNetworkType: options => { if (faults.deferNetworkCheck) { networkChecks.push(options); return } if (faults.networkCheckFails) options.fail({}); else options.success({ networkType: faults.offline ? 'none' : 'wifi' }) },
       request: request => requests.push(request), showToast: options => toasts.push(options.title),
       setStorageSync(key, value) {
         metadataHistory.push({ kind: 'set', key, value })
@@ -130,7 +131,7 @@ function fixture({ android = true, supported = android, metadata = new Map(), va
   const saved = overrides => ({ refreshToken: 'fixture-saved-refresh', issuer: config.appEnvironment.issuer, clientId: config.appEnvironment.clientId, userId: 'u1', tenantId: 't1', ...overrides })
   return {
     api, env: config.appEnvironment, config, session: sessionModule.session, requests, errors, toasts, secure, secureHistory, logs,
-    metadata, metadataHistory, vault, faults,
+    metadata, metadataHistory, vault, faults, networkChecks,
     markerKey: () => 'rigour-sales-logout:' + config.appEnvironment.environment + ':' + encodeURIComponent(config.appEnvironment.issuer) + ':' + encodeURIComponent(config.appEnvironment.clientId),
     last, respond, performSecure, begin, start, authorize, exchange, profile, login, saved,
     get completed() { return completed }, get persisted() { return vault.value }, set persisted(value) { vault.value = value },
@@ -154,7 +155,7 @@ check('native lifecycle restores the company session on launch', () => {
     './services/crm-media.uts': { startCrmUploadQueue: () => calls.push('queue'), resumeCrmUploadQueue: () => calls.push('resume-queue') },
     })[name],
     onLaunch: hook => { hooks.launch = hook }, onShow: hook => { hooks.show = hook }, onHide: hook => { hooks.hide = hook },
-    uni: { reLaunch: options => redirects.push(options.url) },
+    uni: { reLaunch: options => redirects.push(options.url), onNetworkStatusChange: callback => { hooks.network = callback } },
   })
   assert.deepEqual(calls, []); hooks.launch(); assert.deepEqual(calls, ['queue', 'watch-sales-identity', 'restore'])
   hooks.show(); assert.deepEqual(calls.slice(-1), ['resume-queue'])
@@ -240,14 +241,19 @@ check('unfinished logout can be retried on login and blocks password submission 
 })
 
 check('config validates official HTTPS and the exact isolated Android DEV combination', () => {
-  const dev = configFixture({})
+  const production = configFixture({})
+  assert.equal(production.environmentReady(), true)
+  assert.equal(production.appEnvironment.environment, 'production')
+  assert.equal(production.serviceOrigin(production.appEnvironment.issuer), production.appEnvironment.gatewayOrigin)
+  const devValues = { environment: 'development', gatewayOrigin: 'http://localhost:26880', issuer: 'http://localhost:26881', clientId: 'rigour-sales-app-android-dev', redirectUri: 'uniappx://rigour-sales/auth/callback' }
+  const dev = configFixture(devValues)
   assert.equal(dev.environmentReady(), true)
   const f = fixture(); assert.equal(f.config.environmentReady(), true)
   for (const change of [{ clientId: '' }, { gatewayOrigin: 'http://gateway.example.test' }, { issuer: 'https://iam.example.test?token=x' }, { redirectUri: 'other://callback' }]) {
     const c = configFixture({ ...f.env, ...change }); assert.equal(c.environmentReady(), false)
   }
   for (const change of [{ environment: 'production' }, { issuer: 'http://localhost:27682' }, { gatewayOrigin: 'http://localhost:26880.attacker.test' }]) {
-    const c = configFixture(change); assert.equal(c.environmentReady(), false)
+    const c = configFixture({ ...devValues, ...change }); assert.equal(c.environmentReady(), false)
   }
 })
 
@@ -745,4 +751,40 @@ check('refresh replaces session roles and tenant display information with curren
   f.performSecure('clear'); f.exchange({access_token: 'access-2', refresh_token: 'refresh-2'})
   f.profile({tenantName: '企业新名称', roles: [], permissions: []}); f.performSecure('write')
   assert.equal(f.session.tenantName, '企业新名称'); assert.equal(f.session.roles.length, 0); assert.equal(f.session.permissions.length, 0)
+})
+
+check('offline startup retains the unconsumed credential and restores when connected', () => {
+  const f = fixture(); f.persisted = f.saved(); f.faults.offline = true
+  f.api.restoreCompanySession(); f.performSecure('read')
+  assert.equal(f.persisted.refreshToken, 'fixture-saved-refresh')
+  assert.equal(f.requests.length, 0); assert.equal(f.secure.length, 0)
+  assert.equal(f.session.restoring, false); assert.equal(f.session.authenticated, false)
+  f.faults.offline = false; f.api.restoreCompanySession(); f.api.restoreCompanySession()
+  f.performSecure('read'); f.performSecure('clear')
+  assert.equal(f.requests.length, 1)
+  f.exchange({ refresh_token: 'online-refresh' }); f.profile(); f.performSecure('write')
+  assert.equal(f.session.authenticated, true); assert.equal(f.persisted.refreshToken, 'online-refresh')
+})
+
+check('offline renewal does not log out the active user or consume the refresh token', () => {
+  const f = fixture(); f.login(); f.advance(900000); f.faults.offline = true
+  const failures = []; f.api.ensureAccessToken(false, () => assert.fail('offline'), error => failures.push(error))
+  assert.equal(f.session.authenticated, true); assert.equal(f.persisted.refreshToken, 'fixture-refresh-1')
+  assert.equal(f.secure.length, 0); assert.equal(failures.length, 1)
+  f.faults.offline = false; f.api.ensureAccessToken(false, () => {}, () => assert.fail('online'))
+  f.performSecure('clear'); assert.match(f.last('/oauth2/token').data, /fixture-refresh-1/)
+})
+
+check('failed network-state detection retains the saved credential', () => {
+  const f = fixture(); f.persisted = f.saved(); f.faults.networkCheckFails = true
+  f.api.restoreCompanySession(); f.performSecure('read')
+  assert.equal(f.requests.length, 0); assert.equal(f.persisted.refreshToken, 'fixture-saved-refresh')
+  assert.equal(f.session.restoring, false)
+})
+
+check('logout invalidates a delayed network preflight before renewal can send', () => {
+  const f = fixture(); f.persisted = f.saved(); f.faults.deferNetworkCheck = true
+  f.api.restoreCompanySession(); f.performSecure('read'); f.api.logoutCompany(); f.performSecure('clear')
+  f.networkChecks[0].success({ networkType: 'wifi' })
+  assert.equal(f.requests.length, 0); assert.equal(f.persisted, null); assert.equal(f.session.authenticated, false)
 })

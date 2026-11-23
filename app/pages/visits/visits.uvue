@@ -5,25 +5,32 @@
         <view class="v-header"><text class="v-title">拜访</text><view v-if="canReadHistory" class="v-history"><image class="v-icon" src="/static/customers/clock.svg" aria-hidden="true" @click="history" /><button class="v-history-button" aria-label="查看拜访历史" @click="history">历史</button></view></view>
         <text class="v-day-label">{{ dayLabel }}</text>
         <view v-if="canReadAttendance" class="v-attendance">
-          <view :class="finished ? 'v-attendance-heading v-attendance-heading-finished' : 'v-attendance-heading'"><text class="v-work-state">{{ workStateLabel }}</text><view v-if="finished" class="v-work-duration"><text class="v-small">今日工作时长</text><text class="v-duration-value">{{ workDuration }}</text></view></view>
-          <view v-if="finished" class="v-punch v-punch-finished"><image class="v-complete-icon" src="/static/visits/check-success.svg" /><text class="v-complete-label">打卡已完成</text></view>
+          <view :class="finished ? 'v-attendance-heading v-attendance-heading-finished' : 'v-attendance-heading'"><text class="v-work-state">{{ workStateLabel }}</text><view v-if="checkedIn" class="v-work-duration"><text class="v-small">今日工作时长</text><text class="v-duration-value">{{ workDuration }}</text></view></view>
+          <view v-if="finished" class="v-punch v-punch-finished"><image class="v-complete-icon" src="/static/visits/check-success.svg" /><text class="v-complete-label">本次作业已结束</text></view>
           <view v-else class="v-punch"><button :class="canPunch ? 'v-punch-button' : 'v-punch-button v-punch-disabled'" :disabled="!canPunch" :aria-label="punchLabel" @click="punch">{{ punchLabel }}</button><text class="v-punch-clock" aria-hidden="true" @click="punch">{{ clockLabel }}</text></view>
-          <view v-if="checkedIn" class="v-punch-times"><text class="v-time-label">上班</text><text class="v-time-value">{{ checkInTime }}</text><text class="v-time-divider">|</text><template v-if="finished"><text class="v-time-label">下班</text><text class="v-time-value">{{ checkOutTime }}</text></template><button v-else class="v-field-records v-field-records-inline" @click="fieldwork">今日外勤记录 ›</button></view>
+          <view v-if="checkedIn" class="v-punch-times"><text class="v-time-label">签到</text><text class="v-time-value">{{ checkInTime }}</text><text class="v-time-divider">|</text><template v-if="finished"><text class="v-time-label">签退</text><text class="v-time-value">{{ checkOutTime }}</text></template><button v-else class="v-field-records v-field-records-inline" @click="fieldwork">今日外勤记录 ›</button></view>
           <button v-if="!checkedIn || finished" class="v-field-records" @click="fieldwork">今日外勤记录 ›</button>
+          <button v-if="canResume && !resumeOpen" class="v-field-records" :disabled="attendance.busy" @click="resumeOpen = true">恢复作业</button>
+          <view v-if="canResume && resumeOpen" class="v-resume-form">
+            <text class="v-name">恢复作业原因</text>
+            <textarea v-model="resumeReason" class="v-resume-input" placeholder="例如：客户临时追加拜访" :maxlength="500" :disabled="attendance.busy" />
+            <view class="sw-row"><button class="v-field-records sw-grow" :disabled="attendance.busy" @click="resumeOpen = false">取消</button><button class="v-resume-submit" :disabled="attendance.busy" @click="resumeWork">{{ attendance.busy ? attendance.phase : '确认恢复' }}</button></view>
+          </view>
           <view v-if="attendanceError.length > 0" class="v-error"><text class="v-error-text">{{ attendanceError }}</text><button class="sw-text-button" :disabled="attendance.busy" @click="loadAttendance">重试</button></view>
-          <text v-if="visitConflict" class="v-error-text">请先完成当前拜访，再下班打卡</text>
+          <text v-if="visitConflict" class="v-error-text">请先完成或取消当前拜访，再签退</text>
         </view>
-        <text v-else class="v-empty">当前账号没有上下班状态查看权限</text>
+        <text v-else class="v-empty">当前账号没有打卡状态查看权限</text>
+        <view v-if="hasReturnStore" class="v-resume"><view class="sw-grow"><text class="v-name">{{ visitReturn.name }}</text><text class="v-small">{{ working ? '已签到，可返回门店开始拜访' : '签到后返回这家门店' }}</text></view><button class="v-field-records" @click="returnToStore">返回门店</button></view>
         <view class="v-daily-section">
           <text class="v-section-title">今日拜访</text>
           <view v-if="active != null" class="v-resume" @click="start"><view class="sw-grow"><text class="v-name" :lines="1">{{ active!.name }}</text><text class="v-small">进行中 · {{ active!.time }}</text></view><text class="v-orange">继续</text><image class="v-arrow" src="/static/home/chevron-right.svg" /></view>
           <button v-if="canCreate || active != null || recording" :class="visitDisabled ? 'v-main-action v-main-action-disabled' : 'v-main-action'" :disabled="visitDisabled" @click="start">{{ active != null || recording ? '继续拜访' : '开始拜访' }}</button>
           <view v-if="activeError.length > 0" class="v-error"><text class="v-error-text">{{ activeError }}</text><button class="sw-text-button" @click="loadCurrentVisit">重试</button></view>
-          <view v-if="draftCount > 0 || crmUploadState.pending > 0" class="v-pending" @click="pending"><text class="v-small">待处理 {{ draftCount + crmUploadState.pending }}</text><image class="v-arrow" src="/static/home/chevron-right.svg" /></view>
+          <view v-if="crmUploadState.pending > 0" class="v-pending" @click="pending"><text class="v-small">待处理 {{ crmUploadState.pending }}</text><image class="v-arrow" src="/static/home/chevron-right.svg" /></view>
         </view>
         <view class="v-plan-heading"><text class="v-section-title sw-grow">{{ planHeading }}</text><picker :key="planDate" mode="date" start="1970-01-01" end="2099-12-31" :value="planDate" @change="choosePlanDay"><view class="v-date"><text class="v-text">{{ planDateLabel }}</text><image class="v-plan-calendar" src="/static/home/calendar-outline.svg" /></view></picker></view>
         <view v-if="planError.length > 0" class="v-error"><text class="v-error-text">{{ planError }}</text><button class="sw-text-button" @click="loadPlans">重试</button></view>
-        <view v-for="plan in visiblePlans" :key="plan.id" class="v-plan-row"><view class="sw-grow" @click="openPlan(plan)"><text class="v-name" :lines="1">{{ plan.name }}</text><text class="v-address" :lines="2">{{ plan.address }}</text><text v-if="plan.objective.length > 0" class="v-small" :lines="2">{{ plan.objective }}</text></view><view v-if="plan.status == 'PLANNED' || plan.status == 'IN_PROGRESS'" class="v-plan-action"><button class="v-outline" @click="openPlan(plan)">{{ plan.status == 'IN_PROGRESS' ? '继续' : '去拜访' }}</button></view><text v-else class="v-plan-complete">{{ plan.status == 'COMPLETED' ? '已完成' : '状态待确认' }}</text></view>
+        <view v-for="plan in visiblePlans" :key="plan.id" class="v-plan-row"><view class="sw-grow" @click="openPlan(plan)"><text class="v-name" :lines="1">{{ plan.name }}</text><text class="v-address" :lines="2">{{ plan.address }}</text><text v-if="plan.objective.length > 0" class="v-small" :lines="2">{{ plan.objective }}</text></view><view v-if="plan.status == 'PLANNED' || plan.status == 'IN_PROGRESS'" class="v-plan-action"><button class="v-outline" :disabled="planBusy == plan.id" @click="actOnPlan(plan)">{{ planBusy == plan.id ? '提交中…' : plan.actionCode != 'VISIT' ? '完成' : plan.status == 'IN_PROGRESS' ? '继续' : '去拜访' }}</button></view><text v-else class="v-plan-complete">{{ plan.status == 'COMPLETED' ? '已完成' : '状态待确认' }}</text></view>
         <text v-if="plansLoading" class="v-empty">加载中…</text><text v-else-if="plansLoaded && visiblePlans.length == 0" class="v-empty">{{ planDate == today ? '今日暂无计划' : '当日暂无计划' }}</text>
       </view>
     </scroll-view>
@@ -33,32 +40,32 @@
 import { hasPermission, requireSession } from '../../services/session.uts'
 import { crmCall, crmObject, crmMessage, crmOwner } from '../../services/crm.uts'
 import { crmRecording, crmUploadState, crmRunUploadQueue } from '../../services/crm-media.uts'
-import { visitToday, visitReadKey, loadLocalVisits, visitDraftCount, hasActiveVisitRecording, resumeVisitPath } from '../../services/visits.uts'
-import { attendance, refreshAttendance, punchAttendance, attendanceClock } from '../../services/attendance.uts'
-import { VisitBoardRow, VisitPlanRow, visitNavigation, parseVisitBoardRow, loadVisitBoard, openVisitBoardRow, showVisitRecords } from '../../services/visit-workbench.uts'
+import { visitToday, visitReadKey } from '../../services/visits.uts'
+import { visitReturn, visitReturnReady, returnToVisitStore, clearVisitReturn } from '../../services/visit-return.uts'
+import { attendance, refreshAttendance, punchAttendance, resumeAttendance, workDurationLabel, attendanceClock } from '../../services/attendance.uts'
+import { visitRefresh, VisitBoardRow, VisitPlanRow, visitNavigation, parseVisitBoardRow, loadVisitBoard, openVisitBoardRow, showVisitRecords } from '../../services/visit-workbench.uts'
 const today = ref(visitToday()); const planDate = ref(today.value); const clockLabel = ref('—')
-const ready = ref(false); const attendanceLoading = ref(false); const attendanceError = ref(''); const confirming = ref(false); const visitConflict = ref(false)
+const ready = ref(false); const attendanceLoading = ref(false); const attendanceError = ref(''); const visitConflict = ref(false)
 const active = ref<VisitBoardRow | null>(null); const activeError = ref('')
-const plans = ref<VisitPlanRow[]>([]); const plansLoading = ref(false); const plansLoaded = ref(false); const planError = ref('')
+const planBusy = ref(''); const plans = ref<VisitPlanRow[]>([]); const plansLoading = ref(false); const plansLoaded = ref(false); const planError = ref('')
 let visible = false; let timer = 0; let attendanceRequest = 0; let activeRequest = 0; let planRequest = 0; let navRevision = 0
+function returnToStore(): void { returnToVisitStore() }
+const hasReturnStore = computed((): boolean => visitReturnReady())
 function formatDay(date: string): string { return parseInt(date.substring(5, 7)).toString() + '月' + parseInt(date.substring(8, 10)).toString() + '日' }
 const canReadAttendance = computed((): boolean => hasPermission('sales:context:read'))
 const canReadHistory = computed((): boolean => hasPermission('sales:visit:own:read') && hasPermission('crm:store:history-read'))
 const canCreate = computed((): boolean => hasPermission('crm:store:visit-write') && hasPermission('sales:visit:own:write'))
+const resumeOpen = ref(false); const resumeReason = ref('')
+const canResume = computed((): boolean => ready.value && attendance.day?.status == 'FINISHED' && attendance.allowResume && hasPermission('sales:work-day:write'))
 const finished = computed((): boolean => ready.value && attendance.day?.status == 'FINISHED')
 const checkedIn = computed((): boolean => ready.value && attendance.day != null)
 const working = computed((): boolean => ready.value && attendance.day?.status == 'ACTIVE')
-const canPunch = computed((): boolean => ready.value && !finished.value && !attendance.busy && !confirming.value && hasPermission('sales:work-day:write'))
-const recording = computed((): boolean => hasActiveVisitRecording())
+const canPunch = computed((): boolean => ready.value && (attendance.day == null || working.value) && !attendance.busy && hasPermission('sales:work-day:write'))
+const recording = computed((): boolean => crmRecording())
 const visitDisabled = computed((): boolean => active.value == null && !recording.value && (!canCreate.value || !working.value))
-const draftCount = computed((): number => visitDraftCount())
-const workStateLabel = computed((): string => !ready.value ? attendanceLoading.value ? '正在更新' : '状态待确认' : attendance.pending ? '待同步' : finished.value ? '已下班' : working.value ? '工作中' : '未上班')
-const punchLabel = computed((): string => attendance.busy ? attendance.phase : !ready.value ? '确认状态中' : !hasPermission('sales:work-day:write') ? '暂无打卡权限' : attendance.pending ? '重试打卡' : working.value ? '下班打卡' : '上班打卡')
-const workDuration = computed((): string => {
-  const minutes = attendance.day?.workMinutes ?? -1
-  if (!finished.value || minutes < 0) return '—'
-  return Math.floor(minutes / 60).toString() + '小时' + (minutes % 60).toString() + '分'
-})
+const workStateLabel = computed((): string => !ready.value ? attendanceLoading.value ? '正在更新' : '状态待确认' : attendance.pending ? '待同步' : attendance.day?.status == 'MISSING_CHECK_OUT' ? '缺签退' : finished.value ? '已签退' : working.value ? '作业中' : '未签到')
+const punchLabel = computed((): string => attendance.busy ? attendance.phase : !ready.value ? '确认状态中' : !hasPermission('sales:work-day:write') ? '暂无打卡权限' : attendance.pending ? '重试打卡' : working.value ? '签退' : '签到')
+const workDuration = computed((): string => clockLabel.value.length > 0 ? workDurationLabel(attendance.day) : '—')
 const dayLabel = computed((): string => {
   const date = ready.value && attendance.businessDate.length > 0 ? attendance.businessDate : today.value
   const weekdays = ['日','一','二','三','四','五','六']; const weekday = new Date(date + 'T12:00:00+08:00').getUTCDay()
@@ -75,7 +82,7 @@ async function loadAttendance(): Promise<void> {
   ready.value = false; attendanceError.value = ''; attendanceLoading.value = false
   if (!canReadAttendance.value) return
   attendanceLoading.value = true
-  try { await refreshAttendance(true); if (version == attendanceRequest && owner == visitReadKey()) ready.value = true }
+  try { await refreshAttendance(true); if (version == attendanceRequest && owner == visitReadKey()) { ready.value = true; if (attendance.pendingResumeReason.length > 0) { resumeReason.value = attendance.pendingResumeReason; resumeOpen.value = true } } }
   catch (e) { if (version == attendanceRequest && owner == visitReadKey()) attendanceError.value = crmMessage(e) }
   finally { if (version == attendanceRequest) attendanceLoading.value = false }
 }
@@ -96,7 +103,7 @@ async function loadPlans(): Promise<void> {
     const data = crmObject(await crmCall('/sales/me/visit-plans?date=' + planDate.value))
     if (version != planRequest || owner != visitReadKey()) return
     const items = data.getArray<UTSJSONObject>('items'); if (items == null) throw new Error('计划数据格式异常')
-    plans.value = items!.map((p: UTSJSONObject): VisitPlanRow => ({ id: p.getString('planId') ?? '', storeId: p.getString('storeId') ?? '', name: p.getString('storeName') ?? '未提供门店名称', address: p.getString('storeAddress') ?? '', objective: p.getString('objective') ?? '', status: p.getString('status') ?? '', visitId: p.getString('visitId') ?? '' } as VisitPlanRow))
+    plans.value = items!.map((p: UTSJSONObject): VisitPlanRow => ({ id: p.getString('planId') ?? '', storeId: p.getString('crmStoreId') ?? '', name: p.getString('storeName') ?? '未提供门店名称', address: p.getString('storeAddress') ?? '', objective: p.getString('objective') ?? '', status: p.getString('status') ?? '', visitId: p.getString('visitId') ?? '', actionCode: p.getString('actionCode') ?? '' } as VisitPlanRow))
     plansLoaded.value = true
   } catch (e) { if (version == planRequest && owner == visitReadKey()) planError.value = crmMessage(e) }
   finally { if (version == planRequest) plansLoading.value = false }
@@ -108,7 +115,7 @@ async function submitPunch(checkOut: boolean, owner: string): Promise<void> {
   try {
     await punchAttendance(checkOut)
     if (owner != crmOwner()) return
-    ready.value = true; uni.showToast({ title: checkOut ? '下班打卡成功' : '上班打卡成功', icon: 'none' }); loadCurrentVisit()
+    ready.value = true; loadCurrentVisit(); if (!checkOut && visitReturnReady()) returnToVisitStore()
   } catch (e) {
     if (owner != crmOwner()) return
     attendanceError.value = crmMessage(e)
@@ -120,49 +127,63 @@ function punch(): void {
   const owner = crmOwner()
   if (!working.value) { submitPunch(false, owner); return }
   if (active.value != null || crmRecording() || recording.value) { visitConflict.value = true; return }
-  confirming.value = true
-  uni.showModal({ title: '确认下班打卡', content: '确认结束本次工作？下班后将停止本次工作轨迹记录。', confirmText: '下班打卡', cancelText: '继续工作', success: (result) => { confirming.value = false; if (result.confirm && visible && owner == crmOwner()) submitPunch(true, owner) }, fail: () => { confirming.value = false } })
+  submitPunch(true, owner)
+}
+async function resumeWork(): Promise<void> {
+  if (!canResume.value || attendance.busy) return
+  const owner = crmOwner(); attendanceError.value = ''
+  try {
+    await resumeAttendance(resumeReason.value)
+    if (owner != crmOwner()) return
+    resumeOpen.value = false; resumeReason.value = ''; ready.value = true; loadCurrentVisit(); if (visitReturnReady()) returnToVisitStore()
+  } catch (e) { if (owner == crmOwner()) attendanceError.value = crmMessage(e) }
 }
 function history(): void { if (canReadHistory.value) showVisitRecords(today.value, today.value, 'all') }
 function fieldwork(): void { if (ready.value) uni.navigateTo({ url: '/pages/fieldwork/fieldwork?date=' + attendance.businessDate }) }
-function start(): void {
+async function start(): Promise<void> {
   if (!requireSession()) return
   if (active.value != null) { openVisitBoardRow(active.value!); return }
-  if (recording.value) { uni.navigateTo({ url: resumeVisitPath() }); return }
+  if (recording.value) { await loadCurrentVisit(); if (visible && active.value != null) openVisitBoardRow(active.value!); return }
   if (visitDisabled.value) return
   uni.navigateTo({ url: '/pages/customer-list/customer-list?kind=MINE' })
 }
 function openPlan(plan: VisitPlanRow): void {
-  if (plan.visitId.length > 0) { uni.navigateTo({ url: '/pages/visit/visit?view=detail&id=' + encodeURIComponent(plan.visitId) }); return }
-  if (plan.status != 'PLANNED' && plan.status != 'IN_PROGRESS') { uni.showToast({ title: '该计划暂无关联拜访记录', icon: 'none' }); return }
-  if (!working.value) { uni.showToast({ title: '请先上班打卡', icon: 'none' }); return }
-  if (!canCreate.value) return
-  if (active.value != null || recording.value) { start(); return }
-  // Existing plans reference legacy stores; select an authorized CRM customer explicitly.
-  uni.navigateTo({ url: '/pages/customer-list/customer-list?kind=MINE&keyword=' + encodeURIComponent(plan.name) })
+  if (plan.storeId.length == 0) { uni.showToast({ title: '计划缺少门店信息，请刷新', icon: 'none' }); return }
+  uni.navigateTo({ url: '/pages/customer-detail/customer-detail?id=' + plan.storeId + '&source=MINE&plan=' + (plan.actionCode == 'VISIT' && plan.status == 'PLANNED' ? plan.id : '') })
+}
+async function completePlan(plan: VisitPlanRow): Promise<void> {
+  if (planBusy.value.length > 0) return
+  const owner = crmOwner(); planBusy.value = plan.id; planError.value = ''
+  try { await crmCall('/sales/me/visit-plans/' + plan.id + '/complete', 'POST', {} as UTSJSONObject); if (owner == crmOwner()) { plan.status = 'COMPLETED'; uni.showToast({ title: '跟进已完成', icon: 'success' }) } }
+  catch (e) { if (owner == crmOwner()) planError.value = crmMessage(e) }
+  finally { planBusy.value = '' }
+}
+function actOnPlan(plan: VisitPlanRow): void {
+  if (plan.actionCode == 'VISIT') {
+    if (active.value != null) { start(); return }
+    if (!working.value) { uni.showToast({ title: '请先上班打卡', icon: 'none' }); return }
+    openPlan(plan); return
+  }
+  const owner = crmOwner()
+  uni.showModal({ title: '完成本次跟进？', content: plan.name + ' · ' + plan.objective, confirmText: '已完成', success: (result) => { if (result.confirm && owner == crmOwner()) completePlan(plan) } })
 }
 function choosePlanDay(e: UniPickerChangeEvent): void { planDate.value = e.detail.value as string; loadPlans() }
-function pending(): void {
-  uni.showActionSheet({ itemList: ['重试上传材料','待提交拜访','本机草稿'], success: (result) => {
-    if (result.tapIndex == 0) { crmRunUploadQueue().then(() => { uni.showToast({ title: crmUploadState.pending == 0 ? '材料已上传' : '仍有材料待上传', icon: 'none' }) }); return }
-    if (result.tapIndex == 1) uni.navigateTo({ url: '/pages/visit-history/visit-history?from=' + today.value.substring(0,4) + '-01-01&to=' + today.value + '&status=PENDING_SUBMIT' })
-    else uni.navigateTo({ url: '/pages/visit/visit?view=uploads' })
-  } })
-}
+function pending(): void { uni.navigateTo({ url: '/pages/visit-uploads/visit-uploads' }) }
 function updateClock(): void {
   clockLabel.value = attendanceClock(new Date(Date.now() + attendance.serverOffset).toISOString())
   if (ready.value && attendance.captureUntil > 0 && Date.now() + attendance.serverOffset >= attendance.captureUntil) { loadAttendance(); loadCurrentVisit() }
 }
-function reset(): void { attendanceRequest++; activeRequest++; planRequest++; ready.value = false; confirming.value = false; attendanceLoading.value = false; attendanceError.value = ''; visitConflict.value = false; active.value = null; activeError.value = ''; plans.value = []; plansLoaded.value = false; plansLoading.value = false; planError.value = '' }
+function reset(): void { resumeOpen.value = false; resumeReason.value = '';  attendanceRequest++; activeRequest++; planRequest++; ready.value = false; attendanceLoading.value = false; attendanceError.value = ''; visitConflict.value = false; active.value = null; activeError.value = ''; plans.value = []; plansLoaded.value = false; plansLoading.value = false; planError.value = '' }
 onShow(() => {
-  visible = true; if (!requireSession()) { reset(); return }
+  visible = true; if (!visitReturnReady()) clearVisitReturn(); if (!requireSession()) { reset(); return }
   const previousToday = today.value; today.value = visitToday(); if (planDate.value == previousToday) planDate.value = today.value
   if (navRevision != visitNavigation.revision) { navRevision = visitNavigation.revision; if (visitNavigation.tab == 'plans') planDate.value = visitNavigation.date }
-  visitConflict.value = false; loadLocalVisits(); loadAttendance(); loadCurrentVisit(); loadPlans(); updateClock(); clearInterval(timer); timer = setInterval(() => { updateClock() }, 30000)
+  visitConflict.value = false; loadAttendance(); loadCurrentVisit(); loadPlans(); updateClock(); clearInterval(timer); timer = setInterval(() => { updateClock() }, 30000)
 })
 onHide(() => { visible = false; clearInterval(timer) })
 onUnload(() => { visible = false; clearInterval(timer); reset() })
 watch((): string => visitReadKey(), () => { reset(); if (visible && requireSession()) { loadAttendance(); loadCurrentVisit(); loadPlans() } })
+watch((): number => visitRefresh.revision, (_revision: number) => { if (visible) loadCurrentVisit() })
 </script>
 <style>
 @import "../../styles/workbench-ui.css";
@@ -199,4 +220,7 @@ watch((): string => visitReadKey(), () => { reset(); if (visible && requireSessi
 /* #ifdef APP-ANDROID */
 .v-work-state,.v-duration-value,.v-punch-button,.v-complete-label,.v-section-title,.v-main-action { font-family: sans-serif; }
 /* #endif */
+.v-resume-form { margin-top: 12px; padding: 14px; background-color: #f5f6f7; border-radius: 10px; }
+.v-resume-input { margin-top: 10px; padding: 10px; height: 90px; font-size: 13px; background-color: #ffffff; border-radius: 6px; color: #252a31; }
+.v-resume-submit { margin: 10px 0 0; padding: 0 18px; line-height: 40px; height: 40px; font-size: 13px; background-color: #2263d6; color: #ffffff; border-width: 0; border-radius: 8px; }
 </style>

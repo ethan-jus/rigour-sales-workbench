@@ -1,0 +1,5 @@
+import FieldLocationService from 'com.rigour.workbench.capture.FieldLocationService'
+export function startFieldLocationService(): void { FieldLocationService.start(UTSAndroid.getAppContext()!) }
+export function stopFieldLocationService(): void { FieldLocationService.stop(UTSAndroid.getAppContext()!) }
+export function enableFieldMotion(enabled: boolean): void { FieldLocationService.enableMotion(enabled) }
+export function readFieldMotion(): number { return FieldLocationService.motionState().toDouble() }

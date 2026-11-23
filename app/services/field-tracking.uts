@@ -1,16 +1,22 @@
 import { reactive, watch } from 'vue'
-import { acquireBackgroundLocation, releaseBackgroundLocation, BackgroundPoint } from './background-location.uts'
+import { acquireBackgroundLocation, releaseBackgroundLocation, setFieldworkLocationIdle, BackgroundPoint } from './background-location.uts'
 import { attendance, refreshAttendance } from './attendance.uts'
 import { crmOwner, crmCall, crmObject, crmId, crmMessage } from './crm.uts'
 import { session, hasPermission } from './session.uts'
-import { fieldStorageScope, readFieldValue, writeFieldValue, fieldStorageDurable } from './field-storage.uts'
+import { fieldStorageScope, readFieldValue, writeFieldValue, clearFieldValue, fieldStorageDurable } from './field-storage.uts'
+import { TrackMotion, RouteFix, motionMoving, motionStill, routeDistance } from './track-motion.uts'
 
-type TrackPoint = { id: string, longitude: number, latitude: number, accuracy: number, observedAt: string }
-type TrackBatch = { id: string, day: string, session: string, expiresAt: number, sealed: boolean, points: TrackPoint[], normalized: UTSJSONObject[] }
+type TrackPoint = { id: string, longitude: number, latitude: number, accuracy: number, observedAt: string, source: string, routePath: string[] }
+type TrackBatch = { id: string, day: string, session: string, confirmedTrack: boolean, expiresAt: number, sealed: boolean, points: TrackPoint[], normalized: UTSJSONObject[] }
 type TrackQueue = { scope: string, owner: string, batches: TrackBatch[] }
-type TrackingState = { active: boolean, starting: boolean, message: string, lastPointAt: number, pendingPoints: number }
-export const fieldTracking = reactive({ active: false, starting: false, message: '', lastPointAt: 0, pendingPoints: 0 } as TrackingState)
+export type LocalTrackPoint = { id: string, day: string, session: string, confirmedTrack: boolean, longitude: number, latitude: number, accuracy: number, time: number, source: string, routePath: string[] }
+type TrackingState = { active: boolean, starting: boolean, message: string, lastPointAt: number, pendingPoints: number, localRevision: number, uploadRevision: number, uploadedDayId: string }
+export const fieldTracking = reactive({ active: false, starting: false, message: '', lastPointAt: 0, pendingPoints: 0, localRevision: 0, uploadRevision: 0, uploadedDayId: '' } as TrackingState)
+const queueKey = 'track:queue'
+const maxPointsPerBatch = 40
+const maxPendingPoints = 20000
 let queue: TrackQueue | null = null
+let recentlyUploaded = [] as LocalTrackPoint[]
 let opening: Promise<TrackQueue> | null = null
 let openingOwner = ''
 let writes: Promise<void> = Promise.resolve()
@@ -19,18 +25,43 @@ let started = false
 let generation = 0
 let timer = 0
 let lastSample = 0
+let lastNetworkSample = 0
 let activeSession = ''
 let activeOwner = ''
-let askedOwner = ''
 let retryAfter = 0
-let lastFlush = 0
+let uploadAt = 0
+let resumeRetryAt = 0
+let resumeRetryOwner = ''
+let networkAvailable = true
+const stationaryConfirmationMs = 60000
+const stationaryReportMs = 120000
+const maximumStationaryFixGapMs = 45000
+let stationaryAnchor: BackgroundPoint | null = null
+let lastObservation = 0
+let stationary = false
+const trackMotion = new TrackMotion()
 
 function activeIdentity(owner: string): boolean { return owner.length > 0 && owner == crmOwner() }
-function consentKey(): string { return 'rigour.field.consent.v1.' + encodeURIComponent(fieldStorageScope()) }
-function persist(context: TrackQueue): Promise<void> {
-  // Serialize snapshots on the native secure-storage executor, never on the UI thread.
-  const snapshot = JSON.parseObject(JSON.stringify({ batches: context.batches } as UTSJSONObject))!
-  writes = writes.catch((_) => {}).then(async (): Promise<void> => { await writeFieldValue(context.scope, 'track:queue', snapshot) })
+function queueIndex(context: TrackQueue): UTSJSONObject {
+  return { batchIds: context.batches.map((batch: TrackBatch): string => batch.id) } as UTSJSONObject
+}
+function batchKey(id: string): string { return 'track:batch:' + id }
+function saveBatch(context: TrackQueue, batch: TrackBatch, added: boolean): Promise<void> {
+  const snapshot = JSON.parseObject(JSON.stringify(batch))!
+  const index = added ? queueIndex(context) : null
+  writes = writes.catch((_) => {}).then(async (): Promise<void> => {
+    await writeFieldValue(context.scope, batchKey(batch.id), snapshot)
+    if (index != null) await writeFieldValue(context.scope, queueKey, index!)
+  })
+  return writes
+}
+function removeAcknowledgedBatch(context: TrackQueue, batch: TrackBatch): Promise<void> {
+  context.batches = context.batches.filter((item: TrackBatch): boolean => item.id != batch.id)
+  const index = queueIndex(context)
+  writes = writes.catch((_) => {}).then(async (): Promise<void> => {
+    await writeFieldValue(context.scope, queueKey, index)
+    try { await clearFieldValue(context.scope, batchKey(batch.id)) } catch (_) {}
+  })
   return writes
 }
 function updatePending(context: TrackQueue): void {
@@ -40,124 +71,291 @@ function parseBatch(row: UTSJSONObject): TrackBatch {
   const points = (row['points'] as UTSJSONObject[] | null) ?? [] as UTSJSONObject[]
   const id = row.getString('id') ?? ''; const day = row.getString('day') ?? ''; const segment = row.getString('session') ?? ''
   if (id.length == 0 || day.length == 0 || segment.length == 0) throw new Error('本机轨迹队列不完整，原记录已保留')
-  return { id, day, session: segment, expiresAt: row.getNumber('expiresAt') ?? 0, sealed: row.getBoolean('sealed') ?? false, points: points.map((point: UTSJSONObject): TrackPoint => ({ id: point.getString('id') ?? '', longitude: point.getNumber('longitude') ?? 0, latitude: point.getNumber('latitude') ?? 0, accuracy: point.getNumber('accuracy') ?? 0, observedAt: point.getString('observedAt') ?? '' } as TrackPoint)), normalized: (row['normalized'] as UTSJSONObject[] | null) ?? [] as UTSJSONObject[] } as TrackBatch
+  return {
+    id, day, session: segment, confirmedTrack: row.getBoolean('confirmedTrack') == true, expiresAt: row.getNumber('expiresAt') ?? 0, sealed: row.getBoolean('sealed') ?? false,
+    points: points.map((point: UTSJSONObject): TrackPoint => ({
+      id: point.getString('id') ?? '', longitude: point.getNumber('longitude') ?? 0, latitude: point.getNumber('latitude') ?? 0,
+      accuracy: point.getNumber('accuracy') ?? 0, observedAt: point.getString('observedAt') ?? '',
+      source: point.getString('source') ?? 'APP_LOCATION_CALLBACK', routePath: point.getArray<string>('routePath') ?? [] as string[]
+    } as TrackPoint)),
+    normalized: (row['normalized'] as UTSJSONObject[] | null) ?? [] as UTSJSONObject[]
+  } as TrackBatch
+}
+async function readBatches(scope: string): Promise<TrackBatch[]> {
+  const root = await readFieldValue(scope, queueKey)
+  if (root == null) return [] as TrackBatch[]
+  const ids = root!.getArray<string>('batchIds')
+  const batches = [] as TrackBatch[]
+  if (ids != null) {
+    for (const id of ids!) {
+      const raw = await readFieldValue(scope, batchKey(id))
+      if (raw == null) throw new Error('本机轨迹批次读取失败，原记录已保留')
+      batches.push(parseBatch(raw!))
+    }
+    return batches
+  }
+  // Move the previous encrypted queue into smaller encrypted records; commit the index last.
+  const old = root!.getArray<UTSJSONObject>('batches')
+  if (old == null) throw new Error('本机轨迹索引读取失败，原记录已保留')
+  for (const row of old!) {
+    const batch = parseBatch(row)
+    await writeFieldValue(scope, batchKey(batch.id), row)
+    batches.push(batch)
+  }
+  await writeFieldValue(scope, queueKey, { batchIds: batches.map((batch: TrackBatch): string => batch.id) } as UTSJSONObject)
+  return batches
+}
+function localBatchPoints(batch: TrackBatch): LocalTrackPoint[] {
+  return batch.points.map((point: TrackPoint): LocalTrackPoint => ({
+    id: point.id, day: batch.day, session: batch.session, confirmedTrack: batch.confirmedTrack,
+    longitude: point.longitude, latitude: point.latitude, accuracy: point.accuracy,
+    time: Date.parse(point.observedAt), source: point.source, routePath: point.routePath
+  } as LocalTrackPoint))
+}
+export function localTrackPoints(workDayId: string): LocalTrackPoint[] {
+  if (fieldTracking.localRevision == 0 || workDayId.length == 0 || !hasPermission('sales:track:own:read')) return [] as LocalTrackPoint[]
+  const current = queue
+  if (current == null || !activeIdentity(current!.owner)) return [] as LocalTrackPoint[]
+  const points = recentlyUploaded.filter((point: LocalTrackPoint): boolean => point.day == workDayId)
+  for (const batch of current!.batches) {
+    if (batch.day == workDayId) for (const point of localBatchPoints(batch)) points.push(point)
+  }
+  return points
 }
 function openQueue(owner: string): Promise<TrackQueue> {
   if (queue != null && queue!.owner == owner) return Promise.resolve(queue!)
   if (opening != null && openingOwner == owner) return opening!
   const scope = fieldStorageScope(); openingOwner = owner
-  const request = readFieldValue(scope, 'track:queue').then((value: UTSJSONObject | null): TrackQueue => {
+  const request = readBatches(scope).then((batches: TrackBatch[]): TrackQueue => {
     if (!activeIdentity(owner)) throw new Error('账号已变更')
-    const rows = value == null ? [] as UTSJSONObject[] : (value!['batches'] as UTSJSONObject[] | null) ?? [] as UTSJSONObject[]
-    const context = { scope, owner, batches: rows.map((row: UTSJSONObject): TrackBatch => parseBatch(row)) } as TrackQueue
-    queue = context; updatePending(context); return context
+    const context = { scope, owner, batches } as TrackQueue
+    queue = context; updatePending(context); fieldTracking.localRevision++; return context
   }).finally(() => { if (openingOwner == owner) { opening = null; openingOwner = '' } })
   opening = request; return request
 }
 export function stopFieldTracking(): void {
-  generation++; lastSample = 0; activeSession = ''; activeOwner = ''; fieldTracking.active = false; fieldTracking.starting = false
+  generation++; lastSample = 0; lastNetworkSample = 0; activeSession = ''; activeOwner = ''; fieldTracking.active = false; fieldTracking.starting = false
+  stationaryAnchor = null; lastObservation = 0; stationary = false
+  trackMotion.reset()
   releaseBackgroundLocation('fieldwork')
 }
-function canCapture(): boolean {
-  return session.authenticated && hasPermission('sales:location:write') && attendance.locationEnabled
-    && attendance.day?.status == 'ACTIVE' && attendance.day!.sessionId.length > 0
-    && !attendance.pending && !attendance.busy && Date.now() + attendance.serverOffset < attendance.captureUntil
+function setStationary(value: boolean): void {
+  if (stationary == value) return
+  stationary = value
+  setFieldworkLocationIdle(value, attendance.day?.confirmedTrack == true)
+}
+function observeStationary(point: BackgroundPoint, confirmedTrack: boolean): void {
+  const continuous = point.observedAt - lastObservation <= maximumStationaryFixGapMs
+  lastObservation = point.observedAt
+  const usableGps = point.gps && point.accuracy <= 25
+  const anchor = stationaryAnchor
+  if (!usableGps || !continuous || anchor == null || (confirmedTrack && point.motion == motionMoving)) {
+    stationaryAnchor = usableGps ? point : null
+    setStationary(false)
+    return
+  }
+  const separation = routeDistance(anchor.latitude, anchor.longitude, point.latitude, point.longitude)
+  const radius = confirmedTrack ? Math.max(12, Math.min(30, Math.min(anchor.accuracy, point.accuracy) * 2)) : Math.max(10, Math.min(anchor.accuracy, point.accuracy))
+  if (separation > radius && (!confirmedTrack || point.motion != motionStill)) {
+    stationaryAnchor = point
+    setStationary(false)
+    return
+  }
+  setStationary(point.observedAt - anchor.observedAt >= stationaryConfirmationMs)
+}
+function captureBlockedReason(): string {
+  if (!session.authenticated) return '请登录后查看行程记录状态'
+  if (!hasPermission('sales:location:write')) return '当前账号没有轨迹记录权限，请联系管理员'
+  if (!attendance.locationEnabled) return '当前外勤规则未开启轨迹记录'
+  if (attendance.sampleIntervalSeconds <= 0 || attendance.uploadIntervalSeconds <= 0) return '等待轨迹采样与上传规则'
+  if (attendance.day == null) return '签到后开始记录工作行程'
+  if (attendance.day!.status != 'ACTIVE') return '已签退，行程记录已停止'
+  if (attendance.day!.sessionId.length == 0) return '本次签到没有定位会话，请联系管理员核查'
+  if (attendance.pending || attendance.busy) return '打卡正在同步，完成后自动恢复行程记录'
+  if (Date.now() + attendance.serverOffset >= attendance.captureUntil) return '已超过当日记录时段，下次签到后恢复'
+  return ''
+}
+function canCapture(): boolean { return captureBlockedReason().length == 0 }
+function batchPayload(batch: TrackBatch): UTSJSONObject[] {
+  // A previously sent batch must replay the same body with its existing idempotency key.
+  if (batch.normalized.length == batch.points.length) return batch.normalized
+  return batch.points.map((point: TrackPoint): UTSJSONObject => {
+    const payload = {
+      deviceEventId: point.id, longitude: null, latitude: null, accuracyMeters: point.accuracy,
+      clientOccurredAt: point.observedAt, source: point.source,
+      rawLongitude: point.longitude, rawLatitude: point.latitude, rawCoordinateSystem: 'WGS84'
+    } as UTSJSONObject
+    if (point.routePath.length > 0) payload['routePath'] = point.routePath
+    return payload
+  })
 }
 async function flush(context: TrackQueue, force: boolean = false): Promise<void> {
-  if (processing || !activeIdentity(context.owner) || Date.now() < retryAfter || !hasPermission('sales:location:write')) return
-  if (!force && Date.now() - lastFlush < 60000) return
+  if (!networkAvailable || processing || !activeIdentity(context.owner) || Date.now() < retryAfter || !hasPermission('sales:location:write')) return
+  if (!force && (uploadAt == 0 || Date.now() < uploadAt)) return
   const now = Date.now() + attendance.serverOffset
-  const batch = context.batches.find((item: TrackBatch): boolean => item.points.length > 0 && item.expiresAt > now)
-  if (batch == null) { if (context.batches.length > 0) fieldTracking.message = '部分轨迹超过补传时限，原记录已保留'; return }
-  processing = true; lastFlush = Date.now()
+  const due = context.batches.filter((item: TrackBatch): boolean => item.points.length > 0 && item.expiresAt > now)
+  if (due.length == 0) {
+    uploadAt = 0
+    if (context.batches.length > 0) fieldTracking.message = '部分轨迹超过补传时限，原记录已保留'
+    return
+  }
+  processing = true
+  uploadAt = 0
+  let failed = false
   try {
-    batch!.sealed = true; await persist(context)
-    if (!activeIdentity(context.owner)) return
-    for (let index = batch!.normalized.length; index < batch!.points.length; index++) {
-      const point = batch!.points[index]
-      const converted = crmObject(await crmCall('/sales/work/location/normalize', 'POST', { longitude: point.longitude, latitude: point.latitude, coordinateSystem: 'WGS84' } as UTSJSONObject))
+    for (const batch of due) {
+      if (!networkAvailable || !activeIdentity(context.owner)) return
+      if (!batch.sealed) { batch.sealed = true; await saveBatch(context, batch, false) }
+      if (!networkAvailable || !activeIdentity(context.owner)) return
+      const receipt = crmObject(await crmCall('/sales/work-days/' + batch.day + '/location-points:batch', 'POST', {
+        idempotencyKey: batch.id, locationSessionId: batch.session, points: batchPayload(batch)
+      } as UTSJSONObject))
+      if (receipt.getString('workDayId') != batch.day || (receipt.getNumber('acceptedCount') ?? 0) + (receipt.getNumber('duplicateCount') ?? 0) != batch.points.length || (receipt.getNumber('rejectedCount') ?? 0) > 0)
+        throw new Error('轨迹回执不完整，已保留本机记录')
       if (!activeIdentity(context.owner)) return
-      const longitude = converted.getNumber('longitude'); const latitude = converted.getNumber('latitude')
-      if (longitude == null || latitude == null || converted.getString('coordinateSystem') != 'GCJ02') throw new Error('坐标转换未完成')
-      batch!.normalized.push({ deviceEventId: point.id, longitude: longitude!, latitude: latitude!, accuracyMeters: point.accuracy, clientOccurredAt: point.observedAt, source: 'APP_LOCATION_CALLBACK', rawLongitude: point.longitude, rawLatitude: point.latitude, rawCoordinateSystem: 'WGS84' } as UTSJSONObject)
-      await persist(context)
+      await removeAcknowledgedBatch(context, batch)
+      if (!activeIdentity(context.owner)) return
+      recentlyUploaded = recentlyUploaded.concat(localBatchPoints(batch)).slice(-240)
+      updatePending(context)
+      fieldTracking.uploadedDayId = batch.day
+      fieldTracking.uploadRevision++
+      fieldTracking.localRevision++
     }
-    if (!activeIdentity(context.owner)) return
-    const receipt = crmObject(await crmCall('/sales/work-days/' + batch!.day + '/location-points:batch', 'POST', { idempotencyKey: batch!.id, locationSessionId: batch!.session, points: batch!.normalized } as UTSJSONObject))
-    if (receipt.getString('workDayId') != batch!.day || (receipt.getNumber('acceptedCount') ?? 0) + (receipt.getNumber('duplicateCount') ?? 0) != batch!.points.length || (receipt.getNumber('rejectedCount') ?? 0) > 0) throw new Error('轨迹回执不完整，已保留本机记录')
-    if (!activeIdentity(context.owner)) return
-    context.batches = context.batches.filter((item: TrackBatch): boolean => item.id != batch!.id)
-    await persist(context); updatePending(context); retryAfter = 0
-  } catch (e) { if (activeIdentity(context.owner)) { fieldTracking.message = '轨迹待同步'; retryAfter = Date.now() + 30000 } }
-  finally { processing = false }
+    retryAfter = 0
+    if (activeIdentity(context.owner) && fieldTracking.pendingPoints == 0 && fieldTracking.message == '轨迹待同步') fieldTracking.message = ''
+  } catch (_) {
+    failed = true
+    if (activeIdentity(context.owner)) {
+      fieldTracking.message = '轨迹待同步'
+      retryAfter = Date.now() + 30000
+    }
+  } finally {
+    processing = false
+    if (activeIdentity(context.owner) && context.batches.length > 0) {
+      if (failed) uploadAt = retryAfter
+      else if (uploadAt == 0) uploadAt = Date.now() + attendance.uploadIntervalSeconds * 1000
+    }
+  }
 }
 async function appendPoint(context: TrackQueue, point: TrackPoint): Promise<void> {
   if (!activeIdentity(context.owner) || !canCapture() || activeSession != attendance.day?.sessionId) return
-  if (fieldTracking.pendingPoints >= 10000) { stopFieldTracking(); fieldTracking.message = '本机轨迹待同步，请恢复网络'; return }
+  if (fieldTracking.pendingPoints >= maxPendingPoints) { stopFieldTracking(); fieldTracking.message = '本机轨迹待同步，请恢复网络'; return }
   let batch = context.batches.length > 0 ? context.batches[context.batches.length - 1] : null
-  if (batch == null || batch!.sealed || batch!.session != activeSession || batch!.points.length >= 20) {
-    batch = { id: crmId(), day: attendance.day!.id, session: activeSession, expiresAt: attendance.captureUntil + attendance.offlineDeadline * 60000, sealed: false, points: [], normalized: [] } as TrackBatch
+  const added = batch == null || batch!.sealed || batch!.session != activeSession || batch!.points.length >= maxPointsPerBatch
+  if (added) {
+    batch = { id: crmId(), day: attendance.day!.id, session: activeSession, confirmedTrack: attendance.day!.confirmedTrack, expiresAt: attendance.captureUntil + attendance.offlineDeadline * 60000, sealed: false, points: [], normalized: [] } as TrackBatch
     context.batches.push(batch!)
   }
-  batch!.points.push(point); updatePending(context)
-  try { await persist(context); if (activeIdentity(context.owner)) { fieldTracking.lastPointAt = Date.parse(point.observedAt); fieldTracking.message = ''; flush(context) } }
+  batch!.points.push(point)
+  try {
+    await saveBatch(context, batch!, added)
+    if (activeIdentity(context.owner)) {
+      updatePending(context)
+      fieldTracking.lastPointAt = Date.parse(point.observedAt)
+      fieldTracking.localRevision++
+      if (!networkAvailable) fieldTracking.message = '轨迹待同步'
+      if (uploadAt == 0) uploadAt = Date.now() + attendance.uploadIntervalSeconds * 1000
+    }
+  }
   catch (e) { if (activeIdentity(context.owner)) { stopFieldTracking(); fieldTracking.message = '轨迹保存失败，已停止采集' } }
 }
-async function consent(owner: string): Promise<boolean> {
-  if (uni.getStorageSync(consentKey()) == true) return true
-  if (askedOwner == owner) return false
-  askedOwner = owner
-  const accepted = await new Promise<boolean>((resolve) => { uni.showModal({ title: '记录工作轨迹', content: '上班期间记录位置，用于外勤监督。签退后停止采集。', confirmText: '允许记录', cancelText: '暂不开启', success: (result) => resolve(result.confirm), fail: (_) => resolve(false) }) })
-  if (!activeIdentity(owner)) return false
-  if (accepted) uni.setStorageSync(consentKey(), true)
-  return accepted
-}
 async function reconcile(): Promise<void> {
-  if (!canCapture()) { if (fieldTracking.active || fieldTracking.starting) stopFieldTracking(); return }
-  const owner = crmOwner(); const segment = attendance.day!.sessionId
+  const blocked = captureBlockedReason()
+  if (blocked.length > 0) { if (fieldTracking.active || fieldTracking.starting) stopFieldTracking(); fieldTracking.message = blocked; return }
+  const owner = crmOwner(); const segment = attendance.day!.sessionId; const confirmedTrack = attendance.day!.confirmedTrack == true
   if ((fieldTracking.active || fieldTracking.starting) && activeOwner == owner && activeSession == segment) return
   stopFieldTracking(); const version = generation; activeOwner = owner; activeSession = segment; fieldTracking.starting = true
   try {
     if (!fieldStorageDurable()) { fieldTracking.message = '本机尚未支持离线轨迹保存'; return }
-    if (!await consent(owner)) { if (activeIdentity(owner)) fieldTracking.message = '未开启轨迹记录'; return }
     const context = await openQueue(owner)
     if (version != generation || !canCapture()) return
     // #ifdef APP
     await acquireBackgroundLocation('fieldwork', (location: BackgroundPoint) => {
       if (version != generation) return
       if (!activeIdentity(owner) || !canCapture()) { stopFieldTracking(); return }
-      const now = Date.now()
-      if (now - lastSample < attendance.locationInterval * 1000 || !Number.isFinite(location.latitude) || !Number.isFinite(location.longitude) || !Number.isFinite(location.accuracy) || location.accuracy <= 0) return
-      lastSample = now
-      // This is callback receipt time; the system API does not provide the GPS fix timestamp.
-      appendPoint(context, { id: crmId(), longitude: location.longitude, latitude: location.latitude, accuracy: location.accuracy, observedAt: new Date(now).toISOString() } as TrackPoint)
-    }, (message: string) => { if (version == generation && activeIdentity(owner)) { stopFieldTracking(); fieldTracking.message = '定位中断：' + message } })
+      const now = location.observedAt
+      if (!Number.isFinite(now) || now <= 0 || now < lastObservation || !Number.isFinite(location.latitude) || !Number.isFinite(location.longitude) || !Number.isFinite(location.accuracy) || location.accuracy <= 0) return
+      let source = 'APP_LOCATION_CALLBACK'
+      // #ifdef APP-ANDROID
+      if (location.gps) {
+        observeStationary(location, confirmedTrack)
+        source = stationary || (confirmedTrack && location.motion == motionStill) ? 'APP_GPS_STILL' : 'APP_GPS'
+      } else {
+        if (now - lastObservation <= 20000 || now - lastNetworkSample < stationaryReportMs) return
+        lastNetworkSample = now
+        source = 'APP_NETWORK'
+      }
+      // #endif
+      const interval = attendance.sampleIntervalSeconds * 1000
+      if (source != 'APP_NETWORK') {
+        const reportInterval = stationary ? Math.max(interval, stationaryReportMs) : interval
+        if (now - lastSample < reportInterval) return
+        lastSample = now
+      }
+      const id = crmId()
+      let routePath = [] as string[]
+      if (confirmedTrack) {
+        const limit = attendance.maximumAccuracyMeters ?? 25
+        if (location.accuracy > limit) trackMotion.reset()
+        else routePath = trackMotion.push({ id, longitude: location.longitude, latitude: location.latitude,
+          accuracy: location.accuracy, time: now, source, motion: location.motion } as RouteFix, attendance.sampleIntervalSeconds)
+      }
+      appendPoint(context, { id, longitude: location.longitude, latitude: location.latitude, accuracy: location.accuracy,
+        observedAt: new Date(now).toISOString(), source, routePath } as TrackPoint)
+    }, (message: string) => { if (version == generation && activeIdentity(owner)) { stopFieldTracking(); fieldTracking.message = '定位中断：' + message } }, confirmedTrack)
     // #endif
     if (version != generation) return
     if (!canCapture()) { stopFieldTracking(); return }
-    fieldTracking.active = true; fieldTracking.message = ''; lastSample = 0
+    fieldTracking.active = true; fieldTracking.message = ''
     flush(context)
   } catch (e) { if (version == generation && activeIdentity(owner)) { stopFieldTracking(); fieldTracking.message = crmMessage(e) } }
   finally { if (version == generation) fieldTracking.starting = false }
 }
 export async function resumeFieldTracking(): Promise<void> {
   if (!session.authenticated || !hasPermission('sales:context:read')) { stopFieldTracking(); return }
+  const owner = crmOwner(); resumeRetryAt = 0
   try {
-    const owner = crmOwner()
     await refreshAttendance(true)
     if (!activeIdentity(owner)) return
-    if (fieldStorageDurable()) { const context = await openQueue(owner); flush(context, true) }
+    if (fieldStorageDurable()) {
+      const needsRecovery = queue == null
+      const context = await openQueue(owner)
+      if (needsRecovery) flush(context, true)
+    }
     await reconcile()
-  } catch (_) { fieldTracking.message = '作业状态待确认' }
+  } catch (e) {
+    if (!activeIdentity(owner)) return
+    fieldTracking.message = '作业状态待确认'
+    const message = crmMessage(e)
+    if (message.includes('网络连接失败') || message.includes('连接超时') || message.includes('服务暂时不可用')) { resumeRetryOwner = owner; resumeRetryAt = Date.now() + 30000 }
+  }
 }
-export function retryFieldTracking(): void { askedOwner = ''; retryAfter = 0; lastFlush = 0; resumeFieldTracking() }
 export function startFieldTracking(): void {
   if (started) return
   started = true
-  watch((): string => crmOwner(), (_owner: string) => { stopFieldTracking(); queue = null; opening = null; openingOwner = ''; retryAfter = 0; lastFlush = 0; askedOwner = ''; fieldTracking.pendingPoints = 0; fieldTracking.lastPointAt = 0; fieldTracking.message = '' })
+  watch((): string => crmOwner(), (_owner: string) => {
+    stopFieldTracking(); resumeRetryAt = 0; resumeRetryOwner = ''; queue = null; opening = null; openingOwner = ''
+    retryAfter = 0; uploadAt = 0; recentlyUploaded = [] as LocalTrackPoint[]
+    fieldTracking.pendingPoints = 0; fieldTracking.lastPointAt = 0; fieldTracking.localRevision++
+    fieldTracking.uploadedDayId = ''; fieldTracking.message = ''
+  })
   watch((): string => (attendance.day?.sessionId ?? '') + '|' + (attendance.day?.status ?? '') + '|' + attendance.pending.toString() + '|' + attendance.busy.toString(), (_state: string) => { reconcile() })
+  // #ifdef APP
+  uni.onNetworkStatusChange((result) => {
+    networkAvailable = result.isConnected
+    if (!networkAvailable) return
+    retryAfter = 0
+    if (queue != null) flush(queue!, true)
+    if (resumeRetryAt > 0 && activeIdentity(resumeRetryOwner)) resumeFieldTracking()
+  })
+  // #endif
   timer = setInterval(() => {
+    if (networkAvailable && resumeRetryAt > 0 && Date.now() >= resumeRetryAt && activeIdentity(resumeRetryOwner)) resumeFieldTracking()
     if (!canCapture() && (fieldTracking.active || fieldTracking.starting)) stopFieldTracking()
+    if (stationary && Date.now() - lastObservation > maximumStationaryFixGapMs) {
+      stationaryAnchor = null
+      setStationary(false)
+    }
     if (queue != null && activeIdentity(queue!.owner)) flush(queue!)
-  }, 15000)
+  }, 5000)
 }

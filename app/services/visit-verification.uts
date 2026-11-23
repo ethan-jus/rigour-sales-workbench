@@ -1,0 +1,22 @@
+import { crmCall, crmObject, crmMutation, crmVisitReason, crmTime } from './crm.uts'
+export type VisitAppeal = { id: string, status: string, reason: string, decision: string, note: string, time: string }
+export type VisitVerification = { state: string, label: string, reason: string, revision: number, canAppeal: boolean, appeals: VisitAppeal[] }
+export function verificationLabel(state: string): string {
+  if (state == 'PASSED') return '核验通过'
+  if (state == 'FAILED') return '核验未通过'
+  if (state == 'INSUFFICIENT') return '证据不足'
+  if (state == 'ERROR') return '处理异常'
+  if (state == 'APPEALED') return '申诉处理中'
+  return '自动核验中'
+}
+function normalize(data: UTSJSONObject): VisitVerification {
+  const state = data.getString('state'); const revision = data.getNumber('revision'); const canAppeal = data.getBoolean('canAppeal')
+  if (state == null || revision == null || canAppeal == null) throw new Error('核验信息不完整，请刷新')
+  const rows = (data['appeals'] as UTSJSONObject[] | null) ?? [] as UTSJSONObject[]
+  const appeals = rows.map((row: UTSJSONObject): VisitAppeal => ({ id: row.getString('id') ?? '', status: row.getString('status') == 'PENDING' ? '处理中' : '已处理', reason: row.getString('reason') ?? '', decision: row.getString('decision') == 'EFFECTIVE' ? '核验通过' : row.getString('decision') == 'INVALID' ? '维持未通过' : '', note: row.getString('reviewNote') ?? '', time: crmTime(row.getString('submittedAt') ?? '') } as VisitAppeal))
+  return { state: state!, label: verificationLabel(state!), reason: crmVisitReason(data.getString('reason') ?? ''), revision: revision!, canAppeal: canAppeal!, appeals } as VisitVerification
+}
+export async function readVisitVerification(store: string, visit: string): Promise<VisitVerification> { return normalize(crmObject(await crmCall('/crm/stores/' + store + '/visits/' + visit + '/verification'))) }
+export async function appealVisit(store: string, visit: string, revision: number, reason: string): Promise<VisitVerification> {
+  return normalize(crmObject(await crmMutation('/crm/stores/' + store + '/visits/' + visit + '/appeals', 'POST', { revision, reason: reason.trim() } as UTSJSONObject)))
+}

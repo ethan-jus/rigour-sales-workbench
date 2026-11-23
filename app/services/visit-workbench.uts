@@ -1,18 +1,67 @@
 import { reactive } from 'vue'
-import { crmCall, crmObject } from './crm.uts'
+import { crmCall, crmObject, crmOwner } from './crm.uts'
 import { apiVisitTime } from './visits.uts'
 
 export type VisitBoardRow = { id: string, storeId: string, captureId: string, name: string, address: string, state: string, label: string, tone: string, time: string, reason: string }
-export type VisitPlanRow = { id: string, storeId: string, name: string, address: string, objective: string, status: string, visitId: string }
+export type VisitPlanRow = { id: string, storeId: string, name: string, address: string, objective: string, status: string, visitId: string, actionCode: string }
 type VisitNavigation = { revision: number, tab: string, date: string }
 export const visitNavigation = reactive({ revision: 0, tab: 'plans', date: '' } as VisitNavigation)
+// Keep acknowledged commands visible while the CRM read model catches up through outbox.
+type VisitReceipt = { captureId: string, status: string, checkedOutAt: string, attempts: number }
+type VisitRefresh = { revision: number }
+export const visitRefresh = reactive({ revision: 0 } as VisitRefresh)
+let receiptOwner = ''; let receipts: VisitReceipt[] = []; let refreshTimer = 0
+function ensureReceiptOwner(): void {
+  const owner = crmOwner()
+  if (owner == receiptOwner) return
+  receiptOwner = owner; receipts = []; clearTimeout(refreshTimer); refreshTimer = 0
+}
+export function rememberVisitReceipt(captureId: string, status: string, checkedOutAt: string): void {
+  ensureReceiptOwner()
+  receipts = receipts.filter((r: VisitReceipt): boolean => r.captureId != captureId)
+  receipts.push({ captureId, status, checkedOutAt, attempts: 6 } as VisitReceipt)
+}
+function applyVisitReceipts(data: UTSJSONObject, status: string): void {
+  ensureReceiptOwner()
+  const items = data.getArray<UTSJSONObject>('items'); if (items == null) return
+  let refresh = false; let excluded = 0
+  const next: UTSJSONObject[] = []
+  items!.forEach((row: UTSJSONObject) => {
+    const receipt = receipts.find((r: VisitReceipt): boolean => r.captureId == row.getString('captureId'))
+    if (receipt != null) {
+      const current = row.getString('status') ?? ''
+      const acknowledged = receipt!.status == 'CANCELLED' ? current == 'CANCELLED' : ['SUBMITTED','PROCESSING','INSUFFICIENT','ERROR','APPEALED','EFFECTIVE','INVALID','VOID','CANCELLED'].includes(current)
+      if (acknowledged) receipts = receipts.filter((r: VisitReceipt): boolean => r.captureId != receipt!.captureId)
+      else {
+        row['status'] = receipt!.status; row['checkedOutAt'] = receipt!.checkedOutAt
+        if (receipt!.attempts > 0) refresh = true
+        if (status != 'ALL' && status != receipt!.status) { excluded++; return }
+      }
+    }
+    next.push(row)
+  })
+  data['items'] = next
+  if (excluded > 0) data['total'] = Math.max(0, (data.getNumber('total') ?? 0) - excluded)
+  const active = data.getJSON('active')
+  if (active != null && receipts.some((r: VisitReceipt): boolean => r.captureId == active!.getString('captureId'))) data['active'] = null
+  // Statistics remain CRM facts. Visible consumers refresh together; hidden pages make no requests.
+  if (refresh && refreshTimer == 0) {
+    const owner = receiptOwner
+    receipts.forEach((r: VisitReceipt) => { r.attempts = Math.max(0, r.attempts - 1) })
+    refreshTimer = setTimeout(() => { refreshTimer = 0; if (owner == crmOwner()) visitRefresh.revision++ }, 1000)
+  }
+}
 export function showVisitPlans(date: string): void { visitNavigation.revision++; visitNavigation.tab = 'plans'; visitNavigation.date = date; uni.switchTab({ url: '/pages/visits/visits' }) }
 export function showVisitRecords(from: string, to: string, kind: string): void { uni.navigateTo({ url: '/pages/visit-history/visit-history?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to) + '&kind=' + encodeURIComponent(kind) }) }
 export function visitBoardLabel(status: string): string {
   if (status == 'IN_PROGRESS') return '进行中'
   if (status == 'PENDING_SUBMIT') return '待提交'
-  if (status == 'SUBMITTED') return '待核验'
+  if (status == 'SUBMITTED' || status == 'PROCESSING') return '核验中'
+  if (status == 'INSUFFICIENT') return '证据不足'
+  if (status == 'ERROR') return '处理异常'
+  if (status == 'APPEALED') return '申诉中'
   if (status == 'EFFECTIVE') return '有效'
+  if (status == 'CANCELLED') return '已取消'
   if (status == 'INVALID') return '未通过'
   if (status == 'VOID') return '已撤销'
   return '状态待确认'
@@ -34,9 +83,11 @@ export function visitBoardQuery(from: string, to: string, kind: string, status: 
   return '/sales/me/visit-workbench?from=' + from + '&to=' + to + '&kind=' + kind + '&status=' + status + '&keyword=' + encodeURIComponent(keyword.trim()) + '&page=' + page.toString() + '&size=20'
 }
 export async function loadVisitBoard(from: string, to: string, kind: string, status: string, keyword: string, page: number): Promise<UTSJSONObject> {
-  return crmObject(await crmCall(visitBoardQuery(from, to, kind, status, keyword, page)))
+  const owner = crmOwner(); const data = crmObject(await crmCall(visitBoardQuery(from, to, kind, status, keyword, page)))
+  if (owner == crmOwner()) applyVisitReceipts(data, status)
+  return data
 }
 export function openVisitBoardRow(row: VisitBoardRow): void {
   if (row.captureId.length > 0) uni.navigateTo({ url: '/pages/crm-visit/crm-visit?store=' + row.storeId + '&visit=' + row.id + '&capture=' + row.captureId })
-  else uni.navigateTo({ url: '/pages/crm-visit/crm-visit?store=' + row.storeId + '&visit=' + row.id })
+  else uni.showToast({ title: '拜访采集信息缺失，请刷新', icon: 'none' })
 }
