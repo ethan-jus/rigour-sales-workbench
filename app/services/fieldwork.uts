@@ -1,7 +1,7 @@
 import { crmCall, crmObject } from './crm.uts'
 import { attendanceClock } from './attendance.uts'
 import { LocalTrackPoint } from './field-tracking.uts'
-import { routeDistance, routeGapMillis } from './track-motion.uts'
+import { isRouteVertexSource, routeDistance, routeGapMillis } from './track-motion.uts'
 export type FieldEvent = { key: string, time: string, sortTime: string, endedAt: string, title: string, kind: string, sequence: number, badge: string, reason: string, address: string, timeRange: string, dwell: string, dwellMinutes: number, captureId: string, longitude: number | null, latitude: number | null }
 export type FieldPoint = { latitude: number, longitude: number, time: number }
 export type FieldLine = { points: FieldPoint[], color: string, width: number, arrow: boolean }
@@ -41,7 +41,7 @@ export function fieldTrackPreview(input: LocalTrackPoint[], confirmedAt: number,
   let meters = 0
   let tail = legacy.tail
   for (const row of rows) {
-    if (row.source == 'APP_GPS' && drawableLocalPoint(row, limit)) fixes.set(row.id, row)
+    if (isRouteVertexSource(row.source) && drawableLocalPoint(row, limit)) fixes.set(row.id, row)
     // The witness can arrive after all of the vertices it confirms.
     if (row.time <= confirmedAt || row.routePath.length < 2) continue
     const batch = [] as LocalTrackPoint[]

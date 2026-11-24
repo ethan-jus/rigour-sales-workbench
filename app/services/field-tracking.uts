@@ -276,6 +276,9 @@ async function reconcile(): Promise<void> {
       const now = location.observedAt
       if (!Number.isFinite(now) || now <= 0 || now < lastObservation || !Number.isFinite(location.latitude) || !Number.isFinite(location.longitude) || !Number.isFinite(location.accuracy) || location.accuracy <= 0) return
       let source = 'APP_LOCATION_CALLBACK'
+      // #ifdef APP-IOS
+      if (confirmedTrack) source = 'APP_IOS_LOCATION'
+      // #endif
       // #ifdef APP-ANDROID
       if (location.gps) {
         observeStationary(location, confirmedTrack)

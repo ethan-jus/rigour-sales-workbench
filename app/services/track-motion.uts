@@ -22,6 +22,10 @@ function separation(a: RouteFix, b: RouteFix): number {
   return routeDistance(a.latitude, a.longitude, b.latitude, b.longitude)
 }
 
+export function isRouteVertexSource(source: string): boolean {
+  return source == 'APP_GPS' || source == 'APP_IOS_LOCATION'
+}
+
 export class TrackMotion {
   private seeds: RouteFix[] = []
   private last: RouteFix | null = null
@@ -37,7 +41,7 @@ export class TrackMotion {
 
   push(fix: RouteFix, intervalSeconds: number): string[] {
     const gap = routeGapMillis(intervalSeconds)
-    if ((fix.source != 'APP_GPS' && fix.source != 'APP_GPS_STILL') || fix.accuracy > 25) {
+    if ((!isRouteVertexSource(fix.source) && fix.source != 'APP_GPS_STILL') || fix.accuracy > 25) {
       this.reset()
       return [] as string[]
     }

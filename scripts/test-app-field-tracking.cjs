@@ -10,7 +10,7 @@ const motion = loadService('track-motion')
 const fieldwork = loadService('fieldwork', {'./track-motion.uts':motion})
 function wrap(x){if(x==null||typeof x!=='object')return x;if(Array.isArray(x))return x.map(wrap);const o=Object.fromEntries(Object.entries(x).map(([k,v])=>[k,wrap(v)]));for(const [n,t]of[['getString','string'],['getNumber','number'],['getBoolean','boolean'],['getJSON','object']])Object.defineProperty(o,n,{value:k=>typeof o[k]===t?o[k]:null});Object.defineProperty(o,'getArray',{value:k=>Array.isArray(o[k])?o[k]:null});return o}
 const pending = (store, owner = 'one') => (store.get(owner+'|track:queue')?.batchIds ?? []).map(id => store.get(owner+'|track:batch:'+id))
-function fixture(storage=new Map()) {
+function fixture(storage=new Map(), platform="APP-ANDROID") {
  let now=Date.parse('2026-11-12T02:00:00Z'), listener=null, errorListener=null, onNetwork=null, tick=null, stops=0, starts=0,id=0,network=true,ack=true,held=null
  const session=reactive({authenticated:true,userId:'one'}),owner=()=>session.authenticated?session.userId:'',scope=()=>session.userId
  const attendance=reactive({day:{id:'day',sessionId:'first',status:'ACTIVE'},pending:false,busy:false,serverOffset:0,captureUntil:now+3600000,sampleIntervalSeconds:60,uploadIntervalSeconds:60,offlineDeadline:120,locationEnabled:true})
@@ -22,7 +22,8 @@ function fixture(storage=new Map()) {
  modules['./track-motion.uts']=motion
  modules['./background-location.uts']={acquireBackgroundLocation:async(_key,point,error)=>{listener=point;errorListener=error;starts++},releaseBackgroundLocation:()=>{listener=null;errorListener=null;stops++},setFieldworkLocationIdle:idle=>idleChanges.push(idle)}
  const context={console:{log:()=>{},warn:()=>{}},exports:{},require:n=>modules[n],uni,Date:Clock,Promise,Error,Number,JSON:{...JSON,parse:JSON.parse,stringify:JSON.stringify,parseObject:s=>wrap(JSON.parse(s))},setInterval:f=>(tick=f,1),encodeURIComponent}
- vm.createContext(context);const source=fs.readFileSync(__dirname+'/../app/services/field-tracking.uts','utf8');vm.runInContext(ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,context)
+ vm.createContext(context);const source=fs.readFileSync(__dirname+'/../app/services/field-tracking.uts','utf8')
+   .replace(/^[ \t]*\/\/ #ifdef (APP-ANDROID|APP-IOS)\r?\n([\s\S]*?)^[ \t]*\/\/ #endif/gm, (_, target, block) => target === platform ? block : '');vm.runInContext(ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,context)
  return{api:context.exports,attendance,session,storage,writes,permissions,idleChanges,
   point:(fields={})=>listener?.({longitude:116.4,latitude:39.9,accuracy:8,observedAt:now,gps:true,motion:-1,...fields}),
   tick:()=>tick?.(),advance:ms=>now+=ms,network:v=>network=v,connection:v=>{network=v;onNetwork?.({isConnected:v})},ack:v=>ack=v,hold:p=>held=p,starts:()=>starts,stops:()=>stops}
@@ -182,4 +183,33 @@ test('unknown motion requires corroborating displacements and keeps a genuine sh
  const fixes=[[0,0],[6,0],[13,0],[13,7],[13,14],[13,21]]
  const routes=fixes.map(([x,y],i)=>filter.push({id:String(i),time:5000*(i+1),longitude:x/111195,latitude:y/111195,accuracy:6,source:'APP_GPS',motion:-1},5))
  assert.deepEqual(routes.map(r=>Array.from(r)),[[],[],[],['0','1','2','3'],[],['3','4']])
+})
+
+
+test('iPhone system locations confirm movement across batches without counting an inaccurate fix or stationary samples', async () => {
+ const f = fixture(new Map(), 'APP-IOS')
+ f.attendance.sampleIntervalSeconds = 5
+ f.attendance.day.confirmedTrack = true
+ f.api.startFieldTracking()
+ await f.api.resumeFieldTracking()
+ f.connection(false)
+ async function sample(east, accuracy = 5) {
+   f.point({ longitude:116.4 + east / 85300, accuracy, motion:-1, gps:false })
+   await drain()
+   f.advance(5000)
+ }
+ for (const east of [0, 1, 0, 1, 0, 1]) await sample(east)
+ await sample(500, 70)
+ for (const east of [0, 6, 12, 18, 24, 30]) await sample(east)
+ const evidence = f.api.localTrackPoints('day')
+ const preview = fieldwork.fieldTrackPreview(evidence, 0, 5, 25)
+ assert.equal(preview.lines.length, 1)
+ assert.equal(Math.round(preview.distanceMeters), 24)
+ assert.ok(evidence.every(point => point.source === 'APP_IOS_LOCATION'))
+ assert.ok(evidence.slice(0, 7).every(point => point.routePath.length === 0))
+ f.connection(true)
+ await drain()
+ const uploaded = f.writes.flatMap(w => w.b.points)
+ assert.ok(uploaded.some(p => p.routePath?.length >= 4))
+ assert.ok(uploaded.every(p => p.source === 'APP_IOS_LOCATION' && p.rawCoordinateSystem === 'WGS84'))
 })
