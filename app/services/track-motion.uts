@@ -32,19 +32,28 @@ export class TrackMotion {
   private vertex: RouteFix | null = null
   private pending: RouteFix | null = null
 
+  private skippedCoarse = false
+
   reset(): void {
+    this.skippedCoarse = false
     this.seeds = []
     this.last = null
     this.vertex = null
     this.pending = null
   }
 
-  push(fix: RouteFix, intervalSeconds: number): string[] {
+  push(fix: RouteFix, intervalSeconds: number, maximumAccuracy: number = 25): string[] {
     const gap = routeGapMillis(intervalSeconds)
-    if ((!isRouteVertexSource(fix.source) && fix.source != 'APP_GPS_STILL') || fix.accuracy > 25) {
+    if (!isRouteVertexSource(fix.source) && fix.source != 'APP_GPS_STILL') {
       this.reset()
       return [] as string[]
     }
+    if (fix.accuracy > Math.min(maximumAccuracy, 25)) {
+      if (this.vertex == null || this.skippedCoarse || !isRouteVertexSource(fix.source) || fix.motion == motionStill) this.reset()
+      this.skippedCoarse = true
+      return [] as string[]
+    }
+    this.skippedCoarse = false
     const last = this.last
     if (last != null) {
       const elapsed = fix.time - last.time

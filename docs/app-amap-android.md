@@ -1,13 +1,13 @@
-# Android 高德地图接入（2026-11-13）
+# 外勤记录高德地图接入
 
 原项目 `app/` 的“外勤记录”使用高德原生地图。系统定位、Sales 轨迹存储和里程算法保持原职责；原始 WGS84 坐标保留，地图使用接口返回的 GCJ02 坐标。地图不启动高德定位，不上传拜访名称或录音给地图服务。
 
 ## 依赖与平台
 
 - 官方 `uni-map-amap` **1.5.1**，来源 <https://ext.dcloud.net.cn/plugin?id=25947>，Android TextureView 适合页内滚动。
-- 此仓库只纳入官方插件的 **Android 子集**：保留 Android 原生实现、公共类型与组件，移除本批未启用的 `utssdk/app-ios`、`utssdk/app-harmony`，`uni-ext-api` 只注册 Kotlin。HBuilderX 会扫描已安装的原生插件，不能仅靠页面条件编译隔离未启用平台的原生依赖。
+- 仓库保留公共组件及 Android、iOS 原生实现，`uni-ext-api` 注册 Kotlin 和 Swift。HBuilderX 会扫描已安装的原生插件，不能仅靠页面条件编译隔离未启用平台的原生依赖。
 - 不修改厂商 Android SDK 代码。升级插件时重新检查上述平台范围，不直接用“全部覆盖”恢复未配置的平台。
-- iOS/Harmony 当前显示记录与地图不可用提示；需要各自 Key、原生配置与独立验收。Harmony 官方插件要求 HBuilderX 5.34+ 和 Vapor，当前工程维持 5.26、VDOM。
+- Harmony 当前显示记录与地图不可用提示。Harmony 官方插件要求 HBuilderX 5.34+ 和 Vapor，当前工程维持 5.26、VDOM。
 
 ## 本机配置
 
@@ -17,6 +17,15 @@
 - SDK Key 在忽略提交的 `app/AndroidManifest.xml`，模板为 `docs/AndroidManifest.example.xml`；不写入共享 `manifest.json`、日志或文档。
 - 本机云打包参数位于忽略提交的 `outputs/amap-android/custom-base.local.json`。使用自有调试签名、`iscustom: true`，关闭广告。仅用户明确批准后调用 `cli pack --config <本机参数绝对路径>`。
 - HBuilderX 原生依赖路径已配置到本机已有 Android SDK、Gradle 8.14.3、JDK 21。依赖首次下载失败后已重新解析并完成编译；未修改全局 Gradle 源或 Java 默认版本。
+
+## iOS 真机打包
+
+- 公司高德应用「销售打卡生产API」下的「工作台iOS开发」绑定 `com.rigour.workbench`，供少量短期测试。将 Key 配入本机 Xcode 宿主的 `Info.plist` 的 `AMapAPIKey` 字符串项。
+- HBuilderX 5.26 导出 iOS App 资源后，离线 Xcode 工程从 `uni_modules/uni-map-amap/utssdk/app-ios/src` 编译动态 framework `unimoduleUniMapAmap`。链接 DCloudUniappRuntime、DCloudUTSFoundation、DCloudUTSExtAPI 和高德 SDK。此次真机使用 AMap3DMap 11.2.000、AMapFoundation 1.9.4 的 arm64 设备库，链接系统依赖按对应 podspec 配置，链接参数包含 `-ObjC`。
+- App 目标嵌入并签名插件 framework，将插件导出的 `Resources/AMap.bundle` 与 `Resources/uni-map-amap.bundle` 复制到主包资源，更新主包中的 `www`。高德静态 framework 链接到插件。
+- 验收时先选没有定位记录的日期检查底图和空态，再选有记录的日期检查真实点位与轨迹。系统定位授权仅影响当前位置功能。
+
+iPhone 15 Pro Max 无线实测（2026-11-24，0.2.18 build 222）：通过 Xcode Device Hub 切换日期。24 日显示街道、当前位置和 13:57 签到记录，23 日显示签到位置并提示有效定位不足，21 日显示底图和空态。截图保存在本机 `outputs/ios-local/ad-hoc-222/fieldwork-{today,history,empty}.png`。这三天未观察到可验收的多点移动路线。
 
 ## 页面边界
 
@@ -31,7 +40,7 @@
 
 - Android 目标原生编译通过；包含厂商 Kotlin 插件编译。
 - 原生测试 **276/276** 通过，其中新增用例覆盖轨迹不跨断点连线、里程使用服务端口径、地图标记与排序后时间线对应。
-- iOS 页面编译通过，未启用 iOS 高德插件。曾出现插件失败但页面成功的双重回执，检查脚本现优先判定失败；正反日志夹具验证通过。
+- 11 月 13 日的 iOS 页面编译通过，当时未启用 iOS 高德插件。曾出现插件失败但页面成功的双重回执，检查脚本现优先判定失败；正反日志夹具验证通过。
 - 鸿蒙页面编译与未签名 HAP 制作通过；未启用鸿蒙高德插件。
 - DCloud 开发基座制作成功，2026-11-13 11:10:55 完成，40,624,874 字节；本次未购买收费套餐。产物为 `app/unpackage/debug/android_debug.apk`，SHA256：`c60bde283f4b94df4a60b46ddb974f5f0ad8946e74bcdbc4e9333da1a3eec548`。
 - APK 的包名、调试签名、包内 Key 与本机配置一致，包含高德 Android 原生库。11:41 已在 Redmi M2007J22C 启动 `com.rigour.workbench`，原项目最新资源同步成功。

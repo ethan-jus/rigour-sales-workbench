@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSLocationWhenInUseUsageDescription</key>
+  <string>销售工作台使用定位核验签到、签退和门店拜访，并在作业期间记录路线。</string>
+  <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+  <string>已签到且作业进行中时，销售工作台在锁屏或切换应用后继续记录外勤路线。</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>销售工作台使用麦克风记录拜访现场音频。拜访录音期间锁屏或切换应用后继续录制。</string>
+  <key>UIBackgroundModes</key>
+  <array>
+    <string>location</string>
+    <string>audio</string>
+  </array>
+</dict>
+</plist>

@@ -159,6 +159,7 @@ import { readVisitVerification, VisitVerification } from '../../services/visit-v
 import { crmCall, crmObject, crmContacts, crmReception, crmMutation, crmContact, crmRecentVisitLocation, crmId, crmMessage, crmOwner, crmVisitRecords, crmVisitStatus, crmVisitReason, CrmVisitRecord, CrmContact } from '../../services/crm.uts'
 import { visitCaptureRules, emptyCaptureRules, CaptureRules } from '../../services/visit-policy.uts'
 import { crmEnsureAutomaticRecording, crmResumeAutomaticRecording, crmFinishRecording, crmCompleteRecording, crmEndingVisit, crmUploadState } from '../../services/crm-media.uts'
+import { attendance } from '../../services/attendance.uts'
 import { crmMedia, crmPhotoPath, crmTakePhoto, crmUpload, crmUploadPhotos, crmRecorder, crmRecording, crmStartRecording, crmStopRecording, crmRetryRecording, crmMediaOwner, CrmMedia, CrmPhoto, CrmAudio } from '../../services/crm-media.uts'
 import { loadVisitFieldwork, emptyVisitFieldwork, visitFieldworkDraft, visitFieldworkBody, validateVisitFieldwork, visitOptions, visitOptionName, VisitFieldworkDraft, VisitFieldworkForm, VisitDictionary, VisitOption, VisitFieldError, VisitBusinessProgress, visitServerFieldError } from '../../services/visit-fieldwork.uts'
 import { VisitRecordingTime, visitRecordingTotal } from '../../services/visit-recording-time.uts'
@@ -208,7 +209,11 @@ const selectedPeople = computed((): string => {
 const recordingTotal = computed((): number => visitRecordingTotal(media.value.recordings.filter((a: CrmAudio): boolean => a.captureSource != 'FILE_IMPORT').map((a: CrmAudio): VisitRecordingTime => ({ id: a.clip.id, durationMs: a.clip.activeDurationEstimateMs } as VisitRecordingTime)), remoteRecordingTimes.value, recordingHere.value ? crmRecorder.unindexedDurationMs : 0))
 const recordingStatus = computed((): string => (recordingHere.value && recordingActive.value ? (crmRecorder.phase == 'recording' ? '录音中' : '录音待恢复') : recordingTotal.value > 0 ? '录音已保存' : '录音未开始') + ' · 累计 ' + visitClock(recordingTotal.value))
 const recordingInterrupted = computed((): boolean => status.value == 'CHECKED_IN' && rules.value.automaticRecording && !ending.value && (!recordingActive.value || crmRecorder.phase == 'interrupted' || crmRecorder.phase == 'paused' || crmRecorder.phase == 'error'))
-const visiblePhotoCount = computed((): number => photoCount.value + media.value.photos.filter((p: CrmPhoto): boolean => !p.uploaded && p.captureSource != 'FILE_IMPORT').length)
+const visiblePhotoCount = computed((): number => {
+  const photos = media.value.photos.filter((p: CrmPhoto): boolean => p.captureSource != 'FILE_IMPORT')
+  const uploaded = photos.filter((p: CrmPhoto): boolean => p.uploaded).length
+  return Math.max(photoCount.value, uploaded) + photos.length - uploaded
+})
 const pendingMaterials = computed((): number => media.value.photos.filter((p: CrmPhoto): boolean => !p.uploaded && p.captureSource != 'FILE_IMPORT').length + media.value.recordings.filter((a: CrmAudio): boolean => !a.uploaded && a.captureSource != 'FILE_IMPORT' && a.clip.fileName.length > 0).length)
 let owner = ''; let generation = 0; let completionBody: UTSJSONObject | null = null; let locationTimer = 0
 let pageVisible = false
@@ -368,16 +373,16 @@ async function completeVisit(): Promise<void> {
   const account = crmOwner(); const version = generation; const startedAt = Date.now()
   try {
     if (completionBody == null) {
-      let location: UTSJSONObject | null = null
+      let checkoutPoint: UTSJSONObject | null = null
       await Promise.all<void>([
         crmFinishRecording(captureId.value),
         crmUploadPhotos(captureId.value),
-        status.value == 'CHECKED_IN' ? completionLocation().then((point: UTSJSONObject): void => { location = point }) : Promise.resolve()
+        status.value == 'CHECKED_IN' ? completionLocation().then((point: UTSJSONObject): void => { checkoutPoint = point }) : Promise.resolve()
       ])
       if (account != crmOwner()) return
       ending.value = true
       const eventId = crmId()
-      const checkout = location == null ? null : { idempotencyKey: eventId, deviceEventId: eventId, clientOccurredAt: new Date().toISOString(), location } as UTSJSONObject
+      const checkout = checkoutPoint == null ? null : { idempotencyKey: eventId, deviceEventId: eventId, clientOccurredAt: new Date(Date.now() + attendance.serverOffset).toISOString(), location: checkoutPoint } as UTSJSONObject
       completionBody = { result: { contactOutcome: outcome.value, kpName: null, kpPhone: null, intentionLevel: null, resultNote: note.value.trim(), fieldwork: visitFieldworkBody(fieldwork.value) } as UTSJSONObject, checkout } as UTSJSONObject
       uni.setStorageSync(completionStorageKey(), JSON.stringify(completionBody))
     }

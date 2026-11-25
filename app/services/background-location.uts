@@ -1,3 +1,6 @@
+// #ifdef APP-IOS
+import { startFieldLocation, stopFieldLocation } from '../uni_modules/rigour-location-service'
+// #endif
 // #ifdef APP-ANDROID
 import { setNativeFieldMotion, setNativeLocationIdle, startNativeLocation, stopNativeLocation } from './native-location.uts'
 // #endif
@@ -33,7 +36,7 @@ function subscribers(): LocationConsumer[] {
 }
 function stopIfUnused(): void {
   if (consumers.size > 0 || starting != null) return
-  // #ifndef APP-ANDROID
+  // #ifndef APP-ANDROID || APP-IOS
   if (listener != null) uni.offLocationChange(listener!)
   if (errorListener != null) uni.offLocationChangeError(errorListener!)
   listener = null; errorListener = null
@@ -41,6 +44,9 @@ function stopIfUnused(): void {
   // #endif
   // #ifdef APP-ANDROID
   stopNativeLocation()
+  // #endif
+  // #ifdef APP-IOS
+  stopFieldLocation()
   // #endif
   active = false; lastGpsAt = 0; lastGpsAccuracy = 0
 }
@@ -76,9 +82,19 @@ export function acquireBackgroundLocation(key: string, point: (value: Background
       active = true; resolve()
     } catch (failure) { reject(failure) }
     // #endif
-    // #ifndef APP-ANDROID
+    // #ifdef APP-IOS
+    startFieldLocation((longitude, latitude, accuracy, observedAt) => {
+      const value = { longitude, latitude, accuracy, observedAt, gps: false, motion: -1 } as BackgroundPoint
+      subscribers().forEach((consumer: LocationConsumer) => consumer.point(value))
+    }, () => { active = true; resolve() }, (message: string) => {
+      if (active) subscribers().forEach((consumer: LocationConsumer) => consumer.error(message))
+      else reject(new Error(message))
+    })
+    // #endif
+    // #ifndef APP-ANDROID || APP-IOS
     listener = uni.onLocationChange((location: OnLocationChangeResult) => {
-      const value = { longitude: location.longitude, latitude: location.latitude, accuracy: location.accuracy, observedAt: Date.now(), gps: false, motion: -1 } as BackgroundPoint
+      const accuracy = location.horizontalAccuracy > 0 ? location.horizontalAccuracy : location.accuracy
+      const value = { longitude: location.longitude, latitude: location.latitude, accuracy: accuracy, observedAt: Date.now(), gps: false, motion: -1 } as BackgroundPoint
       subscribers().forEach((consumer: LocationConsumer) => consumer.point(value))
     })
     errorListener = uni.onLocationChangeError((failure: IGetLocationFail) => { subscribers().forEach((consumer: LocationConsumer) => consumer.error(failure.errMsg)) })

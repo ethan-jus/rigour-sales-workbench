@@ -2,7 +2,7 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 const flush=()=>new Promise(setImmediate)
 function fixture(storage=new Map()) {
  let owner='tenant:user';const calls=[],events=[],hooks={};let finish=async()=>{},photos=async()=>{},takePhoto=async()=>{}
- const modules={
+ const modules={'../../services/attendance.uts':{attendance:{serverOffset:0}},
   '../../services/crm.uts':{crmOwner:()=>owner,crmObject:r=>({getString:k=>r[k]??null}),crmMessage:e=>e.message,crmId:()=> 'completion-id',crmRecentVisitLocation:p=>p,crmCall:(url,method,body)=>new Promise((resolve,reject)=>calls.push({url,method,body,resolve,reject}))},
   '../../services/visit-workbench.uts':{rememberVisitReceipt:()=>{}},
   '../../services/customer-nearby.uts':{customerNearbyVisitLocation:()=>({longitude:120.1,latitude:30.2,accuracyMeters:10,source:'APP_NATIVE'}),customerNearbyLocation:()=>{throw Error('fresh cached point must be reused')}},

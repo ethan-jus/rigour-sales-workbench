@@ -1,5 +1,5 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),ts=require('typescript'),vm=require('node:vm')
-function androidSource(source){return source.replace(/\/\/ #ifndef APP-ANDROID[\s\S]*?\/\/ #endif/g,'')}
+function androidSource(source){return source.replace(/\/\/ #ifdef APP-IOS[\s\S]*?\/\/ #endif/g,'').replace(/\/\/ #ifndef APP-ANDROID[\s\S]*?\/\/ #endif/g,'')}
 function fixture(){
  let now=100000,starts=0,stops=0,onPoint=null,idle=false
  const native={startNativeLocation:f=>{starts++;onPoint=f},stopNativeLocation:()=>{onPoint=null;stops++},setNativeFieldMotion:()=>{},setNativeLocationIdle:value=>{idle=value}}

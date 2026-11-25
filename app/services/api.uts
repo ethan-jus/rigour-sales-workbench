@@ -2,7 +2,7 @@ import { session } from './session.uts'
 import { ensureAccessToken, invalidateCompanySession } from './auth.uts'
 import { appEnvironment, environmentReady } from './config.uts'
 import { invalidateHomeCache } from './home-cache.uts'
-import { parseApiJson } from './json.uts'
+import { parseApiJson, rawJsonDataType } from './json.uts'
 
 export function apiErrorMessage(code: string, status: number): string {
   if (status == 401) return '登录已失效，请重新登录公司账号。'
@@ -58,7 +58,7 @@ function sendAuthenticatedRequest(path: string, method: string, body: UTSJSONObj
     method: method as RequestMethod,
     data: body,
     header: headers,
-    dataType: 'text',
+    dataType: rawJsonDataType(),
     timeout: 20000,
     success: (response) => {
       if (session.revision != revision) { fail('账号已变更，请重新加载。'); return }

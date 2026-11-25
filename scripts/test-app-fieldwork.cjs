@@ -59,7 +59,7 @@ test('map marker IDs address records without inserting gaps into the timeline', 
   for (const marker of result.markers) assert.ok(marker.eventIds.every(id => result.events[id - 1] != null))
 })
 
-function pageFixture(t, readCases = async () => []) {
+function pageFixture(t, readCases = async () => [], platform = 'android') {
   const session = reactive({ authenticated: true, tenantId: 'tenant', userId: 'sales', permissions: [] })
   const hooks = {}, calls = [], addressCalls = [], navigations = [], scope = effectScope(), timers = new Map()
   let timerId=0, clock=Date.now()
@@ -86,7 +86,8 @@ function pageFixture(t, readCases = async () => []) {
     uni: { reLaunch: value => navigations.push(value.url) },
   }
   const source = fs.readFileSync('app/pages/fieldwork/fieldwork.uvue', 'utf8').split('<script setup lang="uts">')[1].split('</script>')[0]
-  scope.run(() => vm.runInNewContext(ts.transpileModule(source + '\nexports.view = { loading, day, track, cases, error, mapFullscreen, workDuration, selected, preview }; exports.live = refreshLive; exports.toggle = toggleMapFullscreen;', {
+    .replace(/\/\/ #(ifdef|ifndef) APP-IOS\n([\s\S]*?)\/\/ #endif/g, (_, guard, body) => ((guard === 'ifdef') === (platform === 'ios')) ? body : '')
+  scope.run(() => vm.runInNewContext(ts.transpileModule(source + '\nexports.view = { loading, day, track, cases, error, mapAvailable, mapFullscreen, workDuration, selected, preview }; exports.live = refreshLive; exports.toggle = toggleMapFullscreen;', {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText, context))
   return { ...context.exports, hooks, calls, addressCalls, trackResult, session, navigations, timers, cached, local, advance:ms=>clock+=ms }
@@ -242,10 +243,25 @@ test('recenter uses the map’s current location and requests no permission auto
   await nextTick()
   assert.equal(f.view.locationAllowed.value, false)
 })
+test('iOS empty dates show a basemap only with track access and a successful read', async t => {
+  const f = pageFixture(t, undefined, 'ios')
+  assert.equal(f.view.mapAvailable.value, false)
+  f.session.permissions.push('sales:track:own:read')
+  await nextTick()
+  assert.equal(f.view.mapAvailable.value, true)
+  f.view.loading.value = true
+  assert.equal(f.view.mapAvailable.value, false)
+  f.view.loading.value = false
+  f.view.error.value = '网络连接失败'
+  assert.equal(f.view.mapAvailable.value, false)
+})
+
 test('fullscreen reuses loaded data, back collapses first and account changes clear it', async t => {
   const f = pageFixture(t)
   f.toggle()
   assert.equal(f.view.mapFullscreen.value, false)
+  f.session.permissions.push('sales:track:own:read')
+  await nextTick()
   f.view.track.value = { points: [{ latitude: 39, longitude: 116 }], events: [] }
   const track = f.view.track.value
   f.toggle()

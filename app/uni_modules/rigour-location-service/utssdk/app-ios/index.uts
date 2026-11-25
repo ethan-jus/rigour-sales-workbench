@@ -1,0 +1,5 @@
+@UTSJS.keepAlive
+export function startFieldLocation(point: (longitude: number, latitude: number, accuracy: number, observedAt: number) => void, ready: () => void, failed: (message: string) => void): void {
+  RigourFieldLocation.shared.start(point, ready, failed)
+}
+export function stopFieldLocation(): void { RigourFieldLocation.shared.stop() }

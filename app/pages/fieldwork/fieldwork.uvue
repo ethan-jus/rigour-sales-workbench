@@ -6,9 +6,12 @@
         <text v-if="error.length > 0" class="field-error">{{ error }}</text><button v-if="error.length > 0" class="sw-text-button" :disabled="loading" @click="load">重试</button>
         <text v-if="loading" class="field-caption field-loading">正在更新…</text>
         <view class="field-map-box">
-          <field-route-map v-if="mapAvailable && !mapFullscreen" :key="mapOwner + date" :owner="mapOwner" :markers="markers" :lines="lines" :points="mapPoints" :local-lines="preview.lines" :local-tail="preview.tail" :focus="selectedPoint" :show-current="showCurrentLocation" :fullscreen="false" @select="selectMarker" @clear-selection="clearSelection" @fullscreen="toggleMapFullscreen" />
+          <field-route-map v-if="mapAvailable && !mapFullscreen" :key="mapOwner + date + (hasMapPoints ? '-route' : '-empty')" :owner="mapOwner" :markers="markers" :lines="lines" :points="mapPoints" :local-lines="preview.lines" :local-tail="preview.tail" :focus="selectedPoint" :show-current="showCurrentLocation" :fullscreen="false" @select="selectMarker" @clear-selection="clearSelection" @fullscreen="toggleMapFullscreen" />
           <view v-else class="field-map-empty"><text class="field-caption">{{ emptyMapLabel }}</text></view>
         </view>
+        <!-- #ifdef APP-IOS -->
+        <text v-if="mapAvailable && !hasMapPoints && routeNotice.length == 0" class="field-caption field-route-note">{{ emptyMapLabel }}</text>
+        <!-- #endif -->
         <text v-if="routeNotice.length > 0" class="field-caption field-route-note">{{ routeNotice }}</text>
         <view class="field-legend"><view class="field-legend-item"><image class="field-flag" src="/static/fieldwork/check-in.svg" /><text class="field-legend-text">签到</text></view><text class="field-legend-text sw-grow">数字为拜访顺序</text><view class="field-legend-item"><image class="field-flag" src="/static/fieldwork/check-out.svg" /><text class="field-legend-text">签退</text></view></view>
         <view v-if="day != null" class="field-work-time"><view class="sw-row"><text class="field-caption sw-grow">工作时长</text><text class="field-work-value">{{ workDuration }}</text></view><view class="sw-row field-work-range"><text class="field-caption sw-grow">{{ workRange }}</text><text v-if="day!.periods.length > 1" class="field-caption">分段累计</text></view><text v-if="day!.status == 'MISSING_CHECK_OUT'" class="field-notice-text">缺签退 · 未结束时段待核实</text></view>
@@ -37,7 +40,7 @@
     </scroll-view>
     <view v-if="mapFullscreen" class="field-full">
       <view class="field-full-header"><text class="field-date-text sw-grow">{{ dateLabel }}</text><text class="field-caption">{{ preview.lines.length > 0 ? '本机轨迹 · ' : '' }}{{ distanceAvailable ? distance + ' ' + distanceUnit + ' · ' : '' }}{{ visitCount }} 次拜访</text></view>
-      <view class="field-full-map"><field-route-map :key="mapOwner + date + '-full'" :owner="mapOwner" :markers="markers" :lines="lines" :points="mapPoints" :local-lines="preview.lines" :local-tail="preview.tail" :focus="selectedPoint" :show-current="showCurrentLocation" :fullscreen="true" @select="selectMarker" @clear-selection="clearSelection" @fullscreen="toggleMapFullscreen" /></view>
+      <view class="field-full-map"><field-route-map :key="mapOwner + date + (hasMapPoints ? '-route-full' : '-empty-full')" :owner="mapOwner" :markers="markers" :lines="lines" :points="mapPoints" :local-lines="preview.lines" :local-tail="preview.tail" :focus="selectedPoint" :show-current="showCurrentLocation" :fullscreen="true" @select="selectMarker" @clear-selection="clearSelection" @fullscreen="toggleMapFullscreen" /></view>
       <view v-if="selectedEvent != null" class="field-selected"><view class="sw-row"><text v-if="selectedEvent!.kind == 'visit'" class="field-number field-choice-number">{{ selectedEvent!.badge }}</text><text class="field-event-title sw-grow">{{ selectedEvent!.title }}</text><button class="field-detail" @click="clearSelection">取消选中</button></view><text class="field-event-meta">{{ selectedEvent!.timeRange }} {{ selectedEvent!.dwell }}</text><text class="field-address">{{ selectedEvent!.address }}</text><button v-if="selectedEvent!.captureId.length > 0" class="field-detail" @click="selectEvent(selectedEvent!)">查看拜访</button></view>
     </view>
     <view v-if="recordsOpen" class="field-sheet-scrim" @click="recordsOpen = false"><view class="field-sheet" @click.stop=""><view class="sw-row"><text class="field-heading sw-grow">行程记录</text><button class="field-step" aria-label="关闭" @click="recordsOpen = false">×</button></view><scroll-view class="field-sheet-scroll" direction="vertical">
@@ -85,7 +88,15 @@ const useMeters = computed((): boolean => (day.value?.confirmedTrack == true || 
 const distance = computed((): string => useMeters.value ? meters.value.toString() : (meters.value / 1000).toFixed(1))
 const distanceUnit = computed((): string => useMeters.value ? 'm' : 'km')
 const distanceAvailable = computed((): boolean => track.value?.available == true || preview.value.distanceMeters > 0)
-const mapAvailable = computed((): boolean => mapPoints.value.length > 0 || preview.value.tail != null)
+const hasMapPoints = computed((): boolean => mapPoints.value.length > 0 || preview.value.tail != null)
+const mapAvailable = computed((): boolean => {
+  // #ifdef APP-IOS
+  return hasPermission('sales:track:own:read') && (hasMapPoints.value || (!loading.value && error.value.length == 0))
+  // #endif
+  // #ifndef APP-IOS
+  return hasMapPoints.value
+  // #endif
+})
 const showCurrentLocation = computed((): boolean => visible.value && (date.value == today.value || (day.value?.date == date.value && day.value?.status == 'ACTIVE')))
 const selectedPoint = computed((): FieldPoint | null => {
   const event = selectedEvent.value
@@ -96,7 +107,7 @@ const lines = computed((): FieldLine[] => track.value?.lines ?? [] as FieldLine[
 const visitCount = computed((): number => events.value.filter((event: FieldEvent): boolean => event.kind == 'visit').length)
 const dwell = computed((): string => track.value?.dwellIncomplete == true ? '部分待确认' : (track.value?.dwellMinutes ?? 0).toString())
 const routeNotice = computed((): string => {
-  if (preview.value.lines.length > 0) return '本机轨迹 · 正在同步'
+  if (preview.value.lines.length > 0) return fieldTracking.pendingPoints > 0 ? '本机轨迹 · 待同步' : '本机轨迹 · 正在更新'
   if (loading.value || day.value == null || track.value == null) return ''
   if (!distanceAvailable.value) return track.value!.pointCount == 0 ? '当天尚未记录行程' : '有效定位不足，尚未形成轨迹'
   return track.value!.gaps > 0 || track.value!.rejected > 0 ? '部分定位缺失，里程仅含已记录路段' : ''

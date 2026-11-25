@@ -1,3 +1,32 @@
+export function loginRandomToken(): string | null {
+  return RigourLoginProof.randomToken()
+}
+
+export function loginProofChallenge(verifier: string): string {
+  return RigourLoginProof.challenge(verifier)
+}
+
+export function readProtectedFieldValue(scope: string, success: (value: string | null) => void, fail: (message: string) => void): void {
+  RigourProtectedFieldStorage.read(scope, (ok: boolean, value: string | null): void => {
+    if (ok) success(value)
+    else fail('本机作业数据读取失败，原文件已保留')
+  })
+}
+
+export function writeProtectedFieldValue(scope: string, value: string, success: () => void, fail: (message: string) => void): void {
+  RigourProtectedFieldStorage.write(scope, value, (ok: boolean): void => {
+    if (ok) success()
+    else fail('无法保存本机作业数据，请重试')
+  })
+}
+
+export function clearProtectedFieldValue(scope: string, success: () => void, fail: (message: string) => void): void {
+  RigourProtectedFieldStorage.clear(scope, (ok: boolean): void => {
+    if (ok) success()
+    else fail('无法清除本机作业数据，请重试')
+  })
+}
+
 export function readSecurePayload(scope: string, success: (value: string | null) => void, fail: (message: string) => void): void {
   RigourSessionKeychain.read(scope, (ok: boolean, value: string | null): void => {
     if (ok) success(value)

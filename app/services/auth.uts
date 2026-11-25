@@ -1,6 +1,6 @@
 import { appEnvironment, environmentReady } from './config.uts'
 import { session, clearSession } from './session.uts'
-import { parseApiJson } from './json.uts'
+import { parseApiJson, rawJsonDataType } from './json.uts'
 import { secureSessionSupported, readSecureSession, writeSecureSession, clearSecureSession, StoredSession } from './secure-session.uts'
 
 // #ifdef APP-ANDROID
@@ -8,6 +8,9 @@ import SecureRandom from 'java.security.SecureRandom'
 import MessageDigest from 'java.security.MessageDigest'
 import Base64 from 'android.util.Base64'
 import Charsets from 'kotlin.text.Charsets'
+// #endif
+// #ifdef APP-IOS
+import { loginRandomToken, loginProofChallenge } from '../uni_modules/rigour-session-keychain'
 // #endif
 
 type TokenPair = { accessToken: string, refreshToken: string, expiresAt: number }
@@ -102,14 +105,20 @@ function proofKey(): ProofKey | null {
   const digest = MessageDigest.getInstance('SHA-256').digest(verifier.toByteArray(Charsets.US_ASCII))
   return { verifier, state, challenge: Base64.encodeToString(digest, flags) }
   // #endif
-  // #ifndef APP-ANDROID
+  // #ifdef APP-IOS
+  const verifier = loginRandomToken()
+  const state = loginRandomToken()
+  if (verifier == null || state == null) return null
+  return { verifier: verifier!, state: state!, challenge: loginProofChallenge(verifier!) } as ProofKey
+  // #endif
+  // #ifndef APP-ANDROID || APP-IOS
   return null
   // #endif
 }
 
 function verifyAndPublish(tokens: TokenPair, expected: StoredSession | null, current: number, success: () => void, fail: (message: string) => void): void {
   uni.request<string>({
-    url: appEnvironment.gatewayOrigin + '/api/v1/me', method: 'GET', timeout: 20000, dataType: 'text',
+    url: appEnvironment.gatewayOrigin + '/api/v1/me', method: 'GET', timeout: 20000, dataType: rawJsonDataType(),
     header: { 'Authorization': 'Bearer ' + tokens.accessToken, 'Accept-Language': 'zh-CN' },
     success: (response) => {
       if (generation != current) return
@@ -185,7 +194,7 @@ export function beginCompanyLogin(username: string, password: string, success: (
     if (generation != current) return
     // Password exists only in the native request. It is never stored or logged.
     uni.request<string>({
-      url: issuerPath('/api/v1/auth/native-app/login'), method: 'POST', timeout: 20000, dataType: 'text',
+      url: issuerPath('/api/v1/auth/native-app/login'), method: 'POST', timeout: 20000, dataType: rawJsonDataType(),
       header: { 'Content-Type': 'application/json', 'Accept-Language': 'zh-CN' },
       data: { clientId: appEnvironment.clientId, redirectUri: appEnvironment.redirectUri,
         codeChallenge: currentProof.challenge, codeChallengeMethod: 'S256', state: currentProof.state,
@@ -202,7 +211,7 @@ export function beginCompanyLogin(username: string, password: string, success: (
           failCurrent('登录安全校验失败，请重新登录。'); return
         }
         uni.request<string>({
-          url: issuerPath('/oauth2/token'), method: 'POST', timeout: 20000, dataType: 'text',
+          url: issuerPath('/oauth2/token'), method: 'POST', timeout: 20000, dataType: rawJsonDataType(),
           header: { 'Content-Type': 'application/x-www-form-urlencoded' },
           data: 'grant_type=authorization_code&client_id=' + encodeURIComponent(appEnvironment.clientId)
             + '&redirect_uri=' + encodeURIComponent(appEnvironment.redirectUri)
@@ -248,7 +257,7 @@ function exchangeRefreshToken(saved: StoredSession, current: number): void {
   clearSecureSession(() => {
     if (generation != current) return
     uni.request<string>({
-      url: issuerPath('/oauth2/token'), method: 'POST', timeout: 20000, dataType: 'text',
+      url: issuerPath('/oauth2/token'), method: 'POST', timeout: 20000, dataType: rawJsonDataType(),
       header: { 'Content-Type': 'application/x-www-form-urlencoded' },
       data: 'grant_type=refresh_token&client_id=' + encodeURIComponent(appEnvironment.clientId)
         + '&refresh_token=' + encodeURIComponent(saved.refreshToken),
@@ -349,7 +358,7 @@ export function logoutCompany(): void {
     if (session.logoutState == 'done') uni.showToast({ title: '本机已退出，服务端退出未确认。', icon: 'none' })
   }
   uni.request<string>({
-    url: issuerPath('/api/v1/auth/native-app/logout'), method: 'POST', timeout: 20000, dataType: 'text',
+    url: issuerPath('/api/v1/auth/native-app/logout'), method: 'POST', timeout: 20000, dataType: rawJsonDataType(),
     header: { 'Authorization': 'Bearer ' + token },
     success: (response) => {
       if (response.statusCode != 204) reportRemoteFailure()

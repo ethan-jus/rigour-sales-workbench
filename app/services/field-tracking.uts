@@ -299,9 +299,8 @@ async function reconcile(): Promise<void> {
       let routePath = [] as string[]
       if (confirmedTrack) {
         const limit = attendance.maximumAccuracyMeters ?? 25
-        if (location.accuracy > limit) trackMotion.reset()
-        else routePath = trackMotion.push({ id, longitude: location.longitude, latitude: location.latitude,
-          accuracy: location.accuracy, time: now, source, motion: location.motion } as RouteFix, attendance.sampleIntervalSeconds)
+        routePath = trackMotion.push({ id, longitude: location.longitude, latitude: location.latitude,
+          accuracy: location.accuracy, time: now, source, motion: location.motion } as RouteFix, attendance.sampleIntervalSeconds, limit)
       }
       appendPoint(context, { id, longitude: location.longitude, latitude: location.latitude, accuracy: location.accuracy,
         observedAt: new Date(now).toISOString(), source, routePath } as TrackPoint)

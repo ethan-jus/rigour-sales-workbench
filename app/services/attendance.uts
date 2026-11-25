@@ -30,7 +30,7 @@ export function attendanceClock(value: string): string {
 }
 export function resetAttendance(): void {
   generation++; readOwner = ''; readAt = 0; readPromise = null
-  attendance.businessDate = ''; attendance.captureUntil = 0; attendance.locationEnabled = false; attendance.allowResume = false; attendance.pendingResumeReason = ''
+  attendance.businessDate = ''; attendance.captureUntil = 0; attendance.serverOffset = 0; attendance.locationEnabled = false; attendance.allowResume = false; attendance.pendingResumeReason = ''
   attendance.day = null; attendance.pending = false; attendance.error = ''; attendance.phase = ''
   // An in-flight mutation keeps its lock until its own finally, even on logout.
 }
@@ -52,6 +52,7 @@ export function refreshAttendance(force: boolean = false): Promise<WorkDay | nul
     const date = data.getString('businessDate') ?? ''
     const until = Date.parse(data.getString('captureUntil') ?? '')
     const serverTime = Date.parse(data.getString('serverTime') ?? '')
+    const serverOffset = serverTime - Date.now()
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(until) || !Number.isFinite(serverTime)) throw new Error('作业日期不完整，请刷新')
     const raw = data.getJSON('workDay'); const day = raw == null ? null : parseDay(raw!)
     const sampleInterval = data.getNumber('locationSampleIntervalSeconds')
@@ -74,7 +75,7 @@ export function refreshAttendance(force: boolean = false): Promise<WorkDay | nul
     assertOwner(identity)
     if (readOwner == owner && version == generation) {
       attendance.day = day; attendance.businessDate = date; attendance.captureUntil = until
-      attendance.serverOffset = serverTime - Date.now(); attendance.locationEnabled = data.getBoolean('locationEnabled') ?? false; attendance.allowResume = data.getBoolean('allowResume') == true
+      attendance.serverOffset = serverOffset; attendance.locationEnabled = data.getBoolean('locationEnabled') ?? false; attendance.allowResume = data.getBoolean('allowResume') == true
       attendance.sampleIntervalSeconds = sampleInterval!
       attendance.uploadIntervalSeconds = uploadInterval!
       attendance.maximumAccuracyMeters = data.getNumber('minimumLocationAccuracyMeters')
@@ -116,8 +117,8 @@ async function performAttendance(checkOut: boolean, resumeReason: string | null)
     if (resuming && saved != null && saved!.getJSON('command')?.getString('reason') != resumeReason!.trim()) throw new Error('上次恢复请求尚待同步，请按原原因重试')
     if (saved == null) {
       attendance.phase = '定位中…'
-      const location = await crmLocation(null, 5000); assertOwner(owner)
-      const command = { idempotencyKey: crmId(), clientOccurredAt: new Date().toISOString(), location } as UTSJSONObject
+      const punchPoint = await crmLocation(null, 5000); assertOwner(owner)
+      const command = { idempotencyKey: crmId(), clientOccurredAt: new Date(Date.now() + attendance.serverOffset).toISOString(), location: punchPoint } as UTSJSONObject
       if (!checkOut) command['clientInstanceId'] = installInstanceId()
       // #ifdef APP-ANDROID
       if (!checkOut) command['confirmedTrack'] = true

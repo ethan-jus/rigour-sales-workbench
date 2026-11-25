@@ -25,12 +25,17 @@ function configFixture(values) {
   Object.assign(config.appEnvironment, values)
   return config
 }
-function androidSource(android) {
+function platformSource(android, ios, filename = 'auth.uts') {
   let enabled = true
   const stack = []
-  return fs.readFileSync(path.join(services, 'auth.uts'), 'utf8').split('\n').filter(line => {
-    const m = line.match(/\/\/ #(ifdef|ifndef) APP-ANDROID/)
-    if (m) { stack.push(enabled); enabled = enabled && (m[1] === 'ifdef' ? android : !android); return false }
+  return fs.readFileSync(path.join(services, filename), 'utf8').split('\n').filter(line => {
+    const m = line.match(/\/\/ #(ifdef|ifndef) (.+)$/)
+    if (m) {
+      const applies = m[2].split(' || ').some(platform => platform === 'APP-ANDROID' ? android : platform === 'APP-IOS' && ios)
+      stack.push(enabled)
+      enabled = enabled && (m[1] === 'ifdef' ? applies : !applies)
+      return false
+    }
     if (line.includes('// #endif')) { enabled = stack.pop(); return false }
     return enabled
   }).join('\n')
@@ -43,7 +48,7 @@ class Obj {
   getArray(key) { return Array.isArray(this.data[key]) ? this.data[key] : null }
   getJSON(key) { const value = this.data[key]; return value && typeof value === 'object' && !Array.isArray(value) ? new Obj(value) : null }
 }
-function fixture({ android = true, supported = android, metadata = new Map(), vault = { value: null } } = {}) {
+function fixture({ ios = false, android = !ios, supported = android || ios, metadata = new Map(), vault = { value: null } } = {}) {
   const requests = [], errors = [], toasts = [], secure = [], secureHistory = [], logs = [], metadataHistory = [], networkChecks = []
   const faults = {}
   let completed = 0, now = 100000, randomFails = false
@@ -54,7 +59,7 @@ function fixture({ android = true, supported = android, metadata = new Map(), va
   const sessionModule = runModule(fs.readFileSync(path.join(services, 'session.uts'), 'utf8'), {
     require: name => { assert.equal(name, 'vue'); return { reactive: value => value } },
   })
-  const parser = runModule(fs.readFileSync(path.join(services, 'json.uts'), 'utf8'), {
+  const parser = runModule(platformSource(android, ios, 'json.uts'), {
     JSON: { parse: text => new Obj(JSON.parse(text)) },
   })
   const queue = (kind, value, success, fail) => {
@@ -75,8 +80,12 @@ function fixture({ android = true, supported = android, metadata = new Map(), va
     'java.security.MessageDigest': { getInstance: algorithm => { assert.equal(algorithm, 'SHA-256'); return { digest: value => crypto.createHash('sha256').update(value).digest() } } },
     'android.util.Base64': { URL_SAFE: 8, NO_WRAP: 2, NO_PADDING: 1, encodeToString: value => Buffer.from(value).toString('base64url') },
     'kotlin.text.Charsets': { US_ASCII: 'ascii' },
+    '../uni_modules/rigour-session-keychain': {
+      loginRandomToken: () => randomFails ? null : crypto.randomBytes(32).toString('base64url'),
+      loginProofChallenge: verifier => crypto.createHash('sha256').update(verifier).digest('base64url'),
+    },
   }
-  const api = runModule(androidSource(android), {
+  const api = runModule(platformSource(android, ios), {
     require: name => { assert.ok(name in modules, `unexpected dependency ${name}`); return modules[name] },
     Buffer, Date: { now: () => now },
     console: { log: (...values) => logs.push(values), warn: (...values) => logs.push(values), error: (...values) => logs.push(values) },
@@ -294,6 +303,19 @@ check('a password is absent from session state, saved credentials, logs, and sub
     assert.equal(JSON.stringify(value).includes('fixture password'), false)
   }
   for (const credential of ['fixture-access-1', 'fixture-refresh-1']) assert.equal(JSON.stringify(f.metadataHistory).includes(credential), false)
+})
+
+check('iOS uses native PKCE for company sign-in', () => {
+  const f = fixture({ ios: true })
+  const request = f.start()
+  assert.equal(request.dataType, 'string')
+  const exchange = f.authorize()
+  assert.equal(exchange.dataType, 'string')
+  const verifier = new URLSearchParams(exchange.data).get('code_verifier')
+  assert.match(request.data.state, /^[A-Za-z0-9_-]{43}$/)
+  assert.notEqual(request.data.state, verifier)
+  assert.equal(request.data.codeChallengeMethod, 'S256')
+  assert.equal(request.data.codeChallenge, crypto.createHash('sha256').update(verifier).digest('base64url'))
 })
 
 check('login is single flight and secure clearing completes before credentials are sent', () => {

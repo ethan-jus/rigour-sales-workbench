@@ -1,6 +1,11 @@
 import { appEnvironment } from './config.uts'
 import { session } from './session.uts'
+// #ifdef APP-IOS
+import { readProtectedFieldValue as readSecurePayload, writeProtectedFieldValue as writeSecurePayload, clearProtectedFieldValue as clearSecurePayload } from '../uni_modules/rigour-session-keychain'
+// #endif
+// #ifndef APP-IOS
 import { secureStorageSupported, readSecurePayload, writeSecurePayload, clearSecurePayload } from './secure-storage.uts'
+// #endif
 
 // Only capture commands belong here. Display snapshots and credentials have separate lifecycles.
 const volatileValues = new Map<string, string>()
@@ -9,10 +14,17 @@ export function fieldStorageScope(): string {
   return 'rigour.field.v1|' + appEnvironment.environment + '|' + appEnvironment.gatewayOrigin
     + '|' + appEnvironment.issuer + '|' + appEnvironment.clientId + '|' + session.tenantId + '|' + session.userId
 }
-export function fieldStorageDurable(): boolean { return secureStorageSupported() }
+export function fieldStorageDurable(): boolean {
+  // #ifdef APP-IOS
+  return true
+  // #endif
+  // #ifndef APP-IOS
+  return secureStorageSupported()
+  // #endif
+}
 export async function readFieldValue(scope: string, key: string): Promise<UTSJSONObject | null> {
   const name = scope + '|' + key
-  const raw = secureStorageSupported()
+  const raw = fieldStorageDurable()
     ? await new Promise<string | null>((resolve, reject) => { readSecurePayload(name, (value: string | null) => resolve(value), (message) => reject(new Error(message))) })
     : volatileValues.get(name) ?? null
   if (raw == null) return null
@@ -22,11 +34,11 @@ export async function readFieldValue(scope: string, key: string): Promise<UTSJSO
 }
 export async function writeFieldValue(scope: string, key: string, value: UTSJSONObject): Promise<void> {
   const raw = JSON.stringify(value); const name = scope + '|' + key
-  if (!secureStorageSupported()) { volatileValues.set(name, raw); return }
+  if (!fieldStorageDurable()) { volatileValues.set(name, raw); return }
   await new Promise<void>((resolve, reject) => { writeSecurePayload(name, raw, () => resolve(), (message) => reject(new Error(message))) })
 }
 export async function clearFieldValue(scope: string, key: string): Promise<void> {
   const name = scope + '|' + key
-  if (!secureStorageSupported()) { volatileValues.delete(name); return }
+  if (!fieldStorageDurable()) { volatileValues.delete(name); return }
   await new Promise<void>((resolve, reject) => { clearSecurePayload(name, () => resolve(), (message) => reject(new Error(message))) })
 }

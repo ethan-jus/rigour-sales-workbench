@@ -125,6 +125,8 @@ test('location requests WGS84 and distinguishes callback receipt from missing ac
   assert.equal(result.accuracy, null)
   assert.equal(result.requestedAt, 1000)
   assert.equal(result.receivedAt, 4000)
+  request.success({ latitude: 31, longitude: 121, accuracy: 0, horizontalAccuracy: 8 })
+  assert.equal(result.accuracy, 8)
   let invalid = ''
   service.requestDeviceLocation(assert.fail, (value) => { invalid = value })
   request.success({ latitude: 91, longitude: 121, accuracy: 10 })

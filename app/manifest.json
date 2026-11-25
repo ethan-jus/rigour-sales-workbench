@@ -2,8 +2,8 @@
 	"name": "销售工作台",
 	"appid": "__UNI__EE5460C",
 	"description": "公司内部销售作业 App",
-	"versionName": "0.2.18",
-	"versionCode": 218,
+	"versionName": "0.2.19",
+	"versionCode": 224,
 	"vueVersion": "3",
 	"uniStatistics": {
 		"enable": false
@@ -29,6 +29,9 @@
 	},
 	"app-ios": {
 		"distribute": {
+			"icons": {
+				"appstore": "static/brand/icon-1024.png"
+			},
 			"modules": {
 				"uni-location": {
 					"system": {}

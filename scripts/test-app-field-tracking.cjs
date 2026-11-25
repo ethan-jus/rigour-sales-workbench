@@ -147,7 +147,7 @@ test('offline L-shaped return uses sub-12m steps, backfills the start, and uploa
  const local=fieldwork.fieldTrackPreview(evidence,0,5,100)
  assert.equal(local.lines.length,1)
  assert.equal(local.lines[0].points.length,coordinates.length)
- assert.equal(local.lines[0].arrow,false)
+ assert.equal(local.lines[0].arrow,true)
  assert.equal(Math.round(local.distanceMeters),66)
  assert.equal(f.writes.length,0)
  const beforeLast=evidence.at(-2).time
@@ -212,4 +212,18 @@ test('iPhone system locations confirm movement across batches without counting a
  const uploaded = f.writes.flatMap(w => w.b.points)
  assert.ok(uploaded.some(p => p.routePath?.length >= 4))
  assert.ok(uploaded.every(p => p.source === 'APP_IOS_LOCATION' && p.rawCoordinateSystem === 'WGS84'))
+})
+
+test('both platforms keep a proven route across one coarse fix but split on a long lock-screen gap', () => {
+  for (const source of ['APP_GPS', 'APP_IOS_LOCATION']) {
+    const filter = new motion.TrackMotion()
+    const push = (i, time, east, accuracy) => Array.from(filter.push({
+      id: String(i), time, longitude: east / 111195, latitude: 0, accuracy, source, motion: -1
+    }, 5, 25))
+    const paths = []
+    for (let i = 0; i <= 12; i++) paths.push(push(i, i * 5000, i === 7 ? 600 : i * 40, i === 7 ? 25.7 : 5))
+    assert.ok(paths.some(path => path.join(',') === '6,8'))
+    assert.ok(paths.every(path => !path.includes('7')))
+    assert.deepEqual(push(13, 415000, 900, 5), [])
+  }
 })

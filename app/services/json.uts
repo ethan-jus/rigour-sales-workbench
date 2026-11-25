@@ -1,3 +1,13 @@
+// The iOS 5.26 network bridge uses "string" to return JSON without decoding it.
+export function rawJsonDataType(): string {
+  // #ifndef APP-IOS
+  return 'text'
+  // #endif
+  // #ifdef APP-IOS
+  return 'string'
+  // #endif
+}
+
 function isDigit(value: string): boolean {
   if (value.length != 1) return false
   const code = value.charCodeAt(0) ?? -1
@@ -31,6 +41,7 @@ function isLargeInteger(value: string): boolean {
 
 // Preserve large integer identifiers before the native JSON parser rounds them.
 export function parseApiJson(text: string): UTSJSONObject | null {
+  if (typeof text != 'string') return null
   let start = 0
   let end = text.length
   while (start < end && isWhitespace(text.charAt(start))) start++

@@ -169,7 +169,7 @@ function mediaFixture(storage = new Map()) {
   }
   const modules = {
     vue: { reactive: v => v, watch: () => {} }, './customer-cache.uts': { refreshCustomerSnapshot: (_path, load) => load(), invalidateCustomerCache: () => {}, readCustomerSnapshot: () => null },
-    './session.uts': { session }, './crm.uts': crm,
+    './session.uts': { session }, './crm.uts': crm, './attendance.uts': { attendance: { serverOffset: -120000 } },
     './customer-nearby.uts': { customerNearbyVisitLocation: () => recentPoint },
     './recording-background.uts': { retainVisitRecording: () => protection.push('retain'), releaseVisitRecording: () => protection.push('release') },
     './auth.uts': { ensureAccessToken: (_retry, success) => success('test-token') },
@@ -391,7 +391,7 @@ test('successful photo keeps camera source and validated coordinates, saves loca
   assert.equal(photo.captureSource, 'APP_CAMERA')
   assert.equal(photo.longitude, 120); assert.equal(photo.latitude, 30); assert.equal(photo.accuracyMeters, 10)
   assert.equal(f.copies[0].srcPath, '/temporary/photo.jpg')
-  assert.ok(photo.capturedAt.length > 0)
+  assert.ok(Math.abs(Date.parse(photo.capturedAt) - (Date.now() - 120000)) < 5000)
   await f.media.crmUploadPhotos('capture')
   assert.equal(f.uploads[0].formData.captureSource, 'APP_CAMERA')
   assert.equal(f.media.crmMedia('capture').photos[0].uploaded, true)

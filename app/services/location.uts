@@ -25,7 +25,7 @@ export function requestDeviceLocation(success: (location: DeviceLocation) => voi
       success({
         latitude: result.latitude,
         longitude: result.longitude,
-        accuracy: Number.isFinite(result.accuracy) && result.accuracy > 0 ? result.accuracy : null,
+        accuracy: result.horizontalAccuracy > 0 ? result.horizontalAccuracy : Number.isFinite(result.accuracy) && result.accuracy > 0 ? result.accuracy : null,
         coordinateSystem: 'WGS84',
         requestedAt: requestedAt,
         receivedAt: Date.now()

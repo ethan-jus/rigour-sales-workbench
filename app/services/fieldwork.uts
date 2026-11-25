@@ -16,7 +16,7 @@ function point(row: UTSJSONObject): FieldPoint | null {
   const occurredAt = row.getString('clientOccurredAt') ?? ''
   return { latitude: latitude!, longitude: longitude!, time: occurredAt.length == 0 ? 0 : Date.parse(occurredAt) } as FieldPoint
 }
-function line(points: FieldPoint[], confirmed: boolean = false): FieldLine { return { points, color: '#c64c1c', width: 4, arrow: !confirmed } as FieldLine }
+function line(points: FieldPoint[]): FieldLine { return { points, color: '#d94032', width: 6, arrow: true } as FieldLine }
 function localDistance(a: LocalTrackPoint, b: LocalTrackPoint): number {
   return routeDistance(a.latitude, a.longitude, b.latitude, b.longitude)
 }
@@ -52,7 +52,7 @@ export function fieldTrackPreview(input: LocalTrackPoint[], confirmedAt: number,
     }
     if (batch.length != row.routePath.length) continue
     if (batch[0].id != previousId) {
-      if (path.length > 1) legacy.lines.push(line(path, true))
+      if (path.length > 1) legacy.lines.push(line(path))
       path = [localMapPoint(batch[0])] as FieldPoint[]
     }
     for (let i = 1; i < batch.length; i++) {
@@ -66,7 +66,7 @@ export function fieldTrackPreview(input: LocalTrackPoint[], confirmedAt: number,
       previousId = end.id
     }
   }
-  if (path.length > 1) legacy.lines.push(line(path, true))
+  if (path.length > 1) legacy.lines.push(line(path))
   return { lines: legacy.lines, tail, distanceMeters: meters } as FieldPreview
 }
 function legacyPreview(input: LocalTrackPoint[], confirmedAt: number, interval: number, maximumAccuracy: number | null): FieldPreview {
@@ -144,14 +144,13 @@ export function parseFieldTrack(data: UTSJSONObject): FieldTrack {
   const events: FieldEvent[] = []; const lines: FieldLine[] = []; const points: FieldPoint[] = []; const markers: FieldMarker[] = []
   const confirmedTrack = data.getBoolean('confirmedTrack') == true
   for (const leg of rows(data, 'legs')) {
-    const confirmed = leg.getBoolean('confirmed') == true
     let path: FieldPoint[] = []
     for (const row of rows(leg, 'points')) {
       const p = point(row)
-      if (p == null) { if (path.length > 1) lines.push(line(path, confirmed)); path = []; continue }
+      if (p == null) { if (path.length > 1) lines.push(line(path)); path = []; continue }
       path.push(p!); points.push(p!)
     }
-    if (path.length > 1) lines.push(line(path, confirmed))
+    if (path.length > 1) lines.push(line(path))
   }
   const punches = rows(data, 'punches')
   for (let index = 0; index < punches.length; index++) {
@@ -197,7 +196,7 @@ export function parseFieldTrack(data: UTSJSONObject): FieldTrack {
     const selectedLines: FieldLine[] = []; const selectedPoints: FieldPoint[] = []
     for (const route of lines) {
       const path = route.points.filter((p: FieldPoint): boolean => p.time >= start && p.time <= end)
-      if (path.length > 1) { selectedLines.push(line(path, !route.arrow)); for (const p of path) selectedPoints.push(p) }
+      if (path.length > 1) { selectedLines.push(line(path)); for (const p of path) selectedPoints.push(p) }
     }
     if (selectedLines.length == 0) continue
     const measured = rows(data, 'segments').find((row: UTSJSONObject): boolean => row.getString('fromVisitId') == from.captureId && row.getString('toVisitId') == to.captureId && row.getString('distanceSource') == 'OBSERVED_ESTIMATE')

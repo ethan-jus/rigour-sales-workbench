@@ -1,1 +1,1 @@
-{"id":"rigour-location-service","displayName":"外勤后台定位服务","version":"1.0.0","description":"Android 作业期间的定位前台服务","uni_modules":{"type":"uts","dependencies":[],"encrypt":[],"platforms":{"client":{"App":{"app-android":"y","app-ios":"n"}}}}}
+{"id":"rigour-location-service","displayName":"外勤后台定位服务","version":"1.0.0","description":"作业期间的原生后台定位服务","uni_modules":{"type":"uts","dependencies":[],"encrypt":[],"platforms":{"client":{"App":{"app-android":"y","app-ios":"y"}}}}}

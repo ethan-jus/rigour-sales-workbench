@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<array>
+	<string>iPhone14,2</string>
+	<string>iPhone14,3</string>
+	<string>iPhone15,2</string>
+	<string>iPhone15,3</string>
+	<string>iPhone16,1</string>
+	<string>iPhone16,2</string>
+	<string>iPhone17,1</string>
+	<string>iPhone17,2</string>
+</array>
+</plist>

@@ -1,7 +1,7 @@
 <template>
   <view class="route-map">
-    <!-- #ifdef APP-ANDROID -->
-    <amap v-if="consented" :id="mapId" class="route-native" :latitude="initialCenter.latitude" :longitude="initialCenter.longitude" :scale="17" :markers="amapMarkers" :polylines="amapLines" :include-points="initialBounds" :show-location="showCurrent && locationAllowed" :show-scale="true" :enable-poi="true" :enable-rotate="false" @markertap="selectMarker" />
+    <!-- #ifdef APP-ANDROID || APP-IOS -->
+    <amap v-if="consented" :id="mapId" class="route-native" :latitude="initialCenter.latitude" :longitude="initialCenter.longitude" :scale="initialScale" :markers="amapMarkers" :polylines="amapLines" :include-points="initialBounds" :show-location="showCurrent && locationAllowed" :show-scale="true" :enable-poi="true" :enable-rotate="false" @markertap="selectMarker" />
     <view v-if="consented" class="route-controls">
       <view class="route-control" :aria-label="fullscreen ? '退出全屏' : '全屏查看地图'" @click="toggleFullscreen">
         <view class="route-control-face" hover-class="route-control-pressed">
@@ -26,7 +26,7 @@
       <button class="route-enable" @click="agree">同意并查看</button>
     </view>
     <!-- #endif -->
-    <!-- #ifndef APP-ANDROID -->
+    <!-- #ifndef APP-ANDROID || APP-IOS -->
     <view class="route-consent"><text class="route-copy">此版本暂不支持地图，作业记录可在下方查看</text></view>
     <!-- #endif -->
   </view>
@@ -38,25 +38,36 @@ import { FieldLine, FieldMarker, FieldPoint, visibleFieldLines } from '../../ser
 import { fieldMarkerIcon } from './marker-icon.uts'
 import Intent from 'android.content.Intent'
 import Uri from 'android.net.Uri'
+// #endif
+// #ifdef APP-IOS
+import { openMapPrivacy } from '../../uni_modules/uni-map-amap'
+// #endif
+// #ifdef APP-ANDROID || APP-IOS
 import { createAmapContext, convertGpsMapPoint } from '../../uni_modules/uni-map-amap'
-import { AmapMarker, AmapAnchor, AmapLocationObject, Polyline as AmapPolyline, MapContextIncludePointsOptions, MapContextMoveToLocationOptions, MapContextFail } from '../../uni_modules/uni-map-amap/utssdk/interface.uts'
+import { AmapMarker, AmapMapMarkerLabel, AmapAnchor, AmapLocationObject, Polyline as AmapPolyline, MapContextIncludePointsOptions, MapContextMoveToLocationOptions, MapContextFail } from '../../uni_modules/uni-map-amap/utssdk/interface.uts'
 import { UniMapMarkerTapEvent as AmapMarkerTapEvent } from '../../uni_modules/uni-map-amap/components/amap/global.uts'
 // #endif
 type RouteMapProps = { owner: string, points: FieldPoint[], lines: FieldLine[], localLines: FieldLine[], localTail: FieldPoint | null, focus: FieldPoint | null, showCurrent: boolean, markers: FieldMarker[], fullscreen: boolean }
 const props = defineProps<RouteMapProps>()
 const emit = defineEmits<{ (event: 'select', markerId: number): void; (event: 'fullscreen'): void; (event: 'clear-selection'): void }>()
 function toggleFullscreen(): void { emit('fullscreen') }
-// #ifdef APP-ANDROID
+// #ifdef APP-ANDROID || APP-IOS
 const consented = ref(false)
 const mapId = 'fieldwork-route-map'
 const converted = new Map<number, FieldPoint>()
-const initialCenter = ref<AmapLocationObject>({ latitude: 0, longitude: 0 } as AmapLocationObject)
+const initialCenter = ref<AmapLocationObject>({ latitude: 35, longitude: 104 } as AmapLocationObject)
+const initialScale = ref(17)
 const initialBounds = ref<AmapLocationObject[] | null>(null)
 const locationAllowed = ref(false)
 function openPrivacy(): void {
   try {
+    // #ifdef APP-IOS
+    openMapPrivacy()
+    // #endif
+    // #ifdef APP-ANDROID
     const intent = new Intent(Intent.ACTION_VIEW, Uri.parse('https://lbs.amap.com/pages/privacy/'))
     UTSAndroid.getUniActivity()!.startActivity(intent)
+    // #endif
   } catch (_) { uni.showToast({ title: '暂时无法打开隐私政策，请稍后重试', icon: 'none' }) }
 }
 function selectMarker(event: AmapMarkerTapEvent): void { emit('select', event.detail?.markerId ?? 0) }
@@ -105,6 +116,7 @@ function prepareInitialView(): void {
     latitude: (bounds[0].latitude + bounds[1].latitude) / 2,
     longitude: (bounds[0].longitude + bounds[1].longitude) / 2
   } as AmapLocationObject
+  initialScale.value = bounds.length == 0 && focus == null ? 4 : 17
   initialBounds.value = focus == null && bounds.length == 2 ? bounds : null
 }
 function consentKey(): string { return 'rigour.amap.consent.v1|' + props.owner }
@@ -156,14 +168,24 @@ const amapLines = computed((): AmapPolyline[] => {
   }
   return visibleFieldLines(routes).map((line): AmapPolyline => ({
     points: line.points.map((point): AmapLocationObject => ({ latitude: point.latitude, longitude: point.longitude } as AmapLocationObject)),
-    color: line.color, width: line.width, arrowLine: line.arrow, borderColor: '#ffffff', borderWidth: 1
+    color: line.color, width: line.width, arrowLine: line.arrow, arrowIconPath: '/static/fieldwork/route-arrow.png', borderColor: '#ffffff', borderWidth: 1
   } as AmapPolyline))
 })
 const amapMarkers = computed((): AmapMarker[] => props.markers.map((marker: FieldMarker): AmapMarker => {
   // Opposing flags keep nearby departure and arrival visible without moving their geographic anchors.
   const mirror = marker.kind == 'start' && props.markers.some((other: FieldMarker): boolean => other.kind == 'end' && Math.abs(other.latitude - marker.latitude) < 0.0003 && Math.abs(other.longitude - marker.longitude) < 0.0003)
+  // #ifdef APP-ANDROID
   const icon = fieldMarkerIcon(marker, mirror)
   return { id: marker.id, latitude: marker.latitude, longitude: marker.longitude, iconPath: icon.path, width: icon.width, height: icon.height, anchor: { x: icon.anchorX, y: icon.anchorY } as AmapAnchor } as AmapMarker
+  // #endif
+  // #ifdef APP-IOS
+  if (marker.kind == 'visit') {
+    const label = { content: marker.sequences.join('·'), color: '#ffffff', fontSize: 12, bgColor: '#e96326', borderRadius: 8, padding: 3, x: 12, y: 0 } as AmapMapMarkerLabel
+    return { id: marker.id, latitude: marker.latitude, longitude: marker.longitude, iconPath: '/static/fieldwork/visit.png', width: 24, height: 24, anchor: { x: 0.5, y: 0.5 } as AmapAnchor, label } as AmapMarker
+  }
+  const path = marker.kind == 'end' ? 'check-out' : mirror ? 'check-in-left' : 'check-in'
+  return { id: marker.id, latitude: marker.latitude, longitude: marker.longitude, iconPath: '/static/fieldwork/' + path + '.png', width: 36, height: 38, anchor: { x: mirror ? 29.0 / 36 : 7.0 / 36, y: 33.0 / 38 } as AmapAnchor } as AmapMarker
+  // #endif
 }))
 onMounted(() => { readConsent(); refreshLocationPermission() })
 watch((): string => props.owner, (_owner: string) => readConsent())

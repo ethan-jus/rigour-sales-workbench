@@ -1,3 +1,4 @@
+import { attendance } from './attendance.uts'
 import { retainVisitRecording, releaseVisitRecording } from './recording-background.uts'
 import { reactive, watch } from 'vue'
 import { session } from './session.uts'
@@ -299,7 +300,7 @@ export async function crmTakePhoto(capture: string): Promise<void> {
   // #ifdef APP
   const owner = crmMediaOwner(); const revision = crmOwner()
   const source = await new Promise<string>((resolve, reject) => { uni.chooseImage({ count: 1, sourceType: ['camera'], success: (result) => resolve(result.tempFilePaths[0]), fail: (_) => reject(new Error('拍照未完成')) }) })
-  const capturedAt = new Date().toISOString()
+  const capturedAt = new Date(Date.now() + attendance.serverOffset).toISOString()
   if (revision != crmOwner()) throw new Error('账号已变更，请返回原账号处理材料')
   // Open the camera in the tap handler; GPS and coordinate conversion must not delay it.
   const rules = await visitCaptureRules(capture)
